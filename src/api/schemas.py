@@ -174,7 +174,7 @@ class WSIdentityConfirm(BaseModel):
     """WebSocket 身份确认消息。"""
     type: str = "confirm_identity"
     track_id: int
-    person_id: str
+    person_id: str | None = None
     name: str
 
 

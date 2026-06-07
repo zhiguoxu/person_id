@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="机器人视觉人物识别系统 - 可视化测试平台">
+    <title>Vision ID Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- ================================================================== -->
+    <!-- HEADER -->
+    <!-- ================================================================== -->
+    <header id="app-header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">👁️</span>
+                <h1>Vision ID</h1>
+            </div>
+            <span class="header-subtitle">Robot Person Identification System</span>
+        </div>
+        <div class="header-right">
+            <div class="status-group">
+                <div id="connection-status" class="status-badge disconnected">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Disconnected</span>
+                </div>
+                <div id="fps-counter" class="status-badge">
+                    <span class="fps-value">0</span>
+                    <span class="fps-label">FPS</span>
+                </div>
+                <div id="latency-counter" class="status-badge">
+                    <span class="latency-value">0</span>
+                    <span class="latency-label">ms</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ================================================================== -->
+    <!-- MAIN CONTENT -->
+    <!-- ================================================================== -->
+    <main id="app-main">
+        <!-- Left: Video Panel -->
+        <section id="video-section">
+            <div class="panel-header">
+                <h2>📹 Video Feed</h2>
+                <div class="video-controls">
+                    <button id="btn-toggle-camera" class="btn btn-primary">
+                        <span class="btn-icon">▶</span> Start Camera
+                    </button>
+                    <select id="camera-select" class="select-input">
+                        <option value="">Select Camera...</option>
+                    </select>
+                    <div class="toggle-group">
+                        <label class="toggle" title="Bounding Boxes">
+                            <input type="checkbox" id="toggle-bbox" checked>
+                            <span class="toggle-label">BBox</span>
+                        </label>
+                        <label class="toggle" title="Skeleton Keypoints">
+                            <input type="checkbox" id="toggle-skeleton" checked>
+                            <span class="toggle-label">Skeleton</span>
+                        </label>
+                        <label class="toggle" title="Tracking Trails">
+                            <input type="checkbox" id="toggle-trail" checked>
+                            <span class="toggle-label">Trail</span>
+                        </label>
+                        <label class="toggle" title="Labels">
+                            <input type="checkbox" id="toggle-labels" checked>
+                            <span class="toggle-label">Labels</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div id="video-container">
+                <video id="webcam" autoplay playsinline muted></video>
+                <canvas id="overlay-canvas"></canvas>
+                <div id="no-camera-message">
+                    <span class="no-camera-icon">📷</span>
+                    <p>Click "Start Camera" to begin</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right: Side Panels -->
+        <aside id="side-panels">
+            <!-- Pipeline Debug Panel -->
+            <section id="pipeline-panel" class="side-panel">
+                <div class="panel-header">
+                    <h2>⚡ Pipeline Debug</h2>
+                    <span id="pipeline-total-time" class="badge">0ms</span>
+                </div>
+                <div id="pipeline-stages">
+                    <div class="pipeline-stage" data-stage="detection">
+                        <div class="stage-header">
+                            <span class="stage-icon">🎯</span>
+                            <span class="stage-name">Detection</span>
+                            <span class="stage-status pending">—</span>
+                            <span class="stage-time">0ms</span>
+                        </div>
+                        <div class="stage-details"></div>
+                    </div>
+                    <div class="pipeline-connector">↓</div>
+                    <div class="pipeline-stage" data-stage="pose">
+                        <div class="stage-header">
+                            <span class="stage-icon">🦴</span>
+                            <span class="stage-name">Pose</span>
+                            <span class="stage-status pending">—</span>
+                            <span class="stage-time">0ms</span>
+                        </div>
+                        <div class="stage-details"></div>
+                    </div>
+                    <div class="pipeline-connector">↓</div>
+                    <div class="pipeline-stage" data-stage="face">
+                        <div class="stage-header">
+                            <span class="stage-icon">👤</span>
+                            <span class="stage-name">Face</span>
+                            <span class="stage-status pending">—</span>
+                            <span class="stage-time">0ms</span>
+                        </div>
+                        <div class="stage-details"></div>
+                    </div>
+                    <div class="pipeline-connector">↓</div>
+                    <div class="pipeline-stage" data-stage="reid">
+                        <div class="stage-header">
+                            <span class="stage-icon">🏃</span>
+                            <span class="stage-name">ReID</span>
+                            <span class="stage-status pending">—</span>
+                            <span class="stage-time">0ms</span>
+                        </div>
+                        <div class="stage-details"></div>
+                    </div>
+                    <div class="pipeline-connector">↓</div>
+                    <div class="pipeline-stage" data-stage="matching">
+                        <div class="stage-header">
+                            <span class="stage-icon">🔍</span>
+                            <span class="stage-name">Matching</span>
+                            <span class="stage-status pending">—</span>
+                            <span class="stage-time">0ms</span>
+                        </div>
+                        <div class="stage-details matching-details"></div>
+                    </div>
+                    <div class="pipeline-connector">↓</div>
+                    <div class="pipeline-stage" data-stage="identity">
+                        <div class="stage-header">
+                            <span class="stage-icon">🧠</span>
+                            <span class="stage-name">Identity</span>
+                            <span class="stage-status pending">—</span>
+                            <span class="stage-time">—</span>
+                        </div>
+                        <div class="stage-details"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Controls Panel -->
+            <section id="controls-panel" class="side-panel">
+                <div class="panel-header">
+                    <h2>🎛️ Controls</h2>
+                    <div class="preset-buttons">
+                        <button class="btn btn-xs" data-preset="conservative">🛡️ Conservative</button>
+                        <button class="btn btn-xs btn-active" data-preset="balanced">⚖️ Balanced</button>
+                        <button class="btn btn-xs" data-preset="aggressive">🎯 Aggressive</button>
+                    </div>
+                </div>
+                <div id="threshold-sliders">
+                    <!-- Sliders will be dynamically created by controls-panel.js -->
+                </div>
+            </section>
+        </aside>
+    </main>
+
+    <!-- ================================================================== -->
+    <!-- BOTTOM PANELS -->
+    <!-- ================================================================== -->
+    <footer id="app-footer">
+        <!-- Event Timeline -->
+        <section id="events-panel">
+            <div class="panel-header">
+                <h2>📋 Events</h2>
+                <button id="btn-clear-events" class="btn btn-xs">Clear</button>
+            </div>
+            <div id="events-timeline">
+                <div class="timeline-empty">No events yet. Start the camera to begin detection.</div>
+            </div>
+        </section>
+
+        <!-- Person Gallery -->
+        <section id="gallery-panel">
+            <div class="panel-header">
+                <h2>👥 Gallery</h2>
+                <span id="gallery-count" class="badge">0 persons</span>
+            </div>
+            <div id="person-gallery">
+                <div class="gallery-empty">No persons identified yet.</div>
+            </div>
+        </section>
+    </footer>
+
+    <!-- ================================================================== -->
+    <!-- MODAL: Person Detail -->
+    <!-- ================================================================== -->
+    <div id="person-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-person-name">Person Detail</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Filled dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- MODAL: Confirm Identity -->
+    <!-- ================================================================== -->
+    <div id="confirm-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="confirm-modal-title">Confirm Identity</h3>
+                <button class="modal-close" id="confirm-modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="confirm-modal-body">
+                <form id="confirm-identity-form">
+                    <input type="hidden" id="confirm-track-id">
+                    <div class="form-group">
+                        <label for="confirm-person-id">Person ID (Leave empty for new person)</label>
+                        <input type="text" id="confirm-person-id" class="text-input" placeholder="e.g. person_abc123">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm-name">Name</label>
+                        <input type="text" id="confirm-name" class="text-input" placeholder="Enter name" required>
+                    </div>
+                    <div class="form-actions" style="margin-top: 15px; display: flex; justify-content: flex-end; gap: 10px;">
+                        <button type="button" id="confirm-modal-cancel" class="btn">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Confirm</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- SCRIPTS -->
+    <!-- ================================================================== -->
+    <script src="js/config.js"></script>
+    <script src="js/websocket.js"></script>
+    <script src="js/video-capture.js"></script>
+    <script src="js/overlay-renderer.js"></script>
+    <script src="js/pipeline-panel.js"></script>
+    <script src="js/controls-panel.js"></script>
+    <script src="js/events-timeline.js"></script>
+    <script src="js/person-gallery.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
