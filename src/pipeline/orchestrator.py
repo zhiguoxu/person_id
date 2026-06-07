@@ -131,22 +131,17 @@ class VisionOrchestrator(BaseModel):
         persons = self.tier1.process(frame)
         tier1_ms = (time.perf_counter() - t0) * 1000
 
-        # --- 帧注入 tracks + 状态管理 ---
-        active_states = self._feed_all(persons, frame)
-        self._cleanup_stale_tracks({s.person.track_id for s in active_states})
+        # --- 刷新 TrackState ---
+        self._refresh_track_states(persons)
 
-        # --- 逐 track 处理 (VLM 应用 + Tier2 + VLM 触发) ---
+        # --- track 逐个进处理 ---
         gallery_dirty = False
-        for state in active_states:
-            result, is_enrich = state.resolve(self.gallery)
+        for state in self.tracks.values():
+            result, is_enrich = state.process_frame(frame, self.gallery)
             if result is None:
                 continue
-            if not is_enrich:
-                self._emit_match_event(state.person.track_id, result)
-
-            gallery_dirty = result.status == IdentityStatus.DEFINITE
-            if gallery_dirty:
-                self._update_gallery(result, state)
+            if self._apply_track_result(state, result, is_enrich):
+                gallery_dirty = True
 
         # 统一：设 force_probe + 异步落盘
         if gallery_dirty:
@@ -154,14 +149,12 @@ class VisionOrchestrator(BaseModel):
             asyncio.ensure_future(self._save_gallery_to_db())
 
         # --- 注意力选择 ---
-        self._select_target(active_states)
+        self._select_target()
 
         # --- 构建响应 ---
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        response = self._build_response(active_states, elapsed_ms)
-        response["pipeline_debug"] = self._build_debug(
-            active_states, tier1_ms, elapsed_ms,
-        )
+        response = self._build_response(elapsed_ms)
+        response["pipeline_debug"] = self._build_debug(tier1_ms, elapsed_ms)
         return response
 
     # ==================================================================
@@ -230,50 +223,32 @@ class VisionOrchestrator(BaseModel):
     # ==================================================================
     # Per-track 状态管理 (原 CameraPipeline)
     # ==================================================================
+    def _refresh_track_states(self, persons: list[TrackedPerson]) -> None:
+        """同步活跃轨迹状态，清理失效轨迹，返回当前活跃的 TrackState 列表。"""
+        active_ids = set()
 
-    def _get_or_create_track(self, person: TrackedPerson) -> TrackState:
-        """获取或创建 track 状态，并同步 person 引用。"""
-        tid = person.track_id
-        if tid not in self.tracks:
-            self.tracks[tid] = TrackState(person=person)
-        else:
-            # 每帧更新 person 引用，避免 _on_gallery_updated 设置 force_probe 到旧对象
-            self.tracks[tid].person = person
-        return self.tracks[tid]
-
-    def _feed_all(
-            self, persons: list[TrackedPerson], frame: np.ndarray,
-    ) -> list[TrackState]:
-        """将所有检测结果注入 per-track buffer，返回活跃 TrackState 列表。"""
-        active_states: list[TrackState] = []
+        # 创建或更新当前帧的 active states
         for person in persons:
-            state = self._get_or_create_track(person)
-            state.feed_frame(frame)
-            active_states.append(state)
-        return active_states
+            tid = person.track_id
+            if tid not in self.tracks:
+                self.tracks[tid] = TrackState(person=person)
+            else:
+                # 每帧更新 person 引用
+                self.tracks[tid].person = person
+            active_ids.add(person.track_id)
 
-    def _cleanup_stale_tracks(self, active_ids: set[int]) -> None:
-        """清理不再活跃的 track (含取消其 VLM 任务)。"""
+        # 清理失效 states
         stale = set(self.tracks.keys()) - active_ids
         for tid in stale:
             state = self.tracks.pop(tid, None)
             if state is not None:
                 state.cancel_vlm()
-        if stale:
-            logger.debug("Cleaned {} stale tracks", len(stale))
 
     def _on_gallery_updated(self) -> None:
         """Gallery 更新后，所有非 DEFINITE 的 track 标记 force_probe。"""
-        count = 0
         for state in self.tracks.values():
             if state.identity_result.status != IdentityStatus.DEFINITE:
                 state.force_probe = True
-                count += 1
-        if count:
-            logger.debug(
-                "Set force_probe on {} non-DEFINITE tracks",
-                count,
-            )
 
     def _update_gallery(
             self,
@@ -377,18 +352,18 @@ class VisionOrchestrator(BaseModel):
                 message="New person detected (stranger)",
             )
 
-    # 目标切换滞后阈值
-    _HYSTERESIS_MARGIN: float = 0.15
-
-    def _select_target(
-            self, active_states: list[TrackState],
-    ) -> None:
+    def _select_target(self) -> None:
         """选择注意力最高的目标（带滞后防抖）。
 
         当前目标享有 _HYSTERESIS_MARGIN 的防抖优势，
         只有当新目标的分数超过当前目标分数 + margin 时才会切换，
         避免两人分数接近时目标来回跳动。
         """
+
+        # 目标切换滞后阈值
+        _HYSTERESIS_MARGIN: float = 0.1
+
+        active_states = self.tracks.values()
         if not active_states:
             self.current_target_id = None
             return
@@ -418,14 +393,10 @@ class VisionOrchestrator(BaseModel):
     # 响应构建
     # ==================================================================
 
-    def _build_response(
-            self,
-            active_states: list[TrackState],
-            elapsed_ms: float,
-    ) -> dict[str, object]:
+    def _build_response(self, elapsed_ms: float) -> dict[str, object]:
         """构建 API 响应字典。"""
         tracked = []
-        for s in active_states:
+        for s in self.tracks.values():
             tracked.append({
                 "person": s.person,
                 "identity_result": s.identity_result,
@@ -447,18 +418,18 @@ class VisionOrchestrator(BaseModel):
             "frame_id": self.frame_count,
             "tracked_persons": tracked,
             "current_target": current_target_info,
-            "pending_vlm": [s.person.track_id for s in active_states if s.vlm_task is not None],
+            "pending_vlm": [s.person.track_id for s in self.tracks.values() if s.vlm_task is not None],
             "gallery_size": len(self.gallery),
             "processing_ms": round(elapsed_ms, 1),
         }
 
-    @staticmethod
     def _build_debug(
-            active_states: list[TrackState],
+            self,
             tier1_ms: float,
             total_ms: float,
     ) -> dict[str, object]:
         """构建 pipeline_debug 字典。"""
+        active_states = self.tracks.values()
         n_states = len(active_states)
         n_identified = sum(1 for s in active_states if s.identity_result.person_id)
         n_identifying = sum(1 for s in active_states if s.identity_result.status == IdentityStatus.IDENTIFYING)

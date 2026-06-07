@@ -92,6 +92,25 @@ class TrackState(BaseModel):
             self.vlm_task = None
 
     # ==================================================================
+    # 识别调度
+    # ==================================================================
+
+    def process_frame(
+            self, frame: np.ndarray, gallery: dict[str, PersonProfile],
+    ) -> tuple[MatchResult | None, bool]:
+        """单帧步进: 注入图像 + 执行调度。
+
+        Args:
+            frame: 当前帧。
+            gallery: 底库。
+
+        Returns:
+            (MatchResult | None, is_enrich)
+        """
+        self.feed_frame(frame)
+        return self.resolve(gallery)
+
+    # ==================================================================
     # 帧缓存管理
     # ==================================================================
 
@@ -127,10 +146,6 @@ class TrackState(BaseModel):
             quality_hint=q_hint,
         )
         return self.buffer.push(entry)
-
-    # ==================================================================
-    # 识别调度
-    # ==================================================================
 
     def resolve(self, gallery: dict[str, PersonProfile],
                 ) -> tuple[MatchResult | None, bool]:
