@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from functools import cache
 
+from src.gallery.data_models import FaceResult
 from src.tier2.features.body_extractor import BodyExtractor
-from src.tier2.features.face_extractor import FaceExtractor, FaceResult
+from src.tier2.features.face_extractor import FaceExtractor
 from src.tier2.features.face_quality_assessor import FaceQualityAssessor
 
 

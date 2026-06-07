@@ -67,6 +67,29 @@ class EventType(str, Enum):
 
 
 # ==============================================================================
+# 人脸检测结果
+# ==============================================================================
+
+class FaceResult(BaseModel):
+    """人脸检测+特征提取结果。
+
+    Attributes:
+        embedding: 512 维 L2 归一化的 ArcFace 嵌入向量。
+        quality: 人脸质量分 [0, 1]。
+        landmarks: 5 点人脸关键点, shape (5, 2)。
+        bbox: 人脸检测框 (x1, y1, x2, y2) 在原始帧坐标系。
+        det_score: 人脸检测置信度。
+    """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    embedding: np.ndarray
+    quality: float
+    landmarks: np.ndarray
+    bbox: np.ndarray
+    det_score: float
+
+
+# ==============================================================================
 # 特征数据
 # ==============================================================================
 

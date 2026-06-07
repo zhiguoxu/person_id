@@ -240,9 +240,7 @@ class VisionOrchestrator(BaseModel):
         # 清理失效 states
         stale = set(self.tracks.keys()) - active_ids
         for tid in stale:
-            state = self.tracks.pop(tid, None)
-            if state is not None:
-                state.cancel_vlm()
+            self.tracks[tid].cancel_vlm()
 
     def _on_gallery_updated(self) -> None:
         """Gallery 更新后，所有非 DEFINITE 的 track 标记 force_probe。"""
@@ -274,7 +272,7 @@ class VisionOrchestrator(BaseModel):
         face_best: dict = {}
         if cache.face_pool:
             for cf in cache.face_pool:
-                if cf.is_extracted and cf.face_embedding is not None and cf.face_quality >= gallery_cfg.quality_enroll_threshold:
+                if cf.face_quality >= gallery_cfg.quality_enroll_threshold:
                     pose = cf.entry.pose_bucket
                     if pose not in face_best or cf.face_quality > face_best[pose].face_quality:
                         face_best[pose] = cf
@@ -291,10 +289,9 @@ class VisionOrchestrator(BaseModel):
         body_best: dict = {}
         if cache.body_pool:
             for cf in cache.body_pool:
-                if cf.is_extracted and cf.body_embedding is not None:
-                    pose = cf.entry.pose_bucket
-                    if pose not in body_best or cf.body_quality > body_best[pose].body_quality:
-                        body_best[pose] = cf
+                pose = cf.entry.pose_bucket
+                if pose not in body_best or cf.body_quality > body_best[pose].body_quality:
+                    body_best[pose] = cf
 
         for pose, cf in body_best.items():
             profile.enroll_body_feature(FeatureEntry(

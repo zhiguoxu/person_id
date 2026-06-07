@@ -120,13 +120,8 @@ class Tier2Processor:
         debug.matching.status = "done"
 
         # --- 6. Fusion ---
-        avg_body_quality = (
-            sum(f.body_quality for f in quality_cache.body_pool) / len(quality_cache.body_pool)
-            if quality_cache.body_pool else 0.5
-        )
         candidates = fusion.fuse(
             face_candidates, body_candidates, proportion_candidates,
-            body_quality=avg_body_quality,
         )
 
         # --- 7. Identity resolution ---

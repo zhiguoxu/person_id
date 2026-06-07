@@ -11,12 +11,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import get_config
-from src.gallery.data_models import PoseBucket
+from src.gallery.data_models import FaceResult, PoseBucket
 
 
 # ==============================================================================
@@ -27,12 +26,12 @@ class BufferEntry(BaseModel):
     """帧缓冲条目 — Tier1 每帧生成"""
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    timestamp: float                    # time.monotonic()
-    crop: np.ndarray                    # BGR 人体裁剪 (bbox 区域拷贝, 非整帧引用)
-    bbox: np.ndarray                    # [x1, y1, x2, y2]
-    keypoints: np.ndarray              # (17, 3) COCO keypoints
-    pose_bucket: PoseBucket            # 从 keypoints 快速分类
-    quality_hint: float                # 轻量质量预估 (0-1), 窗口内竞争用
+    timestamp: float  # time.monotonic()
+    crop: np.ndarray  # BGR 人体裁剪 (bbox 区域拷贝, 非整帧引用)
+    bbox: np.ndarray  # [x1, y1, x2, y2]
+    keypoints: np.ndarray  # (17, 3) COCO keypoints
+    pose_bucket: PoseBucket  # 从 keypoints 快速分类
+    quality_hint: float  # 轻量质量预估 (0-1), 窗口内竞争用
 
 
 class RecentBuffer(BaseModel):
@@ -46,7 +45,7 @@ class RecentBuffer(BaseModel):
     min_interval: float = Field(
         default_factory=lambda: get_config().multiframe.recent_min_interval,
     )
-    
+
     def push(self, entry: BufferEntry) -> bool:
         """Tier1 每帧调用 — 时间窗口 + 质量竞争
         
@@ -61,15 +60,15 @@ class RecentBuffer(BaseModel):
         h = entry.bbox[3] - entry.bbox[1]
         if w < 10 or h < 20:
             return False
-        
+
         # 空 buffer: 直接入
         if not self.frames:
             self.frames.append(entry)
             return True
-        
+
         last = self.frames[-1]
         elapsed = entry.timestamp - last.timestamp
-        
+
         if elapsed >= self.min_interval:
             # 新时间窗口 → 追加
             self.frames.append(entry)
@@ -80,13 +79,13 @@ class RecentBuffer(BaseModel):
                 self.frames[-1] = entry
                 return True
             return False
-    
+
     def drain(self) -> list[BufferEntry]:
         """Tier2 调用: 取走所有帧, 清空"""
         result = list(self.frames)
         self.frames.clear()
         return result
-    
+
     def __len__(self) -> int:
         return len(self.frames)
 
@@ -99,17 +98,16 @@ class CachedFrame(BaseModel):
     """质量缓存条目 — 由 Tier2 质量评估后填充"""
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    entry: BufferEntry                        # 原始帧数据
-    
+    entry: BufferEntry  # 原始帧数据
+
     # 质量评分 (Tier2 批量计算)
-    face_quality: float = 0.0                 # QualityAssessor 精确人脸质量
-    body_quality: float = 0.0                 # quality_hint + sharpness 人体质量
-    face_det: object | None = None         # SCRFD 检测结果 (FaceResult | None)
-    
+    face_quality: float = 0.0  # QualityAssessor 精确人脸质量
+    body_quality: float = 0.0  # quality_hint + sharpness 人体质量
+    face_result: FaceResult | None = None  # SCRFD 检测 + ArcFace 嵌入结果
+
     # 特征缓存 (入缓存后提取)
     face_embedding: np.ndarray | None = None  # AdaFace
     body_embedding: np.ndarray | None = None  # SOLIDER
-    is_extracted: bool = False                    # 是否已提取过特征
 
 
 class QualityCache(BaseModel):
@@ -126,7 +124,7 @@ class QualityCache(BaseModel):
 
     def try_add_face(self, frame: CachedFrame) -> bool:
         """尝试加入 face_pool, 返回 True 表示新入缓存"""
-        if frame.face_det is None:
+        if frame.face_result is None:
             return False
         return self._try_add(
             self.face_pool, self.face_pool_size,
@@ -142,10 +140,10 @@ class QualityCache(BaseModel):
 
     @staticmethod
     def _try_add(
-        pool: list[CachedFrame],
-        max_size: int,
-        frame: CachedFrame,
-        key: Callable[[CachedFrame], float],
+            pool: list[CachedFrame],
+            max_size: int,
+            frame: CachedFrame,
+            key: Callable[[CachedFrame], float],
     ) -> bool:
         """通用质量竞争入池: 未满直接加, 满了替换最差的。"""
         if len(pool) < max_size:
@@ -158,4 +156,3 @@ class QualityCache(BaseModel):
             pool.sort(key=key, reverse=True)
             return True
         return False
-

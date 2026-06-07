@@ -23,8 +23,7 @@ _SIGMOID_Q0 = 0.5    # 翻转点
 def fuse(
     face_candidates: list[MatchCandidate] | None,
     body_candidates: list[MatchCandidate] | None,
-    proportion_candidates: list[MatchCandidate] | None,
-    body_quality: float = 0.5,  # 保留参数兼容, 但不再用于门控
+    proportion_candidates: list[MatchCandidate] | None
 ) -> list[MatchCandidate]:
     """Per-Candidate 三模态质量门控融合
 

@@ -14,32 +14,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from loguru import logger
-from pydantic import BaseModel, ConfigDict
 
 from src.config import get_config
+from src.gallery.data_models import FaceResult
 
 if TYPE_CHECKING:
     from insightface.app import FaceAnalysis
     from insightface.app.common import Face
-
-
-class FaceResult(BaseModel):
-    """人脸提取结果。
-
-    Attributes:
-        embedding: 512 维 L2 归一化的 ArcFace 嵌入向量。
-        quality: 人脸质量分 [0, 1]。
-        landmarks: 5 点人脸关键点, shape (5, 2)。
-        bbox: 人脸检测框 (x1, y1, x2, y2) 在原始帧坐标系。
-        det_score: 人脸检测置信度。
-    """
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    embedding: np.ndarray
-    quality: float
-    landmarks: np.ndarray
-    bbox: np.ndarray
-    det_score: float
 
 
 class FaceExtractor:
@@ -56,12 +37,9 @@ class FaceExtractor:
     def __init__(self) -> None:
         """初始化人脸特征提取器。"""
         config = get_config().face
-        self._app: FaceAnalysis | None = None
 
         try:
-            from insightface.app import FaceAnalysis
-
-            self._app = FaceAnalysis(
+            self._app: FaceAnalysis = FaceAnalysis(
                 name=config.insightface_model,
                 providers=self._get_providers(config.insightface_ctx_id),
             )
@@ -103,9 +81,9 @@ class FaceExtractor:
         return ["CPUExecutionProvider"]
 
     def extract(
-        self,
-        frame: np.ndarray,
-        person_bbox: np.ndarray,
+            self,
+            frame: np.ndarray,
+            person_bbox: np.ndarray,
     ) -> FaceResult | None:
         """从人体检测区域中提取人脸特征。
 
@@ -164,7 +142,7 @@ class FaceExtractor:
 
             # Ensure L2 normalization
             embedding = embedding.astype(np.float32)
-            norm: float = np.linalg.norm(embedding)
+            norm: float = float(np.linalg.norm(embedding))
             if norm < 1e-6:
                 logger.debug("Face embedding has near-zero norm")
                 return None
@@ -214,30 +192,30 @@ class FaceExtractor:
         """
         if self._app is None:
             return [None] * len(crops)
-        
+
         results: list[FaceResult | None] = []
         for crop in crops:
             try:
                 if crop.size == 0:
                     results.append(None)
                     continue
-                
+
                 faces: list[Face] = self._app.get(crop)
                 if not faces:
                     results.append(None)
                     continue
-                
+
                 # 取面积最大的人脸
                 face: Face = max(faces, key=_face_area)
                 embedding: np.ndarray = face.embedding.astype(np.float32)
-                norm: float = np.linalg.norm(embedding)
+                norm: float = float(np.linalg.norm(embedding))
                 if norm > 1e-6:
                     embedding = embedding / norm
-                
+
                 face_bbox: np.ndarray = face.bbox.astype(np.float32)
                 det_score: float = float(face.det_score)
                 quality: float = self._compute_quality(face_bbox, det_score)
-                
+
                 results.append(FaceResult(
                     embedding=embedding,
                     quality=quality,
@@ -248,13 +226,13 @@ class FaceExtractor:
             except Exception as e:
                 logger.debug("Batch face extraction failed for crop: {}", e)
                 results.append(None)
-        
+
         return results
 
     def _compute_quality(
-        self,
-        face_bbox: np.ndarray,
-        det_score: float,
+            self,
+            face_bbox: np.ndarray,
+            det_score: float,
     ) -> float:
         """计算简单的人脸质量分数。
 
