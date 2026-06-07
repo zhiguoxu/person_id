@@ -29,56 +29,36 @@ from src.gallery.data_models import (
 def match_face(query_faces: dict[PoseBucket, tuple[np.ndarray, float]],
                gallery: dict[str, PersonProfile]) -> list[MatchCandidate]:
     """人脸匹配 — 查询端全桶×Gallery端全桶交叉匹配:
-    1. 对每个人的每个 Gallery 姿态桶, 计算桶内质量加权质心
+    1. 获取每个人的 per-bucket 质心 (缓存, 仅 enroll 时重算)
     2. 查询端每个桶 × Gallery 每个桶: 纯 cos_sim
     3. 取所有 (query_bucket, gallery_bucket) 组合中的最大分
     """
     if not query_faces or not gallery:
         return []
 
-    now = time.time()
-    half_life = get_config().gallery.face_match_half_life_days
     candidates = []
 
     for person_id, profile in gallery.items():
-        best_weighted_score = -1.0
-        best_match_quality = 0.0
+        centroids = profile.get_face_centroids()
+        if not centroids:
+            continue
 
-        for bucket, entries in profile.face_features.items():
-            if not entries:
-                continue
+        best_score = -1.0
+        best_quality = 0.0
 
-            # 桶内质心: 质量 × 时间衰减 作为融合权重
-            weights = []
-            embeddings = []
-            for entry in entries:
-                decay = entry.time_decay_weight(now, half_life)
-                w = entry.quality_score * decay
-                weights.append(w)
-                embeddings.append(entry.embedding)
-
-            weights_arr = np.array(weights)
-            if weights_arr.sum() < 1e-8:
-                continue
-
-            # 质量加权质心
-            embeddings_mat = np.stack(embeddings)  # (N, 512)
-            centroid = np.average(embeddings_mat, axis=0, weights=weights_arr)
-            centroid = centroid / (np.linalg.norm(centroid) + 1e-8)
-
-            # cos_sim Max-Pooling (查询全桶 × Gallery 单桶)
+        for g_bucket, centroid in centroids.items():
             for q_pose, (q_emb, q_quality) in query_faces.items():
                 cos_sim = float(np.dot(q_emb, centroid))
-                if cos_sim > best_weighted_score:
-                    best_weighted_score = cos_sim
-                    best_match_quality = q_quality
+                if cos_sim > best_score:
+                    best_score = cos_sim
+                    best_quality = q_quality
 
-        if best_weighted_score > 0.0:
+        if best_score > 0.0:
             candidates.append(MatchCandidate(
                 person_id=person_id,
                 display_name=profile.display_name,
-                face_score=best_weighted_score,
-                face_match_quality=best_match_quality,
+                face_score=best_score,
+                face_match_quality=best_quality,
             ))
 
     candidates.sort(key=lambda c: c.face_score or 0.0, reverse=True)

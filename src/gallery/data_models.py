@@ -315,6 +315,9 @@ class PersonProfile(BaseModel):
     last_seen: float = Field(default_factory=time.time)
     total_appearances: int = 0
 
+    # 人脸质心缓存 (不序列化, 惰性计算)
+    _face_centroids: dict[PoseBucket, np.ndarray] | None = None
+
     @staticmethod
     def create_new(display_name: str = "") -> PersonProfile:
         """创建新人物档案"""
@@ -323,6 +326,42 @@ class PersonProfile(BaseModel):
             person_id=pid,
             display_name=display_name or pid,
         )
+
+    def get_face_centroids(self) -> dict[PoseBucket, np.ndarray]:
+        """获取人脸质心缓存 (惰性计算, enroll 时自动失效)。
+
+        每个姿态桶内做 质量×时间衰减 加权质心, L2 归一化。
+        enroll 的时候已经考虑时间衰减，如果时间衰减显著，enroll 大概率会成功，同时触发这个质心变化，
+        反之如果时间不长，enroll 不成功，因此缓存也应当成立。
+
+        Returns:
+            {PoseBucket: centroid_embedding}，空桶不包含在结果中。
+        """
+        if self._face_centroids is not None:
+            return self._face_centroids
+
+        now = time.time()
+        half_life = get_config().gallery.face_match_half_life_days
+
+        centroids: dict[PoseBucket, np.ndarray] = {}
+        for bucket, entries in self.face_features.items():
+            if not entries:
+                continue
+
+            weights = np.array([
+                e.quality_score * e.time_decay_weight(now, half_life)
+                for e in entries
+            ])
+            if weights.sum() < 1e-8:
+                continue
+
+            embeddings = np.stack([e.embedding for e in entries])
+            centroid = np.average(embeddings, axis=0, weights=weights)
+            centroid = centroid / (np.linalg.norm(centroid) + 1e-8)
+            centroids[bucket] = centroid
+
+        self._face_centroids = centroids
+        return centroids
 
     @staticmethod
     def _effective_quality(f: FeatureEntry, now: float,
@@ -367,6 +406,7 @@ class PersonProfile(BaseModel):
             gallery_cfg.face_enroll_half_life_days,
         )
         if success:
+            self._face_centroids = None  # 失效缓存
             logger.debug(
                 "Enrolled face for {} in bucket {} (quality={:.3f})",
                 self.person_id, entry.pose_bucket.value, entry.quality_score,
