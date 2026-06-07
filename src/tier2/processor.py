@@ -100,22 +100,15 @@ class Tier2Processor:
         aggregated = MultiFrameAggregator.aggregate_from_cache(quality_cache)
 
         # --- 5. Gallery matching (分模态) ---
-        face_candidates = None
-        body_candidates = None
-        proportion_candidates = None
-
-        if aggregated.face_per_pose and gallery:
-            face_candidates = gallery_matcher.match_face(
-                aggregated.face_per_pose, gallery
-            )
-        if aggregated.body_per_pose and gallery:
-            body_candidates = gallery_matcher.match_body(
-                aggregated.body_per_pose, gallery
-            )
-        if aggregated.proportions is not None and gallery:
-            proportion_candidates = gallery_matcher.match_proportions(
-                aggregated.proportions, gallery
-            )
+        face_candidates = gallery_matcher.match_face(
+            aggregated.face_per_pose, gallery
+        )
+        body_candidates = gallery_matcher.match_body(
+            aggregated.body_per_pose, gallery
+        )
+        proportion_candidates = gallery_matcher.match_proportions(
+            aggregated.proportions, gallery
+        )
 
         debug.matching.status = "done"
 
