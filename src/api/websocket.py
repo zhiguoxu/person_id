@@ -161,7 +161,7 @@ async def _handle_binary(
             track_id=event.track_id,
             person_id=event.person_id,
             display_name=event.display_name,
-            confidence=event.confidence,
+            fused_score=event.fused_score,
             source=event.source,
             message=event.message,
         )

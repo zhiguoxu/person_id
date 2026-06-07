@@ -198,7 +198,7 @@ class VisionOrchestrator(BaseModel):
                 person_id=person_id,
                 display_name=name,
                 status=IdentityStatus.CONFIDENT,
-                confidence=1.0,
+                fused_score=1.0,
             )
 
         self._emit_event(
@@ -206,7 +206,7 @@ class VisionOrchestrator(BaseModel):
             track_id=track_id,
             person_id=person_id,
             display_name=name,
-            confidence=1.0,
+            fused_score=1.0,
             source="human",
             message=f"Human confirmed {name}",
         )
@@ -337,7 +337,7 @@ class VisionOrchestrator(BaseModel):
                 track_id=track_id,
                 person_id=result.best_match.person_id,
                 display_name=result.best_match.display_name,
-                confidence=result.best_match.fused_score,
+                fused_score=result.best_match.fused_score,
                 source="reid",
             )
         elif result.status == IdentityStatus.CONFLICT:
@@ -447,8 +447,8 @@ class VisionOrchestrator(BaseModel):
                 "face": {"status": "done", "time_ms": 0, "details": {
                     "results": [
                         {"track_id": s.person.track_id,
-                         "extracted": s.identity_result.face_quality is not None,
-                         "quality": s.identity_result.face_quality}
+                         "face_match_quality": s.identity_result.face_match_quality,
+                         "body_match_quality": s.identity_result.body_match_quality}
                         for s in active_states],
                 }},
                 "reid": {"status": "done", "time_ms": round(tier2_ms, 1),
@@ -488,7 +488,7 @@ class VisionOrchestrator(BaseModel):
             track_id: int | None = None,
             person_id: str | None = None,
             display_name: str | None = None,
-            confidence: float | None = None,
+            fused_score: float | None = None,
             source: str = "system",
             message: str = "",
     ) -> None:
@@ -498,7 +498,7 @@ class VisionOrchestrator(BaseModel):
             track_id=track_id,
             person_id=person_id,
             display_name=display_name,
-            confidence=confidence,
+            fused_score=fused_score,
             source=source,
             message=message,
         )

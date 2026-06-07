@@ -217,10 +217,11 @@ class TrackState(BaseModel):
 
     def update_identity(self, result: MatchResult) -> None:
         """将 MatchResult 写入 identity_result (纯状态更新, 无副作用)。"""
-        self.identity_result = IdentityResult(
-            person_id=result.best_match.person_id if result.best_match else None,
-            display_name=result.best_match.display_name if result.best_match else None,
-            status=result.status,
-            confidence=result.best_match.fused_score if result.best_match else 0.0,
-            face_quality=result.face_quality,
-        )
+        best = result.best_match
+        if best:
+            self.identity_result = IdentityResult(
+                **best.model_dump(),
+                status=result.status,
+            )
+        else:
+            self.identity_result = IdentityResult(status=result.status)

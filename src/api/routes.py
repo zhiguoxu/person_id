@@ -94,12 +94,12 @@ async def list_persons(camera_id: str) -> PersonListResponse:
                 display_name=profile.display_name,
                 face_count=profile.total_face_features(),
                 outfit_count=len(profile.wardrobe),
-                last_seen=profile.last_seen,
+                last_updated=profile.last_updated,
                 update_count=profile.update_count,
             )
         )
 
-    persons.sort(key=lambda p: p.last_seen, reverse=True)
+    persons.sort(key=lambda p: p.last_updated, reverse=True)
     return PersonListResponse(persons=persons, total=len(persons))
 
 
@@ -146,7 +146,7 @@ async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
         has_proportions=profile.body_proportions is not None,
         vlm_description=profile.vlm_description,
         created_at=profile.created_at,
-        last_seen=profile.last_seen,
+        last_updated=profile.last_updated,
         update_count=profile.update_count,
     )
 

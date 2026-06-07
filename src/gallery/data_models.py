@@ -312,7 +312,7 @@ class PersonProfile(BaseModel):
 
     # 元数据
     created_at: float = Field(default_factory=time.time)
-    last_seen: float = Field(default_factory=time.time)
+    last_updated: float = Field(default_factory=time.time)
     update_count: int = 0
 
     # 人脸质心缓存 (不序列化, 惰性计算)
@@ -508,7 +508,7 @@ class PersonProfile(BaseModel):
 
     def touch(self, now: float | None = None) -> None:
         """更新最后出现时间和出现次数"""
-        self.last_seen = now or time.time()
+        self.last_updated = now or time.time()
         self.update_count += 1
 
     def total_face_features(self) -> int:
@@ -549,17 +549,27 @@ class Detection(BaseModel):
         return float(self.bbox[3] - self.bbox[1])
 
 
-class IdentityResult(BaseModel):
+class MatchCandidate(BaseModel):
+    """匹配候选人"""
+    person_id: str
+    display_name: str
+    face_score: float | None = None  # 人脸匹配分 [0, 1]
+    body_score: float | None = None  # 全身匹配分 [0, 1]
+    proportion_score: float | None = None  # 体型匹配分 [0, 1]
+    fused_score: float = 0.0  # 融合匹配分
+    face_match_quality: float = 0.0  # 产生人脸最高分的 query 桶质量
+    body_match_quality: float = 0.0  # 产生人体最高分的 query 桶质量
+
+
+class IdentityResult(MatchCandidate):
     """Tier2/VLM 身份识别结果。
 
-    封装一次身份识别产生的所有信息，由 Tier2 或人工确认写入，
-    Tier1 在后续帧中通过缓存复用。
+    继承 MatchCandidate 的全部匹配分数字段,
+    额外增加 status 用于状态机流转。
     """
-    person_id: str | None = None
-    display_name: str | None = None
+    person_id: str | None = None  # type: ignore[assignment]  # 初始无身份
+    display_name: str | None = None  # type: ignore[assignment]
     status: IdentityStatus = IdentityStatus.IDENTIFYING
-    confidence: float = 0.0
-    face_quality: float | None = None
 
 
 class TrackedPerson(BaseModel):
@@ -575,24 +585,11 @@ class TrackedPerson(BaseModel):
     trail: list[tuple[float, float]] = Field(default_factory=list)  # 中心轨迹
 
 
-class MatchCandidate(BaseModel):
-    """匹配候选人"""
-    person_id: str
-    display_name: str
-    face_score: float | None = None  # 人脸匹配分 [0, 1]
-    body_score: float | None = None  # 全身匹配分 [0, 1]
-    proportion_score: float | None = None  # 体型匹配分 [0, 1]
-    fused_score: float = 0.0  # 融合匹配分
-    face_match_quality: float = 0.0  # 产生人脸最高分的 query 桶质量
-    body_match_quality: float = 0.0  # 产生人体最高分的 query 桶质量
-
-
 class MatchResult(BaseModel):
     """匹配结果 (用于歧义消除)"""
     candidates: list[MatchCandidate] = Field(default_factory=list)  # 候选人列表 (按 fused_score 降序)
     best_match: MatchCandidate | None = None
     status: IdentityStatus = IdentityStatus.STRANGER
-    face_quality: float = 0.0  # 当前人脸质量
 
     @computed_field
     @property
@@ -631,7 +628,7 @@ class SystemEvent(BaseModel):
     track_id: int | None = None
     person_id: str | None = None
     display_name: str | None = None
-    confidence: float | None = None
+    fused_score: float | None = None
     source: str = "system"  # "system" | "reid" | "vlm" | "human" | "spatial"
     message: str = ""
 

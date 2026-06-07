@@ -102,7 +102,7 @@ class PersonSummary(BaseModel):
     display_name: str
     face_count: int = 0
     outfit_count: int = 0
-    last_seen: float = 0.0
+    last_updated: float = 0.0
     update_count: int = 0
 
 
@@ -138,7 +138,7 @@ class PersonDetailResponse(BaseModel):
     has_proportions: bool = False
     vlm_description: str | None = None
     created_at: float = 0.0
-    last_seen: float = 0.0
+    last_updated: float = 0.0
     update_count: int = 0
 
 
@@ -186,7 +186,7 @@ class WSEvent(BaseModel):
     track_id: int | None = None
     person_id: str | None = None
     display_name: str | None = None
-    confidence: float | None = None
+    fused_score: float | None = None
     source: str = "system"
     message: str = ""
 

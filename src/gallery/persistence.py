@@ -61,7 +61,7 @@ class GalleryPersistence:
                 camera_id       TEXT NOT NULL,
                 display_name    TEXT NOT NULL,
                 created_at      REAL NOT NULL,
-                last_seen       REAL NOT NULL,
+                last_updated    REAL NOT NULL,
                 update_count    INTEGER NOT NULL DEFAULT 0,
                 vlm_description TEXT,
                 -- 体型比例 (nullable)
@@ -135,7 +135,7 @@ class GalleryPersistence:
             await self._db.execute(
                 """
                 INSERT OR REPLACE INTO persons
-                    (person_id, camera_id, display_name, created_at, last_seen,
+                    (person_id, camera_id, display_name, created_at, last_updated,
                      update_count, vlm_description,
                      bp_torso_leg, bp_shoulder_hip, bp_arm_torso,
                      bp_head_body, bp_height_px, bp_samples)
@@ -146,7 +146,7 @@ class GalleryPersistence:
                     self._camera_id,
                     profile.display_name,
                     profile.created_at,
-                    profile.last_seen,
+                    profile.last_updated,
                     profile.update_count,
                     profile.vlm_description,
                     bp.torso_leg_ratio if bp else None,
@@ -280,7 +280,7 @@ class GalleryPersistence:
                     person_id=pid,
                     display_name=data["display_name"],
                     created_at=data["created_at"],
-                    last_seen=data["last_seen"],
+                    last_updated=data["last_updated"],
                     update_count=data["update_count"],
                     vlm_description=data["vlm_description"],
                     body_proportions=bp,
