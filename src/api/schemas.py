@@ -103,7 +103,7 @@ class PersonSummary(BaseModel):
     face_count: int = 0
     outfit_count: int = 0
     last_seen: float = 0.0
-    total_appearances: int = 0
+    update_count: int = 0
 
 
 class PersonListResponse(BaseModel):
@@ -139,7 +139,7 @@ class PersonDetailResponse(BaseModel):
     vlm_description: str | None = None
     created_at: float = 0.0
     last_seen: float = 0.0
-    total_appearances: int = 0
+    update_count: int = 0
 
 
 # ==============================================================================

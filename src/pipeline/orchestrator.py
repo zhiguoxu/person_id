@@ -24,9 +24,10 @@ from src.gallery.data_models import (
     MatchResult,
     PersonProfile,
     SystemEvent,
-    TrackedPerson,
+    TrackedPerson, PoseBucket,
 )
 from src.gallery.data_models import FeatureEntry
+from src.pipeline.frame_buffer import CachedFrame
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 
 from src.tier1.processor import Tier1Processor
@@ -274,7 +275,7 @@ class VisionOrchestrator(BaseModel):
         gallery_cfg = get_config().gallery
 
         # 人脸: 每个姿态桶取质量最高的帧
-        face_best: dict = {}
+        face_best: dict[PoseBucket, CachedFrame] = {}
         if cache.face_pool:
             for cf in cache.face_pool:
                 if cf.face_quality >= gallery_cfg.quality_enroll_threshold:
@@ -291,7 +292,7 @@ class VisionOrchestrator(BaseModel):
             ))
 
         # 人体: 每个姿态桶取质量最高的帧
-        body_best: dict = {}
+        body_best: dict[PoseBucket, CachedFrame] = {}
         if cache.body_pool:
             for cf in cache.body_pool:
                 pose = cf.entry.pose_bucket

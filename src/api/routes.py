@@ -95,7 +95,7 @@ async def list_persons(camera_id: str) -> PersonListResponse:
                 face_count=profile.total_face_features(),
                 outfit_count=len(profile.wardrobe),
                 last_seen=profile.last_seen,
-                total_appearances=profile.total_appearances,
+                update_count=profile.update_count,
             )
         )
 
@@ -147,7 +147,7 @@ async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
         vlm_description=profile.vlm_description,
         created_at=profile.created_at,
         last_seen=profile.last_seen,
-        total_appearances=profile.total_appearances,
+        update_count=profile.update_count,
     )
 
 

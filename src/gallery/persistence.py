@@ -62,7 +62,7 @@ class GalleryPersistence:
                 display_name    TEXT NOT NULL,
                 created_at      REAL NOT NULL,
                 last_seen       REAL NOT NULL,
-                total_appearances INTEGER NOT NULL DEFAULT 0,
+                update_count    INTEGER NOT NULL DEFAULT 0,
                 vlm_description TEXT,
                 -- 体型比例 (nullable)
                 bp_torso_leg    REAL,
@@ -136,7 +136,7 @@ class GalleryPersistence:
                 """
                 INSERT OR REPLACE INTO persons
                     (person_id, camera_id, display_name, created_at, last_seen,
-                     total_appearances, vlm_description,
+                     update_count, vlm_description,
                      bp_torso_leg, bp_shoulder_hip, bp_arm_torso,
                      bp_head_body, bp_height_px, bp_samples)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -147,7 +147,7 @@ class GalleryPersistence:
                     profile.display_name,
                     profile.created_at,
                     profile.last_seen,
-                    profile.total_appearances,
+                    profile.update_count,
                     profile.vlm_description,
                     bp.torso_leg_ratio if bp else None,
                     bp.shoulder_hip_ratio if bp else None,
@@ -281,7 +281,7 @@ class GalleryPersistence:
                     display_name=data["display_name"],
                     created_at=data["created_at"],
                     last_seen=data["last_seen"],
-                    total_appearances=data["total_appearances"],
+                    update_count=data["update_count"],
                     vlm_description=data["vlm_description"],
                     body_proportions=bp,
                     body_proportions_samples=data["bp_samples"],

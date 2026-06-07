@@ -33,23 +33,22 @@ NdArray = Annotated[np.ndarray, PlainSerializer(lambda x: x.tolist(), return_typ
 
 class PoseBucket(str, Enum):
     """基于 YOLO-Pose 关键点的人体朝向分桶"""
-    FRONTAL = "frontal"   # 正面: 鼻子+双眼可见
-    LEFT = "left"         # 左侧
-    RIGHT = "right"       # 右侧
-    BACK = "back"         # 背面
-    UNKNOWN = "unknown"   # 关键点不足
+    FRONTAL = "frontal"  # 正面: 鼻子+双眼可见
+    LEFT = "left"  # 左侧
+    RIGHT = "right"  # 右侧
+    BACK = "back"  # 背面
+    UNKNOWN = "unknown"  # 关键点不足
 
 
 class IdentityStatus(str, Enum):
     """身份识别状态"""
-    CONFIDENT = "confident"       # 确信: 仅一人 ≥ X, 远超第二名
-    SUSPECTED = "suspected"       # 疑似: Y ≤ 最高 < X
-    CONFLICT = "conflict"         # 冲突: 多人 ≥ X
-    STRANGER = "stranger"         # 陌生: 所有人 < Y
-    DEFINITE = "definite"         # 笃定: 多次高置信确认, 终态
-    IDENTIFYING = "identifying"   # 识别中 (Tier 2 异步处理)
+    CONFIDENT = "confident"  # 确信: 仅一人 ≥ X, 远超第二名
+    SUSPECTED = "suspected"  # 疑似: Y ≤ 最高 < X
+    CONFLICT = "conflict"  # 冲突: 多人 ≥ X
+    STRANGER = "stranger"  # 陌生: 所有人 < Y
+    DEFINITE = "definite"  # 笃定: 多次高置信确认, 终态
+    IDENTIFYING = "identifying"  # 识别中 (Tier 2 异步处理)
     SPATIAL_INFERRED = "spatial_inferred"  # 时空约束推断
-
 
 
 class EventType(str, Enum):
@@ -102,10 +101,10 @@ class FeatureEntry(BaseModel):
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    embedding: np.ndarray           # L2 归一化特征向量
-    pose_bucket: PoseBucket         # 特征提取时的姿态
-    quality_score: float            # 综合质量分 [0, 1]
-    timestamp: float                # 提取时间 (Unix timestamp)
+    embedding: np.ndarray  # L2 归一化特征向量
+    pose_bucket: PoseBucket  # 特征提取时的姿态
+    quality_score: float  # 综合质量分 [0, 1]
+    timestamp: float  # 提取时间 (Unix timestamp)
     source_image: bytes | None = None  # JPEG 缩略图, 供 VLM 使用
 
     def time_decay_weight(self, now: float, half_life_days: float) -> float:
@@ -125,11 +124,11 @@ class OutfitRecord(BaseModel):
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    body_embedding: np.ndarray      # 2048 维全身特征
-    quality_score: float            # 提取时的质量分
-    first_seen: float               # 首次穿着时间
-    last_seen: float                # 最后穿着时间
-    seen_count: int = 1             # 穿着次数
+    body_embedding: np.ndarray  # 2048 维全身特征
+    quality_score: float  # 提取时的质量分
+    first_seen: float  # 首次穿着时间
+    last_seen: float  # 最后穿着时间
+    seen_count: int = 1  # 穿着次数
 
     def recency_weight(self, now: float) -> float:
         """近因权重: 最近穿过的衣服权重更高"""
@@ -155,11 +154,11 @@ class BodyProportions(BaseModel):
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    torso_leg_ratio: float          # 躯干/腿长比例
-    shoulder_hip_ratio: float       # 肩宽/髋宽比例
-    arm_torso_ratio: float          # 手臂/躯干比例
-    head_body_ratio: float          # 头/身体比例
-    relative_height_px: float       # 帧内相对高度 (像素)
+    torso_leg_ratio: float  # 躯干/腿长比例
+    shoulder_hip_ratio: float  # 肩宽/髋宽比例
+    arm_torso_ratio: float  # 手臂/躯干比例
+    head_body_ratio: float  # 头/身体比例
+    relative_height_px: float  # 帧内相对高度 (像素)
 
     def to_vector(self) -> np.ndarray:
         """转换为 numpy 向量 (用于相似度计算)"""
@@ -240,7 +239,8 @@ class BodyProportions(BaseModel):
 
         # 头: 鼻子到肩中点
         nose_conf = keypoints[0, 2]
-        head_len = float(np.linalg.norm(keypoints[0, :2] - shoulder_mid)) if nose_conf > CONF_THRESH else torso_len * 0.35
+        head_len = float(
+            np.linalg.norm(keypoints[0, :2] - shoulder_mid)) if nose_conf > CONF_THRESH else torso_len * 0.35
         body_len = torso_len + leg_len
 
         # 总高度 (像素)
@@ -313,7 +313,7 @@ class PersonProfile(BaseModel):
     # 元数据
     created_at: float = Field(default_factory=time.time)
     last_seen: float = Field(default_factory=time.time)
-    total_appearances: int = 0
+    update_count: int = 0
 
     # 人脸质心缓存 (不序列化, 惰性计算)
     _face_centroids: dict[PoseBucket, np.ndarray] | None = None
@@ -382,11 +382,11 @@ class PersonProfile(BaseModel):
         if len(features) < max_per_bucket:
             features.append(entry)
             return True
-        
+
         now = time.time()
         min_idx = min(range(len(features)),
                       key=lambda i: self._effective_quality(features[i], now, half_life_days))
-        
+
         if entry.quality_score > self._effective_quality(features[min_idx], now, half_life_days):
             features[min_idx] = entry
             return True
@@ -401,10 +401,10 @@ class PersonProfile(BaseModel):
                 entry.quality_score, gallery_cfg.quality_enroll_threshold, self.person_id,
             )
             return False
-        success = self._add_feature(
-            entry, self.face_features, gallery_cfg.max_faces_per_bucket,
-            gallery_cfg.face_enroll_half_life_days,
-        )
+        success = self._enroll_feature(self.face_features[entry.pose_bucket],
+                                       entry,
+                                       gallery_cfg.max_faces_per_bucket,
+                                       gallery_cfg.face_enroll_half_life_days)
         if success:
             self._face_centroids = None  # 失效缓存
             logger.debug(
@@ -422,31 +422,16 @@ class PersonProfile(BaseModel):
                 entry.quality_score, self.person_id,
             )
             return False
-        success = self._add_feature(
-            entry, self.body_features, gallery_cfg.max_body_per_bucket,
-            gallery_cfg.body_enroll_half_life_days,
-        )
+        success = self._enroll_feature(self.body_features[entry.pose_bucket],
+                                       entry,
+                                       gallery_cfg.max_body_per_bucket,
+                                       gallery_cfg.body_enroll_half_life_days)
         if success:
             logger.debug(
                 "Enrolled body feature for {} in bucket {} (quality={:.3f})",
                 self.person_id, entry.pose_bucket.value, entry.quality_score,
             )
         return success
-
-    def _add_feature(
-        self,
-        entry: FeatureEntry,
-        pool: dict[PoseBucket, list[FeatureEntry]],
-        max_per_bucket: int,
-        half_life_days: float,
-    ) -> bool:
-        """通用特征入库: 按姿态分桶 → 衰减淘汰。"""
-        bucket = entry.pose_bucket
-        if bucket not in pool:
-            pool[bucket] = []
-        return self._enroll_feature(
-            pool[bucket], entry, max_per_bucket, half_life_days,
-        )
 
     def enroll_outfit(self, body_embedding: np.ndarray, quality: float) -> None:
         """入库/更新衣橱记录 — 质量门槛 + EMA 更新。"""
@@ -524,7 +509,7 @@ class PersonProfile(BaseModel):
     def touch(self, now: float | None = None) -> None:
         """更新最后出现时间和出现次数"""
         self.last_seen = now or time.time()
-        self.total_appearances += 1
+        self.update_count += 1
 
     def total_face_features(self) -> int:
         """所有姿态桶的人脸特征总数"""
@@ -539,11 +524,11 @@ class Detection(BaseModel):
     """单个人体检测结果"""
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    bbox: NdArray                   # (x1, y1, x2, y2) 像素坐标
-    confidence: float               # 检测置信度
-    keypoints: NdArray              # (17, 3) — x, y, conf
+    bbox: NdArray  # (x1, y1, x2, y2) 像素坐标
+    confidence: float  # 检测置信度
+    keypoints: NdArray  # (17, 3) — x, y, conf
     pose_bucket: PoseBucket = PoseBucket.UNKNOWN
-    has_face: bool = False          # 是否检测到正脸
+    has_face: bool = False  # 是否检测到正脸
 
     @property
     def center(self) -> np.ndarray:
@@ -584,9 +569,9 @@ class TrackedPerson(BaseModel):
     身份信息由 Orchestrator 通过 TrackState.identity_result 管理。
     """
 
-    track_id: int                   # 追踪器分配的 ID
-    detection: Detection            # 当前帧检测结果
-    attention_score: float = 0.0    # 注意力评分
+    track_id: int  # 追踪器分配的 ID
+    detection: Detection  # 当前帧检测结果
+    attention_score: float = 0.0  # 注意力评分
     trail: list[tuple[float, float]] = Field(default_factory=list)  # 中心轨迹
 
 
@@ -594,12 +579,12 @@ class MatchCandidate(BaseModel):
     """匹配候选人"""
     person_id: str
     display_name: str
-    face_score: float | None = None      # 人脸匹配分 [0, 1]
-    body_score: float | None = None      # 全身匹配分 [0, 1]
-    proportion_score: float | None = None # 体型匹配分 [0, 1]
-    fused_score: float = 0.0                # 融合匹配分
-    face_match_quality: float = 0.0         # 产生人脸最高分的 query 桶质量
-    body_match_quality: float = 0.0         # 产生人体最高分的 query 桶质量
+    face_score: float | None = None  # 人脸匹配分 [0, 1]
+    body_score: float | None = None  # 全身匹配分 [0, 1]
+    proportion_score: float | None = None  # 体型匹配分 [0, 1]
+    fused_score: float = 0.0  # 融合匹配分
+    face_match_quality: float = 0.0  # 产生人脸最高分的 query 桶质量
+    body_match_quality: float = 0.0  # 产生人体最高分的 query 桶质量
 
 
 class MatchResult(BaseModel):
@@ -607,7 +592,7 @@ class MatchResult(BaseModel):
     candidates: list[MatchCandidate] = Field(default_factory=list)  # 候选人列表 (按 fused_score 降序)
     best_match: MatchCandidate | None = None
     status: IdentityStatus = IdentityStatus.STRANGER
-    face_quality: float = 0.0               # 当前人脸质量
+    face_quality: float = 0.0  # 当前人脸质量
 
     @computed_field
     @property
@@ -627,7 +612,7 @@ class PipelineDebug(BaseModel):
     """流水线调试信息 (用于前端可视化)"""
 
     class StageInfo(BaseModel):
-        status: str = "pending"     # "pending" | "running" | "done" | "skipped"
+        status: str = "pending"  # "pending" | "running" | "done" | "skipped"
         time_ms: float = 0.0
         details: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
@@ -647,7 +632,7 @@ class SystemEvent(BaseModel):
     person_id: str | None = None
     display_name: str | None = None
     confidence: float | None = None
-    source: str = "system"          # "system" | "reid" | "vlm" | "human" | "spatial"
+    source: str = "system"  # "system" | "reid" | "vlm" | "human" | "spatial"
     message: str = ""
 
     def to_dict(self) -> dict[str, str | int | float | bool | None]:
