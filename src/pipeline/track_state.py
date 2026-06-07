@@ -183,12 +183,13 @@ class TrackState(BaseModel):
             action=action,
         )
 
-        if result is None:
-            return None, action
-
         if action == Tier2Action.TRIGGER_ENRICH:
+            self.last_enrich_time = time.monotonic()
             # ENRICH 不更新身份, 也不触发 VLM
             return result, action
+
+        if result is None:
+            return None, action
 
         # --- 4. 更新身份 + 非 DEFINITE 时尝试 VLM ---
         self.update_identity(result)

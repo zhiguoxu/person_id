@@ -287,7 +287,6 @@ class VisionOrchestrator(BaseModel):
         gallery_dirty = False
 
         if action == Tier2Action.TRIGGER_ENRICH:
-            state.last_enrich_time = time.monotonic()
             if is_definite and result.best_match.person_id == state.identity_result.person_id:
                 self._update_gallery(result, state)
                 gallery_dirty = True
