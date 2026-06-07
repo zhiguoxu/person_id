@@ -196,7 +196,6 @@ class TrackState(BaseModel):
             buffer=self.buffer,
             quality_cache=self.quality_cache,
             gallery=gallery,
-            action=action,
         )
 
         if action == Tier2Action.TRIGGER_ENRICH:

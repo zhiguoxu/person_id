@@ -59,8 +59,7 @@ class Tier2Processor:
             track_id: int,
             buffer: RecentBuffer,
             quality_cache: QualityCache,
-            gallery: dict[str, PersonProfile],
-            action: Tier2Action,
+            gallery: dict[str, PersonProfile]
     ) -> tuple[MatchResult | None, PipelineDebug]:
         """多帧 Tier2 处理。
 
@@ -77,7 +76,6 @@ class Tier2Processor:
             buffer: 该 track 的 RecentBuffer
             quality_cache: 该 track 的 QualityCache
             gallery: 当前底库
-            action: 调度动作 (TRIGGER_REID / TRIGGER_ENRICH)
         """
         import time as _time
         debug = PipelineDebug()
@@ -127,8 +125,8 @@ class Tier2Processor:
 
         elapsed = (_time.perf_counter() - t0) * 1000
         logger.info(
-            "Tier2 multiframe: track={}, action={}, status={}, n_frames={}, n_new={}, {:.1f}ms",
-            track_id, action.value, result.status.value, len(frames), n_new, elapsed,
+            "Tier2 multiframe: track={}, status={}, n_frames={}, n_new={}, {:.1f}ms",
+            track_id, result.status.value, len(frames), n_new, elapsed,
         )
 
         return result, debug
