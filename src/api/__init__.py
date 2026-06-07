@@ -22,12 +22,12 @@ from src.api.schemas import (
     WSMessage,
 )
 from src.api.server import create_app
-from src.api.websocket import VisionWebSocket
+from src.api.websocket import handle_ws_connection
 
 __all__ = [
     # Server
     "create_app",
-    "VisionWebSocket",
+    "handle_ws_connection",
     # Schemas
     "ProcessFrameRequest",
     "ProcessFrameResponse",

@@ -11,8 +11,6 @@ Gallery Persistence — SQLite 持久化
 """
 from __future__ import annotations
 
-import json
-from typing import Optional
 
 import aiosqlite
 import numpy as np
@@ -37,10 +35,11 @@ class GalleryPersistence:
     所有公共方法均为异步 (async), 需在 asyncio 事件循环中调用。
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, camera_id: str) -> None:
         self._db_path = db_path
-        self._db: Optional[aiosqlite.Connection] = None
-        logger.info("GalleryPersistence configured with db: {}", db_path)
+        self._camera_id = camera_id
+        self._db: aiosqlite.Connection | None = None
+        logger.info("GalleryPersistence configured: db={}, camera={}", db_path, camera_id)
 
     # ------------------------------------------------------------------
     # 初始化
@@ -58,7 +57,8 @@ class GalleryPersistence:
         await self._db.executescript(
             """
             CREATE TABLE IF NOT EXISTS persons (
-                person_id       TEXT PRIMARY KEY,
+                person_id       TEXT NOT NULL,
+                camera_id       TEXT NOT NULL,
                 display_name    TEXT NOT NULL,
                 created_at      REAL NOT NULL,
                 last_seen       REAL NOT NULL,
@@ -70,7 +70,8 @@ class GalleryPersistence:
                 bp_arm_torso    REAL,
                 bp_head_body    REAL,
                 bp_height_px    REAL,
-                bp_samples      INTEGER NOT NULL DEFAULT 0
+                bp_samples      INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (person_id, camera_id)
             );
 
             CREATE TABLE IF NOT EXISTS face_features (
@@ -85,6 +86,18 @@ class GalleryPersistence:
 
             CREATE INDEX IF NOT EXISTS idx_face_person
                 ON face_features(person_id);
+
+            CREATE TABLE IF NOT EXISTS body_features (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id       TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
+                pose_bucket     TEXT NOT NULL,
+                embedding       BLOB NOT NULL,
+                quality_score   REAL NOT NULL,
+                timestamp       REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_body_person
+                ON body_features(person_id);
 
             CREATE TABLE IF NOT EXISTS wardrobe (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,14 +135,15 @@ class GalleryPersistence:
             await self._db.execute(
                 """
                 INSERT OR REPLACE INTO persons
-                    (person_id, display_name, created_at, last_seen,
+                    (person_id, camera_id, display_name, created_at, last_seen,
                      total_appearances, vlm_description,
                      bp_torso_leg, bp_shoulder_hip, bp_arm_torso,
                      bp_head_body, bp_height_px, bp_samples)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile.person_id,
+                    self._camera_id,
                     profile.display_name,
                     profile.created_at,
                     profile.last_seen,
@@ -144,9 +158,13 @@ class GalleryPersistence:
                 ),
             )
 
-            # 删除旧的人脸特征和衣橱 (重写策略)
+            # 删除旧的人脸特征、人体特征和衣橱 (重写策略)
             await self._db.execute(
                 "DELETE FROM face_features WHERE person_id = ?",
+                (profile.person_id,),
+            )
+            await self._db.execute(
+                "DELETE FROM body_features WHERE person_id = ?",
                 (profile.person_id,),
             )
             await self._db.execute(
@@ -171,6 +189,25 @@ class GalleryPersistence:
                             entry.quality_score,
                             entry.timestamp,
                             entry.source_image,
+                        ),
+                    )
+
+            # 写入人体特征
+            for bucket, entries in profile.body_features.items():
+                for entry in entries:
+                    await self._db.execute(
+                        """
+                        INSERT INTO body_features
+                            (person_id, pose_bucket, embedding,
+                             quality_score, timestamp)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            profile.person_id,
+                            bucket.value,
+                            entry.embedding.astype(np.float32).tobytes(),
+                            entry.quality_score,
+                            entry.timestamp,
                         ),
                     )
 
@@ -216,8 +253,11 @@ class GalleryPersistence:
         profiles: dict[str, PersonProfile] = {}
 
         try:
-            # 读取 persons 表
-            async with self._db.execute("SELECT * FROM persons") as cursor:
+            # 读取 persons 表 (按 camera_id 过滤)
+            async with self._db.execute(
+                "SELECT * FROM persons WHERE camera_id = ?",
+                (self._camera_id,),
+            ) as cursor:
                 rows = await cursor.fetchall()
                 col_names = [desc[0] for desc in cursor.description]
 
@@ -226,7 +266,7 @@ class GalleryPersistence:
                 pid = data["person_id"]
 
                 # 重建体型比例
-                bp: Optional[BodyProportions] = None
+                bp: BodyProportions | None = None
                 if data["bp_torso_leg"] is not None:
                     bp = BodyProportions(
                         torso_leg_ratio=data["bp_torso_leg"],
@@ -274,6 +314,36 @@ class GalleryPersistence:
                     source_image=data["source_image"],
                 )
                 profiles[pid].face_features.setdefault(bucket, []).append(entry)
+
+            # 读取人体特征
+            try:
+                async with self._db.execute(
+                    "SELECT * FROM body_features ORDER BY person_id"
+                ) as cursor:
+                    body_rows = await cursor.fetchall()
+                    body_cols = [desc[0] for desc in cursor.description]
+
+                for row in body_rows:
+                    data = dict(zip(body_cols, row))
+                    pid = data["person_id"]
+                    if pid not in profiles:
+                        continue
+
+                    embedding = np.frombuffer(
+                        data["embedding"], dtype=np.float32
+                    ).copy()
+                    bucket = PoseBucket(data["pose_bucket"])
+
+                    entry = FeatureEntry(
+                        embedding=embedding,
+                        pose_bucket=bucket,
+                        quality_score=data["quality_score"],
+                        timestamp=data["timestamp"],
+                    )
+                    profiles[pid].body_features.setdefault(bucket, []).append(entry)
+            except Exception:
+                # 兼容旧数据库 (无 body_features 表)
+                logger.warning("body_features table not found, skipping")
 
             # 读取衣橱
             async with self._db.execute(
@@ -324,10 +394,11 @@ class GalleryPersistence:
 
         try:
             await self._db.execute(
-                "DELETE FROM persons WHERE person_id = ?", (person_id,)
+                "DELETE FROM persons WHERE person_id = ? AND camera_id = ?",
+                (person_id, self._camera_id),
             )
             await self._db.commit()
-            logger.info("Deleted profile: {}", person_id)
+            logger.info("Deleted profile: {} (camera={})", person_id, self._camera_id)
         except Exception:
             logger.exception("Failed to delete profile: {}", person_id)
             raise

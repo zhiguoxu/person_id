@@ -2,3 +2,5 @@
 .idea/
 frontend/
 __pycache__/
+*.ipynb
+models

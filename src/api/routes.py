@@ -1,18 +1,18 @@
 """
 REST API 路由 — 配置管理、底库查询、身份确认
 
-提供 HTTP 端点供前端/外部系统调用:
-- GET/PUT /api/config — 配置查询与更新
-- GET /api/gallery/persons — 人物列表
-- GET /api/gallery/person/{person_id} — 人物详情
-- POST /api/vision/confirm_identity — 人工确认身份
+多摄像头架构:
+- GET/PUT /api/config — 全局配置（不分摄像头）
+- GET /api/{camera_id}/gallery/persons — 指定摄像头的人物列表
+- GET /api/{camera_id}/gallery/person/{person_id} — 人物详情
+- POST /api/{camera_id}/vision/confirm_identity — 人工确认身份
 """
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException
 from loguru import logger
+
+from src.config import get_config as _get_config
 
 from src.api.schemas import (
     ConfigResponse,
@@ -29,35 +29,27 @@ from src.api.schemas import (
 
 router = APIRouter(prefix="/api", tags=["api"])
 
-# 全局引用 (由 server.py 在 startup 时注入)
-_orchestrator: Any = None
 
-
-def set_orchestrator(orchestrator: Any) -> None:
-    """注入 VisionOrchestrator 引用 (由 server.py 调用)。"""
-    global _orchestrator
-    _orchestrator = orchestrator
-
-
-def _get_orchestrator() -> Any:
-    """获取编排器实例。"""
-    if _orchestrator is None:
+def _get_camera_orchestrator(camera_id: str):
+    """获取指定摄像头的编排器。"""
+    from src.api.server import get_camera_orchestrator
+    orch = get_camera_orchestrator(camera_id)
+    if orch is None:
         raise HTTPException(
-            status_code=503,
-            detail="System not initialized",
+            status_code=404,
+            detail=f"Camera '{camera_id}' not found or not connected",
         )
-    return _orchestrator
+    return orch
 
 
 # ==============================================================================
-# Config endpoints
+# Config endpoints (全局, 不分摄像头)
 # ==============================================================================
 
 @router.get("/config", response_model=ConfigResponse)
-async def get_config() -> ConfigResponse:
+async def get_config_endpoint() -> ConfigResponse:
     """获取所有可调参数及其当前值、范围。"""
-    orch = _get_orchestrator()
-    tunable = orch.config.get_tunable_params()
+    tunable = _get_config().get_tunable_params()
     params = {
         key: TunableParam(**info) for key, info in tunable.items()
     }
@@ -65,23 +57,33 @@ async def get_config() -> ConfigResponse:
 
 
 @router.put("/config", response_model=ConfigUpdateResponse)
-async def update_config(request: ConfigUpdateRequest) -> ConfigUpdateResponse:
+async def update_config_endpoint(request: ConfigUpdateRequest) -> ConfigUpdateResponse:
     """更新可调参数。"""
-    orch = _get_orchestrator()
-    updated = orch.config.update_from_dict(request.updates)
+    updated = _get_config().update_from_dict(request.updates)
     if updated:
         logger.info("Config updated via REST: {}", updated)
     return ConfigUpdateResponse(updated_keys=updated)
 
 
 # ==============================================================================
-# Gallery endpoints
+# Camera list
 # ==============================================================================
 
-@router.get("/gallery/persons", response_model=PersonListResponse)
-async def list_persons() -> PersonListResponse:
-    """列出底库中所有人物。"""
-    orch = _get_orchestrator()
+@router.get("/cameras")
+async def list_cameras() -> dict[str, list[str]]:
+    """列出当前活跃的摄像头。"""
+    from src.api.server import camera_registry
+    return {"cameras": list(camera_registry.keys())}
+
+
+# ==============================================================================
+# Gallery endpoints (per-camera)
+# ==============================================================================
+
+@router.get("/{camera_id}/gallery/persons", response_model=PersonListResponse)
+async def list_persons(camera_id: str) -> PersonListResponse:
+    """列出指定摄像头底库中所有人物。"""
+    orch = _get_camera_orchestrator(camera_id)
     gallery = orch.gallery
 
     persons = []
@@ -97,16 +99,14 @@ async def list_persons() -> PersonListResponse:
             )
         )
 
-    # 按最后出现时间倒序
     persons.sort(key=lambda p: p.last_seen, reverse=True)
-
     return PersonListResponse(persons=persons, total=len(persons))
 
 
-@router.get("/gallery/person/{person_id}", response_model=PersonDetailResponse)
-async def get_person(person_id: str) -> PersonDetailResponse:
-    """获取单个人物的详细信息。"""
-    orch = _get_orchestrator()
+@router.get("/{camera_id}/gallery/person/{person_id}", response_model=PersonDetailResponse)
+async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
+    """获取指定摄像头中单个人物的详细信息。"""
+    orch = _get_camera_orchestrator(camera_id)
     gallery = orch.gallery
 
     if person_id not in gallery:
@@ -152,17 +152,19 @@ async def get_person(person_id: str) -> PersonDetailResponse:
 
 
 # ==============================================================================
-# Vision control endpoints
+# Vision control endpoints (per-camera)
 # ==============================================================================
 
-@router.post("/vision/confirm_identity")
-async def confirm_identity(request: ConfirmIdentityRequest) -> dict:
+@router.post("/{camera_id}/vision/confirm_identity")
+async def confirm_identity(
+    camera_id: str, request: ConfirmIdentityRequest
+) -> dict:
     """
     人工确认身份 (Human-in-the-loop)。
 
     将指定 track_id 绑定到 person_id，更新底库和缓存。
     """
-    orch = _get_orchestrator()
+    orch = _get_camera_orchestrator(camera_id)
 
     try:
         await orch.confirm_identity(
@@ -172,6 +174,7 @@ async def confirm_identity(request: ConfirmIdentityRequest) -> dict:
         )
         return {
             "status": "confirmed",
+            "camera_id": camera_id,
             "track_id": request.track_id,
             "person_id": request.person_id,
             "name": request.name,

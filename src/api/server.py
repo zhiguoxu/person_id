@@ -1,35 +1,36 @@
 """
 FastAPI 应用入口 — 服务器初始化与生命周期管理
 
-启动 FastAPI 应用:
-- CORS 中间件
-- 静态文件 (frontend/)
-- REST 路由
-- WebSocket 端点
-- 应用启动/关闭事件 (模型加载、底库加载/保存)
+多摄像头架构:
+- 每个 WebSocket 连接对应一个独立的 VisionOrchestrator
+- GPU 模型通过 cache 全局共享，不重复加载
+- Gallery 按 camera_id 隔离存储 (同一 SQLite, 不同 camera_id)
+- REST API 通过 camera_id 路径参数访问指定摄像头
 """
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from src.api.routes import router as api_router
-from src.api.routes import set_orchestrator
-from src.api.websocket import VisionWebSocket
-from src.config import FRONTEND_DIR, Config, load_config
+from src.api.websocket import handle_ws_connection
+from src.config import FRONTEND_DIR, load_config
 from src.pipeline.orchestrator import VisionOrchestrator
 
-# Module-level references (set during lifespan)
-_orchestrator: VisionOrchestrator | None = None
-_ws_handler: VisionWebSocket | None = None
+# 全局摄像头注册表: camera_id → VisionOrchestrator
+camera_registry: dict[str, VisionOrchestrator] = {}
+
+
+def get_camera_orchestrator(camera_id: str) -> VisionOrchestrator | None:
+    """获取指定摄像头的编排器（供 REST routes 使用）。"""
+    return camera_registry.get(camera_id)
 
 
 # ==============================================================================
@@ -38,31 +39,17 @@ _ws_handler: VisionWebSocket | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """应用生命周期: 启动时初始化, 关闭时清理。"""
-    global _orchestrator, _ws_handler
-
-    config = app.state.config
-    logger.info("Application starting ...")
-
-    # 初始化编排器
-    _orchestrator = VisionOrchestrator(config)
-    await _orchestrator.initialize()
-
-    # 注入到路由模块
-    set_orchestrator(_orchestrator)
-
-    # 初始化 WebSocket 处理器
-    _ws_handler = VisionWebSocket(_orchestrator, config)
-    app.state.ws_handler = _ws_handler
-
-    logger.info("Application ready")
+    """应用生命周期。GPU 模型在首次 WebSocket 连接时惰性加载。"""
+    logger.info("Application ready (cameras will initialize on first connection)")
 
     yield  # ← 应用运行中
 
-    # 关闭
-    logger.info("Application shutting down ...")
-    if _orchestrator:
-        await _orchestrator.shutdown()
+    # 关闭: 逐个 shutdown 所有活跃的摄像头 orchestrator
+    logger.info("Application shutting down ({} cameras) ...", len(camera_registry))
+    for cam_id, orch in camera_registry.items():
+        logger.info("Shutting down camera: {}", cam_id)
+        await orch.shutdown()
+    camera_registry.clear()
     logger.info("Application shutdown complete")
 
 
@@ -70,28 +57,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # App factory
 # ==============================================================================
 
-def create_app(config: Config | None = None) -> FastAPI:
-    """
-    创建并配置 FastAPI 应用。
-
-    Args:
-        config: 全局配置。如果为 None 则从环境变量加载。
-
-    Returns:
-        配置完毕的 FastAPI 应用实例。
-    """
-    if config is None:
-        config = load_config()
-
+def create_app() -> FastAPI:
+    """创建并配置 FastAPI 应用。"""
     app = FastAPI(
         title="Person ID — Robot Vision System",
-        description="实时人物识别与追踪系统 API",
-        version="0.1.0",
+        description="实时多摄像头人物识别与追踪系统 API",
+        version="0.2.0",
         lifespan=lifespan,
     )
-
-    # 保存配置到 app state
-    app.state.config = config
 
     # --- CORS ---
     app.add_middleware(
@@ -107,12 +80,15 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     # --- WebSocket endpoint ---
     @app.websocket("/ws/vision")
-    async def ws_vision(websocket: WebSocket) -> None:
-        """主 WebSocket 端点: 接收视频帧, 返回识别结果。"""
-        if _ws_handler is None:
-            await websocket.close(code=1013, reason="Server not ready")
-            return
-        await _ws_handler.handle_connection(websocket)
+    async def ws_vision(
+        websocket: WebSocket,
+        camera_id: str = Query(),
+    ) -> None:
+        """WebSocket 端点: 每个连接绑定一个摄像头。
+
+        连接方式: ws://host:port/ws/vision?camera_id=cam_01
+        """
+        await handle_ws_connection(websocket, camera_id, camera_registry)
 
     # --- Static files (frontend) ---
     frontend_path = Path(FRONTEND_DIR)
@@ -139,11 +115,8 @@ def main() -> None:
         "Starting server on {}:{}",
         config.server.host, config.server.port,
     )
-    logger.info(
-        "Frontend runs locally, connects via WebSocket to this server"
-    )
 
-    app = create_app(config)
+    app = create_app()
 
     uvicorn.run(
         app,

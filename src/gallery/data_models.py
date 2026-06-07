@@ -13,11 +13,18 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
 
+from loguru import logger
+from enum import Enum
 import numpy as np
+
+from typing import Annotated
+from pydantic import BaseModel, Field, ConfigDict, computed_field, PlainSerializer
+
+from src.config import get_config
+
+# 可序列化的 numpy 数组类型
+NdArray = Annotated[np.ndarray, PlainSerializer(lambda x: x.tolist(), return_type=list, when_used='json')]
 
 
 # ==============================================================================
@@ -39,16 +46,10 @@ class IdentityStatus(str, Enum):
     SUSPECTED = "suspected"       # 疑似: Y ≤ 最高 < X
     CONFLICT = "conflict"         # 冲突: 多人 ≥ X
     STRANGER = "stranger"         # 陌生: 所有人 < Y
+    DEFINITE = "definite"         # 笃定: 多次高置信确认, 终态
     IDENTIFYING = "identifying"   # 识别中 (Tier 2 异步处理)
     SPATIAL_INFERRED = "spatial_inferred"  # 时空约束推断
 
-
-class TrackStatus(str, Enum):
-    """追踪状态"""
-    ACTIVE = "active"         # 活跃追踪中
-    LOST = "lost"             # 暂时丢失
-    CONFIRMED = "confirmed"   # 身份已确认
-    TENTATIVE = "tentative"   # 新创建, 未确认
 
 
 class EventType(str, Enum):
@@ -69,19 +70,20 @@ class EventType(str, Enum):
 # 特征数据
 # ==============================================================================
 
-@dataclass
-class FeatureEntry:
+class FeatureEntry(BaseModel):
     """
     单条特征记录 (人脸或全身)
     
     存储 L2 归一化的特征向量，附带质量分和时间戳，
     用于底库匹配时的质量加权和时间衰减。
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     embedding: np.ndarray           # L2 归一化特征向量
     pose_bucket: PoseBucket         # 特征提取时的姿态
     quality_score: float            # 综合质量分 [0, 1]
     timestamp: float                # 提取时间 (Unix timestamp)
-    source_image: Optional[bytes] = None  # JPEG 缩略图, 供 VLM 使用
+    source_image: bytes | None = None  # JPEG 缩略图, 供 VLM 使用
 
     def time_decay_weight(self, now: float, half_life_days: float) -> float:
         """计算时间衰减权重 (指数衰减)"""
@@ -91,14 +93,15 @@ class FeatureEntry:
         return 0.5 ** (age_days / half_life_days)
 
 
-@dataclass
-class OutfitRecord:
+class OutfitRecord(BaseModel):
     """
     衣橱记录
     
     记录一套衣服的全身 ReID 特征，支持近因权重计算。
     同一人的不同衣服分开存储。
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     body_embedding: np.ndarray      # 2048 维全身特征
     quality_score: float            # 提取时的质量分
     first_seen: float               # 首次穿着时间
@@ -120,14 +123,15 @@ class OutfitRecord:
             return 0.1
 
 
-@dataclass
-class BodyProportions:
+class BodyProportions(BaseModel):
     """
     体型比例特征 (基于 COCO 17 关键点)
     
     零额外模型开销, 利用 YOLO-Pose 已输出的关键点计算骨骼几何比例。
     衣服无关的辅助身份信号。
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     torso_leg_ratio: float          # 躯干/腿长比例
     shoulder_hip_ratio: float       # 肩宽/髋宽比例
     arm_torso_ratio: float          # 手臂/躯干比例
@@ -144,7 +148,7 @@ class BodyProportions:
         ], dtype=np.float32)
 
     @staticmethod
-    def from_keypoints(keypoints: np.ndarray) -> Optional[BodyProportions]:
+    def from_keypoints(keypoints: np.ndarray) -> BodyProportions | None:
         """
         从 COCO 17 关键点提取体型比例
         
@@ -157,12 +161,12 @@ class BodyProportions:
         """
         CONF_THRESH = 0.3
 
-        def _dist(idx_a: int, idx_b: int) -> Optional[float]:
+        def _dist(idx_a: int, idx_b: int) -> float | None:
             if keypoints[idx_a, 2] < CONF_THRESH or keypoints[idx_b, 2] < CONF_THRESH:
                 return None
             return float(np.linalg.norm(keypoints[idx_a, :2] - keypoints[idx_b, :2]))
 
-        def _midpoint(idx_a: int, idx_b: int) -> Optional[np.ndarray]:
+        def _midpoint(idx_a: int, idx_b: int) -> np.ndarray | None:
             if keypoints[idx_a, 2] < CONF_THRESH or keypoints[idx_b, 2] < CONF_THRESH:
                 return None
             return (keypoints[idx_a, :2] + keypoints[idx_b, :2]) / 2.0
@@ -183,7 +187,7 @@ class BodyProportions:
         r_upper_leg = _dist(12, 14)
         r_lower_leg = _dist(14, 16)
 
-        leg_lengths = []
+        leg_lengths: list[float] = []
         if l_upper_leg and l_lower_leg:
             leg_lengths.append(l_upper_leg + l_lower_leg)
         if r_upper_leg and r_lower_leg:
@@ -204,7 +208,7 @@ class BodyProportions:
         r_upper_arm = _dist(6, 8)
         r_lower_arm = _dist(8, 10)
 
-        arm_lengths = []
+        arm_lengths: list[float] = []
         if l_upper_arm and l_lower_arm:
             arm_lengths.append(l_upper_arm + l_lower_arm)
         if r_upper_arm and r_lower_arm:
@@ -246,19 +250,27 @@ class BodyProportions:
 # 人物档案 (底库核心)
 # ==============================================================================
 
-@dataclass
-class PersonProfile:
+class PersonProfile(BaseModel):
     """
     人物档案 — 底库核心数据结构
     
     包含人脸池 (按姿态分桶) + 衣橱记忆库 + 体型比例。
     支持特征入库、衰减淘汰、换装适应。
     """
+
     person_id: str
     display_name: str
 
     # 人脸特征池 (按姿态分桶)
-    face_features: dict[PoseBucket, list[FeatureEntry]] = field(default_factory=lambda: {
+    face_features: dict[PoseBucket, list[FeatureEntry]] = Field(default_factory=lambda: {
+        PoseBucket.FRONTAL: [],
+        PoseBucket.LEFT: [],
+        PoseBucket.RIGHT: [],
+        PoseBucket.BACK: [],
+    })
+
+    # 人体特征池 (按姿态分桶) — 与人脸不同, 换装导致桶内多峰, 不做质心
+    body_features: dict[PoseBucket, list[FeatureEntry]] = Field(default_factory=lambda: {
         PoseBucket.FRONTAL: [],
         PoseBucket.LEFT: [],
         PoseBucket.RIGHT: [],
@@ -266,23 +278,19 @@ class PersonProfile:
     })
 
     # 衣橱记忆库
-    wardrobe: list[OutfitRecord] = field(default_factory=list)
+    wardrobe: list[OutfitRecord] = Field(default_factory=list)
 
     # 体型比例 (累积平均)
-    body_proportions: Optional[BodyProportions] = None
+    body_proportions: BodyProportions | None = None
     body_proportions_samples: int = 0
 
     # VLM 文字描述
-    vlm_description: Optional[str] = None
+    vlm_description: str | None = None
 
     # 元数据
-    created_at: float = field(default_factory=time.time)
-    last_seen: float = field(default_factory=time.time)
+    created_at: float = Field(default_factory=time.time)
+    last_seen: float = Field(default_factory=time.time)
     total_appearances: int = 0
-
-    # --- 配置常量 (可被 Config 覆盖) ---
-    MAX_FACES_PER_BUCKET: int = 5
-    MAX_OUTFITS: int = 20
 
     @staticmethod
     def create_new(display_name: str = "") -> PersonProfile:
@@ -293,50 +301,119 @@ class PersonProfile:
             display_name=display_name or pid,
         )
 
-    def add_face_feature(self, entry: FeatureEntry) -> bool:
+    @staticmethod
+    def _effective_quality(f: FeatureEntry, now: float,
+                           half_life_days: float) -> float:
+        """计算衰减后的有效质量 — 比例衰减, 半衰期对所有质量等级一致
+        
+        effective = quality × (1 - 0.5 × age_days / half_life_days)
+        含义: 无论原始质量多少, 经过 half_life_days 天后都精确衰减到一半
+        下限: 最多衰减到原始质量的 50%
         """
-        添加人脸特征到对应姿态桶。
-        桶满时替换质量最低的。返回是否成功添加。
-        """
-        bucket = entry.pose_bucket
-        if bucket not in self.face_features:
-            self.face_features[bucket] = []
+        age_days = (now - f.timestamp) / 86400
+        ratio = min(age_days / half_life_days, 1.0)  # 最多衰减 50%
+        return f.quality_score * (1.0 - 0.5 * ratio)
 
-        features = self.face_features[bucket]
-
-        if len(features) < self.MAX_FACES_PER_BUCKET:
+    def _enroll_feature(self, features: list[FeatureEntry], entry: FeatureEntry,
+                        max_per_bucket: int, half_life_days: float) -> bool:
+        """通用入库: 未满直接加, 满了按衰减后质量淘汰最差的"""
+        if len(features) < max_per_bucket:
             features.append(entry)
             return True
-        else:
-            # 替换质量最低的
-            min_idx = min(range(len(features)), key=lambda i: features[i].quality_score)
-            if entry.quality_score > features[min_idx].quality_score:
-                features[min_idx] = entry
-                return True
-            return False
+        
+        now = time.time()
+        min_idx = min(range(len(features)),
+                      key=lambda i: self._effective_quality(features[i], now, half_life_days))
+        
+        if entry.quality_score > self._effective_quality(features[min_idx], now, half_life_days):
+            features[min_idx] = entry
+            return True
+        return False
 
-    def add_outfit(self, body_embedding: np.ndarray, quality: float, now: Optional[float] = None):
-        """
-        添加/更新衣橱记录。
-        如果与现有衣服相似度 > 阈值, 则更新; 否则添加新记录。
-        """
-        now = now or time.time()
+    def enroll_face(self, entry: FeatureEntry) -> bool:
+        """入库人脸特征 — 质量门槛 + 时间衰减淘汰。"""
+        gallery_cfg = get_config().gallery
+        if entry.quality_score < gallery_cfg.quality_enroll_threshold:
+            logger.debug(
+                "Face quality {:.3f} below threshold {:.3f} for {}",
+                entry.quality_score, gallery_cfg.quality_enroll_threshold, self.person_id,
+            )
+            return False
+        success = self._add_feature(
+            entry, self.face_features, gallery_cfg.max_faces_per_bucket,
+            gallery_cfg.face_enroll_half_life_days,
+        )
+        if success:
+            logger.debug(
+                "Enrolled face for {} in bucket {} (quality={:.3f})",
+                self.person_id, entry.pose_bucket.value, entry.quality_score,
+            )
+        return success
+
+    def enroll_body_feature(self, entry: FeatureEntry) -> bool:
+        """入库人体特征 — 质量门槛 + 时间衰减淘汰。"""
+        gallery_cfg = get_config().gallery
+        if entry.quality_score < gallery_cfg.quality_enroll_threshold:
+            logger.debug(
+                "Body feature quality {:.3f} below threshold for {}",
+                entry.quality_score, self.person_id,
+            )
+            return False
+        success = self._add_feature(
+            entry, self.body_features, gallery_cfg.max_body_per_bucket,
+            gallery_cfg.body_enroll_half_life_days,
+        )
+        if success:
+            logger.debug(
+                "Enrolled body feature for {} in bucket {} (quality={:.3f})",
+                self.person_id, entry.pose_bucket.value, entry.quality_score,
+            )
+        return success
+
+    def _add_feature(
+        self,
+        entry: FeatureEntry,
+        pool: dict[PoseBucket, list[FeatureEntry]],
+        max_per_bucket: int,
+        half_life_days: float,
+    ) -> bool:
+        """通用特征入库: 按姿态分桶 → 衰减淘汰。"""
+        bucket = entry.pose_bucket
+        if bucket not in pool:
+            pool[bucket] = []
+        return self._enroll_feature(
+            pool[bucket], entry, max_per_bucket, half_life_days,
+        )
+
+    def enroll_outfit(self, body_embedding: np.ndarray, quality: float) -> None:
+        """入库/更新衣橱记录 — 质量门槛 + EMA 更新。"""
+        gallery_cfg = get_config().gallery
+        if quality < gallery_cfg.quality_enroll_threshold:
+            logger.debug(
+                "Body quality {:.3f} below threshold for {}",
+                quality, self.person_id,
+            )
+            return
+
+        now = time.time()
 
         # 检查是否与现有衣橱匹配
         for outfit in self.wardrobe:
             sim = float(np.dot(body_embedding, outfit.body_embedding))
-            if sim > 0.85:  # 同一套衣服
+            if sim > gallery_cfg.outfit_match_threshold:
                 # EMA 更新特征
                 alpha = 0.3
-                outfit.body_embedding = (
-                    (1 - alpha) * outfit.body_embedding + alpha * body_embedding
-                )
-                # 重新归一化
-                norm = np.linalg.norm(outfit.body_embedding)
-                if norm > 1e-6:
-                    outfit.body_embedding /= norm
+                updated = (1 - alpha) * outfit.body_embedding + alpha * body_embedding
+                norm = np.linalg.norm(updated)
+                if norm < 0.1:
+                    return
+                outfit.body_embedding = updated / norm
                 outfit.last_seen = now
                 outfit.seen_count += 1
+                logger.debug(
+                    "Updated outfit for {} (quality={:.3f}, wardrobe_size={})",
+                    self.person_id, quality, len(self.wardrobe),
+                )
                 return
 
         # 新衣服
@@ -347,15 +424,19 @@ class PersonProfile:
             last_seen=now,
         )
 
-        if len(self.wardrobe) < self.MAX_OUTFITS:
+        if len(self.wardrobe) < gallery_cfg.max_outfits:
             self.wardrobe.append(new_outfit)
         else:
-            # 淘汰最久未见的
             oldest_idx = min(range(len(self.wardrobe)), key=lambda i: self.wardrobe[i].last_seen)
             self.wardrobe[oldest_idx] = new_outfit
 
-    def update_proportions(self, proportions: BodyProportions):
-        """累积平均更新体型比例"""
+        logger.debug(
+            "Enrolled new outfit for {} (quality={:.3f}, wardrobe_size={})",
+            self.person_id, quality, len(self.wardrobe),
+        )
+
+    def update_proportions(self, proportions: BodyProportions) -> None:
+        """累积平均更新体型比例。"""
         if self.body_proportions is None:
             self.body_proportions = proportions
             self.body_proportions_samples = 1
@@ -372,8 +453,12 @@ class PersonProfile:
                 relative_height_px=proportions.relative_height_px,
             )
             self.body_proportions_samples = n + 1
+        logger.debug(
+            "Updated proportions for {} (samples={})",
+            self.person_id, self.body_proportions_samples,
+        )
 
-    def touch(self, now: Optional[float] = None):
+    def touch(self, now: float | None = None) -> None:
         """更新最后出现时间和出现次数"""
         self.last_seen = now or time.time()
         self.total_appearances += 1
@@ -387,12 +472,13 @@ class PersonProfile:
 # 流水线中间数据
 # ==============================================================================
 
-@dataclass
-class Detection:
+class Detection(BaseModel):
     """单个人体检测结果"""
-    bbox: np.ndarray                # (x1, y1, x2, y2) 像素坐标
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    bbox: NdArray                   # (x1, y1, x2, y2) 像素坐标
     confidence: float               # 检测置信度
-    keypoints: np.ndarray           # (17, 3) — x, y, conf
+    keypoints: NdArray              # (17, 3) — x, y, conf
     pose_bucket: PoseBucket = PoseBucket.UNKNOWN
     has_face: bool = False          # 是否检测到正脸
 
@@ -415,45 +501,57 @@ class Detection:
         return float(self.bbox[3] - self.bbox[1])
 
 
-@dataclass
-class TrackedPerson:
-    """追踪中的人物 (Tier 1 输出)"""
+class IdentityResult(BaseModel):
+    """Tier2/VLM 身份识别结果。
+
+    封装一次身份识别产生的所有信息，由 Tier2 或人工确认写入，
+    Tier1 在后续帧中通过缓存复用。
+    """
+    person_id: str | None = None
+    display_name: str | None = None
+    status: IdentityStatus = IdentityStatus.IDENTIFYING
+    confidence: float = 0.0
+    face_quality: float | None = None
+
+
+class TrackedPerson(BaseModel):
+    """追踪中的人物 (Tier 1 输出, 每帧重建)
+
+    纯帧级瞬态数据, 不持有任何跨帧状态。
+    身份信息由 Orchestrator 通过 TrackState.identity_result 管理。
+    """
+
     track_id: int                   # 追踪器分配的 ID
     detection: Detection            # 当前帧检测结果
-    person_id: Optional[str] = None # 身份 (底库 ID, 可能为空)
-    display_name: Optional[str] = None
-    identity_status: IdentityStatus = IdentityStatus.IDENTIFYING
-    confidence: float = 0.0         # 身份置信度
     attention_score: float = 0.0    # 注意力评分
-    is_current_target: bool = False # 是否为当前注意力目标
-    trail: list[tuple[float, float]] = field(default_factory=list)  # 中心轨迹
-    face_quality: Optional[float] = None
-    last_tier2_time: float = 0.0    # 上次 Tier 2 处理时间
+    trail: list[tuple[float, float]] = Field(default_factory=list)  # 中心轨迹
 
 
-@dataclass
-class MatchCandidate:
+class MatchCandidate(BaseModel):
     """匹配候选人"""
     person_id: str
     display_name: str
-    face_score: Optional[float] = None      # 人脸匹配分 [0, 1]
-    body_score: Optional[float] = None      # 全身匹配分 [0, 1]
-    proportion_score: Optional[float] = None # 体型匹配分 [0, 1]
+    face_score: float | None = None      # 人脸匹配分 [0, 1]
+    body_score: float | None = None      # 全身匹配分 [0, 1]
+    proportion_score: float | None = None # 体型匹配分 [0, 1]
     fused_score: float = 0.0                # 融合匹配分
+    face_match_quality: float = 0.0         # 产生人脸最高分的 query 桶质量
+    body_match_quality: float = 0.0         # 产生人体最高分的 query 桶质量
 
 
-@dataclass
-class MatchResult:
+class MatchResult(BaseModel):
     """匹配结果 (用于歧义消除)"""
-    candidates: list[MatchCandidate]        # 候选人列表 (按 fused_score 降序)
-    best_match: Optional[MatchCandidate] = None
+    candidates: list[MatchCandidate] = Field(default_factory=list)  # 候选人列表 (按 fused_score 降序)
+    best_match: MatchCandidate | None = None
     status: IdentityStatus = IdentityStatus.STRANGER
     face_quality: float = 0.0               # 当前人脸质量
 
+    @computed_field
     @property
     def top_score(self) -> float:
         return self.candidates[0].fused_score if self.candidates else 0.0
 
+    @computed_field
     @property
     def margin(self) -> float:
         """第一名和第二名的分差"""
@@ -462,44 +560,32 @@ class MatchResult:
         return self.candidates[0].fused_score - self.candidates[1].fused_score
 
 
-@dataclass
-class PipelineDebug:
+class PipelineDebug(BaseModel):
     """流水线调试信息 (用于前端可视化)"""
 
-    @dataclass
-    class StageInfo:
+    class StageInfo(BaseModel):
         status: str = "pending"     # "pending" | "running" | "done" | "skipped"
         time_ms: float = 0.0
-        details: dict = field(default_factory=dict)
+        details: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
-    detection: StageInfo = field(default_factory=StageInfo)
-    pose: StageInfo = field(default_factory=StageInfo)
-    face: StageInfo = field(default_factory=StageInfo)
-    reid: StageInfo = field(default_factory=StageInfo)
-    matching: StageInfo = field(default_factory=StageInfo)
-    identity: StageInfo = field(default_factory=StageInfo)
+    detection: StageInfo = Field(default_factory=StageInfo)
+    pose: StageInfo = Field(default_factory=StageInfo)
+    face: StageInfo = Field(default_factory=StageInfo)
+    reid: StageInfo = Field(default_factory=StageInfo)
+    matching: StageInfo = Field(default_factory=StageInfo)
+    identity: StageInfo = Field(default_factory=StageInfo)
 
 
-@dataclass
-class SystemEvent:
+class SystemEvent(BaseModel):
     """系统事件 (用于前端事件时间线)"""
     event_type: EventType
-    timestamp: float = field(default_factory=time.time)
-    track_id: Optional[int] = None
-    person_id: Optional[str] = None
-    display_name: Optional[str] = None
-    confidence: Optional[float] = None
+    timestamp: float = Field(default_factory=time.time)
+    track_id: int | None = None
+    person_id: str | None = None
+    display_name: str | None = None
+    confidence: float | None = None
     source: str = "system"          # "system" | "reid" | "vlm" | "human" | "spatial"
     message: str = ""
 
-    def to_dict(self) -> dict:
-        return {
-            "event_type": self.event_type.value,
-            "timestamp": self.timestamp,
-            "track_id": self.track_id,
-            "person_id": self.person_id,
-            "display_name": self.display_name,
-            "confidence": self.confidence,
-            "source": self.source,
-            "message": self.message,
-        }
+    def to_dict(self) -> dict[str, str | int | float | bool | None]:
+        return self.model_dump()

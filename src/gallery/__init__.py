@@ -1,32 +1,27 @@
-"""Gallery package — 底库管理、匹配、重排序与持久化。"""
-from src.gallery.matcher import GalleryMatcher
-from src.gallery.updater import GalleryUpdater
-from src.gallery.reranker import KReciprocalReranker
+from __future__ import annotations
+
 from src.gallery.persistence import GalleryPersistence
+from src.gallery.data_models import PersonProfile
 
 
-def create_gallery_matcher(config):
-    """创建底库匹配器。"""
-    return GalleryMatcher(config)
-
-
-def create_gallery_updater(config):
-    """创建底库更新器。"""
-    return GalleryUpdater(config)
-
-
-async def load_gallery(db_path):
-    """从 SQLite 加载底库。"""
-    persistence = GalleryPersistence(db_path)
+async def load_gallery(
+    db_path: str, camera_id: str,
+) -> dict[str, PersonProfile]:
+    """从 SQLite 加载指定摄像头的底库。"""
+    persistence = GalleryPersistence(db_path, camera_id)
     await persistence.initialize()
     gallery = await persistence.load_all_profiles()
     await persistence.close()
     return gallery
 
 
-async def save_gallery(db_path, gallery):
-    """保存底库到 SQLite。"""
-    persistence = GalleryPersistence(db_path)
+async def save_gallery(
+    db_path: str,
+    gallery: dict[str, PersonProfile],
+    camera_id: str,
+) -> None:
+    """保存底库到 SQLite（按 camera_id 隔离）。"""
+    persistence = GalleryPersistence(db_path, camera_id)
     await persistence.initialize()
     for profile in gallery.values():
         await persistence.save_profile(profile)
@@ -34,12 +29,7 @@ async def save_gallery(db_path, gallery):
 
 
 __all__ = [
-    "GalleryMatcher",
-    "GalleryUpdater",
-    "KReciprocalReranker",
     "GalleryPersistence",
-    "create_gallery_matcher",
-    "create_gallery_updater",
     "load_gallery",
     "save_gallery",
 ]

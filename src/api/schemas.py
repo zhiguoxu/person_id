@@ -5,9 +5,13 @@ API 数据模型 — Pydantic schemas
 """
 from __future__ import annotations
 
-from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+
+from src.gallery.data_models import IdentityResult, TrackedPerson
+
+# JSON 兼容值类型
+JsonValue = str | int | float | bool | None | list[str | int | float | bool | None] | dict[str, str | int | float | bool | None]
 
 
 # ==============================================================================
@@ -21,35 +25,26 @@ class ProcessFrameRequest(BaseModel):
 
 
 class TrackedPersonResponse(BaseModel):
-    """单个被追踪人物的响应。"""
-    track_id: int
-    bbox: Optional[list[float]] = None
-    person_id: Optional[str] = None
-    display_name: Optional[str] = None
-    identity_status: str = "identifying"
-    confidence: float = 0.0
-    attention_score: float = 0.0
+    """单个被追踪人物的响应。直接复用服务器的内部数据结构以减少组装开销。"""
+    person: TrackedPerson
+    identity_result: IdentityResult
     is_current_target: bool = False
-    face_quality: Optional[float] = None
-    trail: list[list[float]] = Field(default_factory=list)
-    thumbnail_b64: Optional[str] = None
-    keypoints: Optional[list[list[float]]] = None
-    pose_bucket: Optional[str] = None
+    thumbnail_b64: str | None = None
 
 
 class CurrentTargetResponse(BaseModel):
     """当前注意力目标。"""
-    track_id: Optional[int] = None
-    person_id: Optional[str] = None
-    display_name: Optional[str] = None
+    track_id: int | None = None
+    person_id: str | None = None
+    display_name: str | None = None
 
 
 class ProcessFrameResponse(BaseModel):
     """帧处理响应。"""
     frame_id: int = 0
     tracked_persons: list[TrackedPersonResponse] = Field(default_factory=list)
-    current_target: Optional[CurrentTargetResponse] = None
-    pending_tier2: list[int] = Field(default_factory=list)
+    current_target: CurrentTargetResponse | None = None
+    pending_vlm: list[int] = Field(default_factory=list)
     gallery_size: int = 0
     processing_ms: float = 0.0
     debug: bool = False
@@ -141,7 +136,7 @@ class PersonDetailResponse(BaseModel):
     )
     wardrobe: list[OutfitInfo] = Field(default_factory=list)
     has_proportions: bool = False
-    vlm_description: Optional[str] = None
+    vlm_description: str | None = None
     created_at: float = 0.0
     last_seen: float = 0.0
     total_appearances: int = 0
@@ -154,7 +149,7 @@ class PersonDetailResponse(BaseModel):
 class WSMessage(BaseModel):
     """WebSocket 消息基类。"""
     type: str
-    data: dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class WSFrameResult(BaseModel):
@@ -162,11 +157,11 @@ class WSFrameResult(BaseModel):
     type: str = "frame_result"
     frame_id: int = 0
     tracked_persons: list[TrackedPersonResponse] = Field(default_factory=list)
-    current_target: Optional[CurrentTargetResponse] = None
+    current_target: CurrentTargetResponse | None = None
     processing_ms: float = 0.0
     gallery_size: int = 0
-    pending_tier2: list[int] = Field(default_factory=list)
-    pipeline_debug: Optional[dict[str, Any]] = None
+    pending_vlm: list[int] = Field(default_factory=list)
+    pipeline_debug: dict[str, JsonValue] | None = None
 
 
 class WSConfigUpdate(BaseModel):
@@ -188,10 +183,10 @@ class WSEvent(BaseModel):
     type: str = "event"
     event_type: str
     timestamp: float
-    track_id: Optional[int] = None
-    person_id: Optional[str] = None
-    display_name: Optional[str] = None
-    confidence: Optional[float] = None
+    track_id: int | None = None
+    person_id: str | None = None
+    display_name: str | None = None
+    confidence: float | None = None
     source: str = "system"
     message: str = ""
 

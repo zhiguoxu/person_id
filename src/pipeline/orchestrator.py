@@ -1,435 +1,163 @@
 """
-视觉编排器 — 主流水线入口
+视觉流水线主编排器
 
-将 Tier 1（逐帧追踪）与 Tier 2（深度识别）串联，管理底库、
-事件系统、注意力选择，并为 API 层提供统一调用入口。
+负责初始化所有子模块、协调 Tier1 / Tier2 / Tier3 处理流程、
+管理底库与 per-track 状态、发出系统事件，以及选择注意力目标。
 
-典型调用链:
-  frame → Tier1.process() → 判定哪些 track 需要 Tier2 →
-  Tier2.process()（异步） → 更新缓存 / 底库 → 注意力选择 →
-  构造响应 dict
+通过 ``await VisionOrchestrator.create(config)`` 创建实例，
+所有子模块在构造时一次性加载完毕。
 """
 from __future__ import annotations
 
 import asyncio
-import base64
 import time
-from typing import Any, Optional
 
-import cv2
 import numpy as np
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
 
-from src.config import Config
+from src.config import get_config
 from src.gallery.data_models import (
     EventType,
+    IdentityResult,
     IdentityStatus,
     MatchResult,
     PersonProfile,
-    PipelineDebug,
     SystemEvent,
     TrackedPerson,
 )
-from src.pipeline.temporal_aggregator import TemporalAggregator
-from src.pipeline.tier1 import Tier1Processor
-from src.pipeline.tier2 import Tier2Processor
+from src.gallery.data_models import FeatureEntry
+from src.tier2.multi_frame_aggregator import MultiFrameAggregator
+from src.pipeline.scheduler import Tier2Action
+from src.tier1.processor import Tier1Processor
+
+from src.pipeline.track_state import TrackState
 
 
-class VisionOrchestrator:
+# ------------------------------------------------------------------
+# 主编排器
+# ------------------------------------------------------------------
+
+class VisionOrchestrator(BaseModel):
+    """视觉流水线主编排器。
+
+    统一管理检测、追踪、特征提取、匹配、Gallery 及事件系统。
+    每个 Tier 处理器自行创建所需子模块，编排器仅负责协调。
+
+    使用 ``await VisionOrchestrator.create()`` 创建实例。
     """
-    视觉流水线主编排器。
 
-    负责初始化所有子模块、协调 Tier1 / Tier2 处理流程、
-    管理底库、发出系统事件，以及选择注意力目标。
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    Args:
-        config: 全局配置对象。
-    """
+    # --- 摄像头标识 ---
+    camera_id: str
 
-    def __init__(self, config: Config) -> None:
-        self._config = config
+    # --- Pipeline 处理器 ---
+    tier1: Tier1Processor = Field(default_factory=Tier1Processor)
 
-        # --- Sub-modules (延迟初始化) ---
-        self._detector_fast: Any = None
-        self._detector_heavy: Any = None
-        self._tracker: Any = None
-        self._face_extractor: Any = None
-        self._body_extractor: Any = None
-        self._gallery_matcher: Any = None
-        self._gallery_updater: Any = None
-        self._reranker: Any = None
-        self._fusion: Any = None
-        self._resolver: Any = None
-        self._vlm: Any = None
-        self._attention_engine: Any = None
+    # --- Gallery ---
+    gallery: dict[str, PersonProfile] = Field(default_factory=dict)
 
-        # --- Pipeline processors ---
-        self._tier1: Optional[Tier1Processor] = None
-        self._tier2: Optional[Tier2Processor] = None
-        self._temporal_aggregator = TemporalAggregator(
-            window_size=config.temporal.window_size
+    # --- Per-track 状态 ---
+    tracks: dict[int, TrackState] = Field(default_factory=dict)
+
+    # --- 异步任务 ---
+    save_lock: asyncio.Lock = Field(default_factory=asyncio.Lock)
+
+    # --- 事件系统 ---
+    event_log: list[SystemEvent] = Field(default_factory=list)
+    new_events: list[SystemEvent] = Field(default_factory=list)
+    max_events: int = 200
+    last_event_time: dict[str, float] = Field(default_factory=dict)
+    event_cooldown_sec: float = 10.0
+
+    # --- 帧计数与注意力 ---
+    frame_count: int = 0
+    current_target_id: int | None = None
+
+    # ==================================================================
+    # Factory
+    # ==================================================================
+
+    @classmethod
+    async def create(cls, camera_id: str) -> VisionOrchestrator:
+        """工厂方法：创建指定摄像头的 VisionOrchestrator。
+
+        Args:
+            camera_id: 摄像头标识，用于隔离 Gallery 和追踪状态。
+        """
+        logger.info("Initializing VisionOrchestrator (camera={}) ...", camera_id)
+        orch = cls(camera_id=camera_id)
+        await orch._load_gallery_from_db()
+
+        logger.info(
+            "VisionOrchestrator [{}] initialized (gallery: {} persons)",
+            camera_id, len(orch.gallery),
         )
-
-        # --- Gallery ---
-        self._gallery: dict[str, PersonProfile] = {}
-
-        # --- State ---
-        self._pending_tier2: dict[int, asyncio.Task] = {}
-        self._tier2_results: dict[int, MatchResult] = {}
-        self._tier2_debug: dict[int, Any] = {}  # track_id → PipelineDebug
-        self._current_target_id: Optional[int] = None
-        self._event_log: list[SystemEvent] = []
-        self._new_events: list[SystemEvent] = []  # 待广播队列
-        self._max_events = 200  # 保留最近 N 条事件
-
-        # --- Frame counter ---
-        self._frame_count = 0
-        self._initialized = False
-        # 事件去重: status_value → 上次发送时间
-        self._last_event_time: dict[str, float] = {}
-        self._event_cooldown_sec = 10.0  # 同类事件全局冷却 10 秒
-
-        logger.info("VisionOrchestrator created")
+        return orch
 
     # ==================================================================
     # Lifecycle
     # ==================================================================
 
-    async def initialize(self) -> None:
-        """
-        初始化所有子模块: 加载模型、连接数据库。
-
-        应在开始处理帧之前调用一次。
-        """
-        if self._initialized:
-            logger.warning("Orchestrator already initialized, skipping")
-            return
-
-        logger.info("Initializing VisionOrchestrator ...")
-
-        # --- 检测器 ---
-        try:
-            from src.detection import create_detector  # type: ignore
-
-            self._detector_fast = create_detector(
-                self._config, tier="fast"
-            )
-            self._detector_heavy = create_detector(
-                self._config, tier="heavy"
-            )
-            logger.info("Detectors loaded")
-        except Exception as e:
-            logger.warning(
-                "Detection module not available ({}); using stub detectors", e
-            )
-            self._detector_fast = _StubDetector()
-            self._detector_heavy = _StubDetector()
-
-        # --- 追踪器 ---
-        try:
-            from src.tracking import create_tracker  # type: ignore
-
-            self._tracker = create_tracker(self._config)
-            logger.info("Tracker loaded")
-        except Exception as e:
-            logger.warning("Tracking module not available ({}); using stub tracker", e)
-            self._tracker = _StubTracker()
-
-        # --- 人脸提取 ---
-        try:
-            from src.features import create_face_extractor  # type: ignore
-
-            self._face_extractor = create_face_extractor(self._config)
-            logger.info("Face extractor loaded")
-        except Exception as e:
-            logger.warning("Face extractor not available ({}); using stub", e)
-            self._face_extractor = _StubFaceExtractor()
-
-        # --- Body ReID ---
-        try:
-            from src.features import create_body_extractor  # type: ignore
-
-            self._body_extractor = create_body_extractor(self._config)
-            logger.info("Body extractor loaded")
-        except Exception as e:
-            logger.warning("Body extractor not available ({}); using stub", e)
-            self._body_extractor = _StubBodyExtractor()
-
-        # --- Gallery 匹配 / 更新 ---
-        try:
-            from src.gallery import (  # type: ignore
-                create_gallery_matcher,
-                create_gallery_updater,
-            )
-
-            self._gallery_matcher = create_gallery_matcher(self._config)
-            self._gallery_updater = create_gallery_updater(self._config)
-            logger.info("Gallery matcher/updater loaded")
-        except Exception as e:
-            logger.warning("Gallery module not available ({}); using stubs", e)
-            self._gallery_matcher = _StubMatcher()
-            self._gallery_updater = _StubUpdater()
-
-        # --- Reranker / Fusion / Resolver ---
-        try:
-            from src.identity import (  # type: ignore
-                create_reranker,
-                create_fusion,
-                create_resolver,
-            )
-
-            self._reranker = create_reranker(self._config)
-            self._fusion = create_fusion(self._config)
-            self._resolver = create_resolver(self._config)
-            logger.info("Identity modules loaded")
-        except Exception as e:
-            logger.warning("Identity modules not available ({}); using stubs", e)
-            self._reranker = _StubReranker()
-            self._fusion = _StubFusion()
-            self._resolver = _StubResolver()
-
-        # --- VLM ---
-        try:
-            from src.perception import create_vlm  # type: ignore
-
-            self._vlm = create_vlm(self._config)
-            logger.info("VLM loaded")
-        except Exception as e:
-            logger.warning("VLM module not available ({}); using stub", e)
-            self._vlm = _StubVLM()
-
-        # --- Attention ---
-        try:
-            from src.attention import create_attention_engine  # type: ignore
-
-            self._attention_engine = create_attention_engine(self._config)
-            logger.info("Attention engine loaded")
-        except Exception as e:
-            logger.warning("Attention engine not available ({})", e)
-            self._attention_engine = None
-
-        # --- 构建 Tier 处理器 ---
-        self._tier1 = Tier1Processor(
-            config=self._config,
-            detector=self._detector_fast,
-            tracker=self._tracker,
-            attention_engine=self._attention_engine,
-        )
-
-        self._tier2 = Tier2Processor(
-            config=self._config,
-            heavy_detector=self._detector_heavy,
-            face_extractor=self._face_extractor,
-            body_extractor=self._body_extractor,
-            gallery_matcher=self._gallery_matcher,
-            gallery_updater=self._gallery_updater,
-            reranker=self._reranker,
-            fusion=self._fusion,
-            resolver=self._resolver,
-            vlm=self._vlm,
-            temporal_aggregator=self._temporal_aggregator,
-        )
-
-        # --- 加载底库 ---
-        await self._load_gallery_from_db()
-
-        self._initialized = True
-        logger.info(
-            "VisionOrchestrator initialized (gallery: {} persons)",
-            len(self._gallery),
-        )
-
     async def shutdown(self) -> None:
-        """清理资源: 取消异步任务、保存底库、释放模型。"""
+        """清理资源: 取消异步任务、保存底库。"""
         logger.info("Shutting down VisionOrchestrator ...")
 
-        # 取消所有挂起的 Tier 2 任务
-        for task in self._pending_tier2.values():
-            task.cancel()
-        self._pending_tier2.clear()
+        for state in self.tracks.values():
+            state.cancel_vlm()
 
-        # 持久化底库
         await self._save_gallery_to_db()
-
-        # 清理
-        self._temporal_aggregator.clear()
-        self._initialized = False
+        self.tracks.clear()
         logger.info("VisionOrchestrator shutdown complete")
 
     # ==================================================================
     # Frame Processing
     # ==================================================================
 
-    async def process_frame(self, frame: np.ndarray) -> dict:
-        """
-        处理一帧图像并返回结果字典。
+    async def process_frame(self, frame: np.ndarray) -> dict[str, object]:
+        """处理一帧图像并返回结果。
 
         Args:
             frame: BGR 图像 (H, W, 3)。
 
         Returns:
-            包含 tracked_persons, current_target, events 的字典。
+            包含 tracked_persons, current_target, events, pipeline_debug 的字典。
         """
-        if not self._initialized:
-            return {"error": "not_initialized", "tracked_persons": []}
-
-        self._frame_count += 1
+        self.frame_count += 1
         t0 = time.perf_counter()
 
-        # --- Tier 1 ---
-        assert self._tier1 is not None
-        t_det = time.perf_counter()
-        persons = self._tier1.process(frame)
-        tier1_ms = (time.perf_counter() - t_det) * 1000
+        # --- Tier 1: 检测 + 追踪 + 注意力 ---
+        persons = self.tier1.process(frame)
+        tier1_ms = (time.perf_counter() - t0) * 1000
 
-        # --- 判定需要 Tier 2 的 track ---
-        tier2_tracks = self._select_tier2_candidates(persons)
+        # --- 帧注入 tracks + 状态管理 ---
+        active_states = self._feed_all(persons, frame)
+        self._cleanup_stale_tracks({s.person.track_id for s in active_states})
 
-        # --- 启动 Tier 2 异步任务 ---
-        for person in tier2_tracks:
-            if person.track_id not in self._pending_tier2:
-                task = asyncio.create_task(
-                    self._run_tier2(frame, person)
-                )
-                self._pending_tier2[person.track_id] = task
+        # --- 逐 track 处理 (VLM 应用 + Tier2 + VLM 触发) ---
+        gallery_dirty = False
+        for state in active_states:
+            result, action = state.resolve(self.gallery)
+            if result is None:
+                continue
+            if self._apply_track_result(state, result, action):
+                gallery_dirty = True
 
-        # --- 收集已完成的 Tier 2 结果 ---
-        self._collect_tier2_results()
-
-        # --- 应用 Tier 2 结果到 persons, 收集 debug ---
-        latest_t2_debug = None
-        for person in persons:
-            result = self._tier2_results.pop(person.track_id, None)
-            if result is not None:
-                self._apply_match_result(person, result)
-                # 取最新完成的 Tier 2 debug
-                t2_dbg = self._tier2_debug.pop(person.track_id, None)
-                if t2_dbg is not None:
-                    latest_t2_debug = t2_dbg
+        # 统一：设 force_probe + 异步落盘
+        if gallery_dirty:
+            self._on_gallery_updated()
+            asyncio.ensure_future(self._save_gallery_to_db())
 
         # --- 注意力选择 ---
-        current_target = self._select_target(persons)
+        self._select_target(active_states)
 
         # --- 构建响应 ---
         elapsed_ms = (time.perf_counter() - t0) * 1000
-
-        # --- 构建 pipeline_debug ---
-        has_tier2 = latest_t2_debug is not None
-        has_pending = len(self._pending_tier2) > 0
-        n_identified = sum(1 for p in persons if p.person_id)
-        n_identifying = sum(1 for p in persons if p.identity_status == IdentityStatus.IDENTIFYING)
-
-        if has_tier2:
-            # 使用真实的 Tier 2 调试数据
-            t2 = latest_t2_debug
-            pipeline_debug = {
-                "detection": {
-                    "status": "done",
-                    "time_ms": round(tier1_ms, 1),
-                    "details": {"count": len(persons)},
-                },
-                "pose": {
-                    "status": t2.pose.status,
-                    "time_ms": round(t2.pose.time_ms, 1),
-                    "details": t2.pose.details,
-                },
-                "face": {
-                    "status": t2.face.status,
-                    "time_ms": round(t2.face.time_ms, 1),
-                    "details": {
-                        "results": [
-                            {
-                                "track_id": p.track_id,
-                                "extracted": p.face_quality is not None,
-                                "quality": p.face_quality,
-                            }
-                            for p in persons
-                        ]
-                    },
-                },
-                "reid": {
-                    "status": t2.reid.status,
-                    "time_ms": round(t2.reid.time_ms, 1),
-                    "details": t2.reid.details,
-                },
-                "matching": {
-                    "status": t2.matching.status,
-                    "time_ms": round(t2.matching.time_ms, 1),
-                    "details": {
-                        "results": [
-                            {
-                                "track_id": p.track_id,
-                                "decision": p.identity_status.value,
-                                "matched_id": p.person_id,
-                                "candidates": [],
-                            }
-                            for p in persons
-                        ]
-                    },
-                },
-                "identity": {
-                    "status": t2.identity.status,
-                    "time_ms": round(t2.identity.time_ms, 1),
-                    "details": {
-                        "confirmed": n_identified,
-                        "identifying": n_identifying,
-                        "vlm_pending": len(self._pending_tier2),
-                    },
-                },
-            }
-        else:
-            # Tier 2 未完成, 显示 pending 状态
-            pending_status = "running" if has_pending else "pending"
-            pipeline_debug = {
-                "detection": {
-                    "status": "done",
-                    "time_ms": round(tier1_ms, 1),
-                    "details": {"count": len(persons)},
-                },
-                "pose": {"status": pending_status, "time_ms": 0, "details": {}},
-                "face": {"status": pending_status, "time_ms": 0, "details": {}},
-                "reid": {"status": pending_status, "time_ms": 0, "details": {}},
-                "matching": {"status": pending_status, "time_ms": 0, "details": {}},
-                "identity": {
-                    "status": pending_status,
-                    "time_ms": 0,
-                    "details": {
-                        "confirmed": n_identified,
-                        "identifying": n_identifying,
-                        "vlm_pending": len(self._pending_tier2),
-                    },
-                },
-            }
-
-        response = self._build_response(persons, current_target, elapsed_ms)
-        response["pipeline_debug"] = pipeline_debug
-
-        return response
-
-    async def process_frame_with_debug(self, frame: np.ndarray) -> dict:
-        """
-        与 process_frame 相同，但包含详细调试信息和缩略图。
-
-        Args:
-            frame: BGR 图像 (H, W, 3)。
-
-        Returns:
-            带 pipeline_debug 和 thumbnails 的完整响应字典。
-        """
-        response = await self.process_frame(frame)
-
-        # 附加缩略图
-        for person_data in response.get("tracked_persons", []):
-            track_id = person_data.get("track_id")
-            if track_id is None:
-                continue
-            # 生成 base64 缩略图
-            bbox = person_data.get("bbox")
-            if bbox:
-                thumb = self._generate_thumbnail(frame, bbox)
-                person_data["thumbnail_b64"] = thumb
-
-        response["debug"] = True
+        response = self._build_response(active_states, elapsed_ms)
+        response["pipeline_debug"] = self._build_debug(
+            active_states, tier1_ms, elapsed_ms,
+        )
         return response
 
     # ==================================================================
@@ -437,10 +165,9 @@ class VisionOrchestrator:
     # ==================================================================
 
     async def confirm_identity(
-        self, track_id: int, person_id: str, name: str
+            self, track_id: int, person_id: str, name: str
     ) -> None:
-        """
-        人工确认身份（Human-in-the-loop）。
+        """人工确认身份。
 
         Args:
             track_id: 需要确认的轨迹 ID。
@@ -449,33 +176,28 @@ class VisionOrchestrator:
         """
         logger.info(
             "Human confirmed: track_id={} → person_id={}, name={}",
-            track_id,
-            person_id,
-            name,
+            track_id, person_id, name,
         )
 
-        # 确保底库中存在该 profile
-        if person_id not in self._gallery:
+        if person_id not in self.gallery:
             profile = PersonProfile.create_new(display_name=name)
             profile.person_id = person_id
-            self._gallery[person_id] = profile
+            self.gallery[person_id] = profile
             logger.info("Created new profile for {}", person_id)
 
-        profile = self._gallery[person_id]
+        profile = self.gallery[person_id]
         profile.display_name = name
         profile.touch()
 
-        # 更新 Tier 1 缓存
-        if self._tier1:
-            self._tier1.update_identity(
-                track_id=track_id,
+        state = self.tracks.get(track_id)
+        if state is not None:
+            state.identity_result = IdentityResult(
                 person_id=person_id,
                 display_name=name,
                 status=IdentityStatus.CONFIDENT,
                 confidence=1.0,
             )
 
-        # 发出事件
         self._emit_event(
             EventType.HUMAN_CONFIRMED,
             track_id=track_id,
@@ -487,232 +209,339 @@ class VisionOrchestrator:
         )
 
     # ==================================================================
-    # Gallery access
+    # Properties
     # ==================================================================
-
-    @property
-    def gallery(self) -> dict[str, PersonProfile]:
-        """当前底库。"""
-        return self._gallery
 
     @property
     def events(self) -> list[SystemEvent]:
         """事件日志。"""
-        return self._event_log
+        return self.event_log
 
     def drain_new_events(self) -> list[SystemEvent]:
         """取出并清空待广播事件队列。"""
-        events = self._new_events
-        self._new_events = []
+        events = self.new_events
+        self.new_events = []
         return events
 
-    @property
-    def config(self) -> Config:
-        """当前配置。"""
-        return self._config
-
     # ==================================================================
-    # Internal helpers
+    # Per-track 状态管理 (原 CameraPipeline)
     # ==================================================================
 
-    def _select_tier2_candidates(
-        self, persons: list[TrackedPerson]
-    ) -> list[TrackedPerson]:
-        """判定哪些 track 需要 Tier 2 深度识别。"""
-        now = time.time()
-        refresh_interval = self._config.tracking.tier2_refresh_interval_sec
-        candidates: list[TrackedPerson] = []
-
-        for p in persons:
-            # 跳过已在处理中的
-            if p.track_id in self._pending_tier2:
-                continue
-
-            needs_tier2 = False
-
-            # 新目标 / 未识别
-            if p.identity_status == IdentityStatus.IDENTIFYING:
-                needs_tier2 = True
-
-            # 疑似 / 冲突需要刷新
-            elif p.identity_status in (
-                IdentityStatus.SUSPECTED,
-                IdentityStatus.CONFLICT,
-            ):
-                needs_tier2 = True
-
-            # 定期刷新
-            elif (now - p.last_tier2_time) > refresh_interval:
-                needs_tier2 = True
-
-            if needs_tier2:
-                candidates.append(p)
-
-        return candidates
-
-    async def _run_tier2(
-        self, frame: np.ndarray, person: TrackedPerson
-    ) -> None:
-        """异步运行 Tier 2 并存储结果。"""
-        try:
-            assert self._tier2 is not None
-            result, debug = await self._tier2.process(frame, person, self._gallery)
-            self._tier2_results[person.track_id] = result
-            self._tier2_debug[person.track_id] = debug
-        except asyncio.CancelledError:
-            logger.debug("Tier2 task cancelled for track_id={}", person.track_id)
-        except Exception:
-            logger.exception(
-                "Tier2 processing failed for track_id={}", person.track_id
-            )
-        finally:
-            self._pending_tier2.pop(person.track_id, None)
-
-    def _collect_tier2_results(self) -> None:
-        """收集已完成的 Tier 2 任务。"""
-        done_ids = []
-        for track_id, task in self._pending_tier2.items():
-            if task.done():
-                done_ids.append(track_id)
-                # 异常在 _run_tier2 中已处理
-        for track_id in done_ids:
-            self._pending_tier2.pop(track_id, None)
-
-    def _apply_match_result(
-        self, person: TrackedPerson, result: MatchResult
-    ) -> None:
-        """将 Tier 2 匹配结果应用到 TrackedPerson 和缓存。"""
-        person.identity_status = result.status
-        person.face_quality = result.face_quality
-
-        if result.best_match:
-            person.person_id = result.best_match.person_id
-            person.display_name = result.best_match.display_name
-            person.confidence = result.best_match.fused_score
+    def _get_or_create_track(self, person: TrackedPerson) -> TrackState:
+        """获取或创建 track 状态，并同步 person 引用。"""
+        tid = person.track_id
+        if tid not in self.tracks:
+            self.tracks[tid] = TrackState(person=person)
         else:
-            person.person_id = None
-            person.display_name = None
-            person.confidence = 0.0
+            # 每帧更新 person 引用，避免 _on_gallery_updated 设置 force_probe 到旧对象
+            self.tracks[tid].person = person
+        return self.tracks[tid]
 
-        # 更新 Tier 1 缓存
-        if self._tier1:
-            self._tier1.update_identity(
-                track_id=person.track_id,
-                person_id=person.person_id,
-                display_name=person.display_name,
-                status=person.identity_status,
-                confidence=person.confidence,
-                face_quality=person.face_quality,
+    def _feed_all(
+            self, persons: list[TrackedPerson], frame: np.ndarray,
+    ) -> list[TrackState]:
+        """将所有检测结果注入 per-track buffer，返回活跃 TrackState 列表。"""
+        active_states: list[TrackState] = []
+        for person in persons:
+            state = self._get_or_create_track(person)
+            state.feed_frame(frame)
+            active_states.append(state)
+        return active_states
+
+    def _cleanup_stale_tracks(self, active_ids: set[int]) -> None:
+        """清理不再活跃的 track (含取消其 VLM 任务)。"""
+        stale = set(self.tracks.keys()) - active_ids
+        for tid in stale:
+            state = self.tracks.pop(tid, None)
+            if state is not None:
+                state.cancel_vlm()
+        if stale:
+            logger.debug("Cleaned {} stale tracks", len(stale))
+
+    def _on_gallery_updated(self) -> None:
+        """Gallery 更新后，所有非 DEFINITE 的 track 标记 force_probe。"""
+        count = 0
+        for state in self.tracks.values():
+            if state.identity_result.status != IdentityStatus.DEFINITE:
+                state.force_probe = True
+                count += 1
+        if count:
+            logger.debug(
+                "Set force_probe on {} non-DEFINITE tracks",
+                count,
             )
 
-        # 发出事件 (全局冷却: 同类事件 N 秒内只发一次)
+    # ==================================================================
+    # Tier 调度与执行
+    # ==================================================================
+    def _apply_track_result(
+            self, state: TrackState, result: MatchResult, action: Tier2Action,
+    ) -> bool:
+        """副作用阶段: 事件发送 + Gallery 更新。
+
+        Returns:
+            是否有 gallery 更新 (gallery_dirty)。
+        """
+        track_id = state.person.track_id
+        is_definite = result.status == IdentityStatus.DEFINITE
+        gallery_dirty = False
+
+        if action == Tier2Action.TRIGGER_ENRICH:
+            state.last_enrich_time = time.monotonic()
+            if is_definite and result.best_match.person_id == state.identity_result.person_id:
+                self._update_gallery(result, state)
+                gallery_dirty = True
+        else:
+            # REID 或 VLM 结果
+            self._emit_match_event(track_id, result)
+            if is_definite:
+                self._update_gallery(result, state)
+                gallery_dirty = True
+
+        return gallery_dirty
+
+    def _update_gallery(
+            self,
+            result: MatchResult,
+            state: TrackState,
+    ) -> None:
+        """统一的 Gallery 更新：从 QualityCache 写入特征到底库。
+
+        Tier2 和 Tier3 的 DEFINITE 结果均通过此方法更新 Gallery。
+        """
+        if not result.best_match:
+            return
+
+        pid = result.best_match.person_id
+        profile = self.gallery.get(pid)
+        if not profile:
+            return
+
+        cache = state.quality_cache
+        gallery_cfg = get_config().gallery
+
+        # 人脸: 每个姿态桶取质量最高的帧
+        face_best: dict = {}
+        if cache.face_pool:
+            for cf in cache.face_pool:
+                if cf.is_extracted and cf.face_embedding is not None and cf.face_quality >= gallery_cfg.quality_enroll_threshold:
+                    pose = cf.entry.pose_bucket
+                    if pose not in face_best or cf.face_quality > face_best[pose].face_quality:
+                        face_best[pose] = cf
+
+        for pose, cf in face_best.items():
+            profile.enroll_face(FeatureEntry(
+                embedding=cf.face_embedding,
+                pose_bucket=pose,
+                quality_score=cf.face_quality,
+                timestamp=cf.entry.timestamp,
+            ))
+
+        # 人体: 每个姿态桶取质量最高的帧
+        body_best: dict = {}
+        if cache.body_pool:
+            for cf in cache.body_pool:
+                if cf.is_extracted and cf.body_embedding is not None:
+                    pose = cf.entry.pose_bucket
+                    if pose not in body_best or cf.body_quality > body_best[pose].body_quality:
+                        body_best[pose] = cf
+
+        for pose, cf in body_best.items():
+            profile.enroll_body_feature(FeatureEntry(
+                embedding=cf.body_embedding,
+                pose_bucket=pose,
+                quality_score=cf.body_quality,
+                timestamp=cf.entry.timestamp,
+            ))
+
+        # 服装: 最高质量 body embedding
+        if body_best:
+            best_cf = max(body_best.values(), key=lambda cf: cf.body_quality)
+            profile.enroll_outfit(best_cf.body_embedding, best_cf.body_quality)
+
+        # 体型比例
+        aggregated = MultiFrameAggregator.aggregate_from_cache(cache)
+        if aggregated.proportions is not None:
+            profile.update_proportions(aggregated.proportions)
+
+        profile.touch(time.time())
+        logger.info("Gallery updated for person_id={}", pid)
+
+    def _emit_match_event(
+            self, track_id: int, result: MatchResult,
+    ) -> None:
+        """根据匹配结果发出事件（带全局冷却）。"""
         now = time.time()
-        event_key = result.status.value  # 按状态全局冷却
-        last_time = self._last_event_time.get(event_key, 0)
+        event_key = f"{result.status.value}:{track_id}"
+        if (now - self.last_event_time.get(event_key, 0)) <= self.event_cooldown_sec:
+            return
 
-        if (now - last_time) > self._event_cooldown_sec:
-            self._last_event_time[event_key] = now
+        self.last_event_time[event_key] = now
 
-            if result.status == IdentityStatus.CONFIDENT and result.best_match:
-                self._emit_event(
-                    EventType.IDENTITY_CONFIRMED,
-                    track_id=person.track_id,
-                    person_id=result.best_match.person_id,
-                    display_name=result.best_match.display_name,
-                    confidence=result.best_match.fused_score,
-                    source="reid",
-                )
-            elif result.status == IdentityStatus.CONFLICT:
-                self._emit_event(
-                    EventType.IDENTITY_CONFLICT,
-                    track_id=person.track_id,
-                    source="reid",
-                    message=f"Conflict among {len(result.candidates)} candidates",
-                )
-            elif result.status == IdentityStatus.STRANGER:
-                self._emit_event(
-                    EventType.NEW_PERSON,
-                    track_id=person.track_id,
-                    source="system",
-                    message="New person detected (stranger)",
-                )
+        if result.status == IdentityStatus.CONFIDENT and result.best_match:
+            self._emit_event(
+                EventType.IDENTITY_CONFIRMED,
+                track_id=track_id,
+                person_id=result.best_match.person_id,
+                display_name=result.best_match.display_name,
+                confidence=result.best_match.fused_score,
+                source="reid",
+            )
+        elif result.status == IdentityStatus.CONFLICT:
+            self._emit_event(
+                EventType.IDENTITY_CONFLICT,
+                track_id=track_id,
+                source="reid",
+                message=f"Conflict among {len(result.candidates)} candidates",
+            )
+        elif result.status == IdentityStatus.STRANGER:
+            self._emit_event(
+                EventType.NEW_PERSON,
+                track_id=track_id,
+                source="system",
+                message="New person detected (stranger)",
+            )
+
+    # 目标切换滞后阈值
+    _HYSTERESIS_MARGIN: float = 0.15
 
     def _select_target(
-        self, persons: list[TrackedPerson]
-    ) -> Optional[TrackedPerson]:
-        """选择注意力最高的目标。"""
-        if not persons:
-            self._current_target_id = None
-            return None
+            self, active_states: list[TrackState],
+    ) -> None:
+        """选择注意力最高的目标（带滞后防抖）。
 
-        # 按注意力分降序排列
-        best = max(persons, key=lambda p: p.attention_score)
+        当前目标享有 _HYSTERESIS_MARGIN 的防抖优势，
+        只有当新目标的分数超过当前目标分数 + margin 时才会切换，
+        避免两人分数接近时目标来回跳动。
+        """
+        if not active_states:
+            self.current_target_id = None
+            return
+
+        for s in active_states:
+            s.is_current_target = False
+
+        best = max(active_states, key=lambda s: s.person.attention_score)
+
+        # 如果当前有目标且仍然活跃，应用滞后判断
+        if self.current_target_id is not None:
+            current_state = next(
+                (s for s in active_states if s.person.track_id == self.current_target_id),
+                None,
+            )
+            if current_state is not None:
+                current_score = current_state.person.attention_score
+                best_score = best.person.attention_score
+                # 新目标必须超过当前目标 + margin 才切换
+                if best_score < current_score + self._HYSTERESIS_MARGIN:
+                    best = current_state
+
         best.is_current_target = True
-        self._current_target_id = best.track_id
+        self.current_target_id = best.person.track_id
 
-        # 取消其他人的目标标记
-        for p in persons:
-            if p.track_id != best.track_id:
-                p.is_current_target = False
-
-        return best
+    # ==================================================================
+    # 响应构建
+    # ==================================================================
 
     def _build_response(
-        self,
-        persons: list[TrackedPerson],
-        target: Optional[TrackedPerson],
-        elapsed_ms: float,
-    ) -> dict:
+            self,
+            active_states: list[TrackState],
+            elapsed_ms: float,
+    ) -> dict[str, object]:
         """构建 API 响应字典。"""
         tracked = []
-        for p in persons:
-            tracked.append(
-                {
-                    "track_id": p.track_id,
-                    "bbox": p.detection.bbox.tolist() if p.detection.bbox is not None else None,
-                    "keypoints": p.detection.keypoints.tolist() if p.detection.keypoints is not None else None,
-                    "pose_bucket": p.detection.pose_bucket.value if p.detection.pose_bucket else None,
-                    "person_id": p.person_id,
-                    "display_name": p.display_name,
-                    "identity_status": p.identity_status.value,
-                    "confidence": round(p.confidence, 3),
-                    "attention_score": round(p.attention_score, 3),
-                    "is_current_target": p.is_current_target,
-                    "face_quality": (
-                        round(p.face_quality, 3)
-                        if p.face_quality is not None
-                        else None
-                    ),
-                    "trail": p.trail[-20:],  # 最近 20 点
+        for s in active_states:
+            tracked.append({
+                "person": s.person,
+                "identity_result": s.identity_result,
+                "is_current_target": s.is_current_target,
+            })
+
+        current_target_info = None
+        if self.current_target_id is not None:
+            ts = self.tracks.get(self.current_target_id)
+            if ts is not None:
+                tir = ts.identity_result
+                current_target_info = {
+                    "track_id": self.current_target_id,
+                    "person_id": tir.person_id,
+                    "display_name": tir.display_name,
                 }
-            )
 
         return {
-            "frame_id": self._frame_count,
+            "frame_id": self.frame_count,
             "tracked_persons": tracked,
-            "current_target": (
-                {
-                    "track_id": target.track_id,
-                    "person_id": target.person_id,
-                    "display_name": target.display_name,
-                }
-                if target
-                else None
-            ),
-            "pending_tier2": list(self._pending_tier2.keys()),
-            "gallery_size": len(self._gallery),
+            "current_target": current_target_info,
+            "pending_vlm": [s.person.track_id for s in active_states if s.vlm_task is not None],
+            "gallery_size": len(self.gallery),
             "processing_ms": round(elapsed_ms, 1),
         }
 
+    @staticmethod
+    def _build_debug(
+            active_states: list[TrackState],
+            tier1_ms: float,
+            total_ms: float,
+    ) -> dict[str, object]:
+        """构建 pipeline_debug 字典。"""
+        n_states = len(active_states)
+        n_identified = sum(1 for s in active_states if s.identity_result.person_id)
+        n_identifying = sum(1 for s in active_states if s.identity_result.status == IdentityStatus.IDENTIFYING)
+        n_vlm_pending = sum(1 for s in active_states if s.vlm_task is not None)
+        has_tier2 = total_ms - tier1_ms > 1.0  # 有显著 tier2 耗时
+
+        if has_tier2:
+            tier2_ms = total_ms - tier1_ms
+            return {
+                "detection": {"status": "done", "time_ms": round(tier1_ms, 1), "details": {"count": n_states}},
+                "pose": {"status": "done", "time_ms": 0, "details": {}},
+                "face": {"status": "done", "time_ms": 0, "details": {
+                    "results": [
+                        {"track_id": s.person.track_id,
+                         "extracted": s.identity_result.face_quality is not None,
+                         "quality": s.identity_result.face_quality}
+                        for s in active_states],
+                }},
+                "reid": {"status": "done", "time_ms": round(tier2_ms, 1),
+                         "details": {"multiframe": True}},
+                "matching": {"status": "done", "time_ms": 0, "details": {
+                    "results": [
+                        {"track_id": s.person.track_id,
+                         "decision": s.identity_result.status.value,
+                         "matched_id": s.identity_result.person_id,
+                         "candidates": []}
+                        for s in active_states],
+                }},
+                "identity": {"status": "done", "time_ms": 0,
+                             "details": {"confirmed": n_identified, "identifying": n_identifying,
+                                         "vlm_pending": n_vlm_pending}},
+            }
+
+        pending_status = "running" if n_vlm_pending > 0 else "pending"
+        return {
+            "detection": {"status": "done", "time_ms": round(tier1_ms, 1), "details": {"count": n_states}},
+            "pose": {"status": pending_status, "time_ms": 0, "details": {}},
+            "face": {"status": pending_status, "time_ms": 0, "details": {}},
+            "reid": {"status": pending_status, "time_ms": 0, "details": {}},
+            "matching": {"status": pending_status, "time_ms": 0, "details": {}},
+            "identity": {"status": pending_status, "time_ms": 0, "details": {
+                "confirmed": n_identified, "identifying": n_identifying, "vlm_pending": n_vlm_pending,
+            }},
+        }
+
+    # ==================================================================
+    # 事件系统
+    # ==================================================================
+
     def _emit_event(
-        self,
-        event_type: EventType,
-        track_id: Optional[int] = None,
-        person_id: Optional[str] = None,
-        display_name: Optional[str] = None,
-        confidence: Optional[float] = None,
-        source: str = "system",
-        message: str = "",
+            self,
+            event_type: EventType,
+            track_id: int | None = None,
+            person_id: str | None = None,
+            display_name: str | None = None,
+            confidence: float | None = None,
+            source: str = "system",
+            message: str = "",
     ) -> None:
         """发出系统事件并加入日志。"""
         event = SystemEvent(
@@ -724,170 +553,55 @@ class VisionOrchestrator:
             source=source,
             message=message,
         )
-        self._event_log.append(event)
-        self._new_events.append(event)  # 加入待广播队列
+        self.event_log.append(event)
+        self.new_events.append(event)
 
-        # 限制日志大小
-        if len(self._event_log) > self._max_events:
-            self._event_log = self._event_log[-self._max_events:]
+        if len(self.event_log) > self.max_events:
+            self.event_log = self.event_log[-self.max_events:]
 
         logger.info(
             "Event: {} | track={} person={} | {}",
-            event_type.value,
-            track_id,
-            person_id,
-            message,
+            event_type.value, track_id, person_id, message,
         )
 
-    @staticmethod
-    def _generate_thumbnail(
-        frame: np.ndarray, bbox: list, max_size: int = 96
-    ) -> str:
-        """生成 base64 编码的 JPEG 缩略图。"""
-        try:
-            h, w = frame.shape[:2]
-            x1 = max(0, int(bbox[0]))
-            y1 = max(0, int(bbox[1]))
-            x2 = min(w, int(bbox[2]))
-            y2 = min(h, int(bbox[3]))
-            crop = frame[y1:y2, x1:x2]
-            if crop.size == 0:
-                return ""
-
-            # 缩放
-            ch, cw = crop.shape[:2]
-            scale = min(max_size / max(ch, cw, 1), 1.0)
-            if scale < 1.0:
-                crop = cv2.resize(
-                    crop, (int(cw * scale), int(ch * scale))
-                )
-
-            _, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            return base64.b64encode(buf.tobytes()).decode("ascii")
-        except Exception:
-            return ""
-
-    # ------------------------------------------------------------------
-    # Gallery persistence
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Gallery 持久化
+    # ==================================================================
 
     async def _load_gallery_from_db(self) -> None:
-        """从 SQLite 加载底库（stub — 待 gallery 持久化模块实现）。"""
+        """从 SQLite 加载当前摄像头的底库。"""
         try:
-            from src.gallery import load_gallery  # type: ignore
-
-            self._gallery = await load_gallery(
-                self._config.server.gallery_db_path
+            from src.gallery import load_gallery
+            self.gallery = await load_gallery(
+                get_config().server.gallery_db_path,
+                camera_id=self.camera_id,
             )
             logger.info(
-                "Loaded {} persons from DB", len(self._gallery)
+                "[{}] Loaded {} persons from DB",
+                self.camera_id, len(self.gallery),
             )
         except ImportError:
-            logger.warning(
-                "Gallery persistence not available; starting with empty gallery"
-            )
-            self._gallery = {}
+            logger.warning("Gallery persistence not available; starting with empty gallery")
+            self.gallery = {}
         except Exception:
             logger.exception("Failed to load gallery from DB")
-            self._gallery = {}
+            self.gallery = {}
 
     async def _save_gallery_to_db(self) -> None:
-        """保存底库到 SQLite（stub — 待 gallery 持久化模块实现）。"""
-        try:
-            from src.gallery import save_gallery  # type: ignore
-
-            await save_gallery(
-                self._config.server.gallery_db_path, self._gallery
-            )
-            logger.info("Saved {} persons to DB", len(self._gallery))
-        except ImportError:
-            logger.warning("Gallery persistence not available; data not saved")
-        except Exception:
-            logger.exception("Failed to save gallery to DB")
-
-
-# ======================================================================
-# Stub implementations (used when sub-modules are not yet available)
-# ======================================================================
-
-
-class _StubDetector:
-    """占位检测器。"""
-
-    def detect(self, frame: np.ndarray) -> list:
-        return []
-
-
-class _StubTracker:
-    """占位追踪器。"""
-
-    def update(self, detections: list, frame: np.ndarray) -> list:
-        return []
-
-
-class _StubFaceExtractor:
-    """占位人脸提取器。"""
-
-    def extract(self, frame: np.ndarray, bbox: np.ndarray) -> None:
-        return None
-
-
-class _StubBodyExtractor:
-    """占位 ReID 提取器。"""
-
-    def extract(self, frame: np.ndarray, bbox: np.ndarray) -> None:
-        return None
-
-
-class _StubMatcher:
-    """占位匹配器。"""
-
-    def match(self, *args: Any, **kwargs: Any) -> list:
-        return []
-
-
-class _StubUpdater:
-    """占位更新器。"""
-
-    def update(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-
-class _StubReranker:
-    """占位重排序器。"""
-
-    def rerank(self, candidates: list, *args: Any) -> list:
-        return candidates
-
-
-class _StubFusion:
-    """占位融合器。"""
-
-    def fuse(self, candidates: list, *args: Any) -> list:
-        return candidates
-
-
-class _StubResolver:
-    """占位消解器。"""
-
-    def resolve_reid(self, match_result: MatchResult) -> MatchResult:
-        from src.gallery.data_models import IdentityStatus
-        match_result.status = IdentityStatus.STRANGER
-        return match_result
-
-    def resolve_vlm(self, vlm_response: dict, match_result: MatchResult) -> MatchResult:
-        from src.gallery.data_models import IdentityStatus
-        match_result.status = IdentityStatus.STRANGER
-        return match_result
-
-
-class _StubVLM:
-    """占位 VLM。"""
-
-    async def arbitrate(self, *args: Any, **kwargs: Any) -> MatchResult:
-        from src.gallery.data_models import IdentityStatus, MatchResult
-
-        return MatchResult(
-            candidates=[],
-            status=IdentityStatus.STRANGER,
-        )
+        """保存当前摄像头的底库到 SQLite（串行化，防止并发写入）。"""
+        async with self.save_lock:
+            try:
+                from src.gallery import save_gallery
+                await save_gallery(
+                    get_config().server.gallery_db_path,
+                    self.gallery,
+                    camera_id=self.camera_id,
+                )
+                logger.info(
+                    "[{}] Saved {} persons to DB",
+                    self.camera_id, len(self.gallery),
+                )
+            except ImportError:
+                logger.warning("Gallery persistence not available; data not saved")
+            except Exception:
+                logger.exception("Failed to save gallery to DB")
