@@ -179,6 +179,12 @@ async def confirm_identity(
             "person_id": request.person_id,
             "name": request.name,
         }
+    except ValueError as e:
+        logger.warning(f"Bad request in confirm_identity: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
     except Exception as e:
         logger.exception("Confirm identity failed")
         raise HTTPException(

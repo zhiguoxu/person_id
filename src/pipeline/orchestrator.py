@@ -168,13 +168,13 @@ class VisionOrchestrator(BaseModel):
     # ==================================================================
 
     async def confirm_identity(
-            self, track_id: int, person_id: str, name: str
+            self, track_id: int, person_id: str | None, name: str
     ) -> None:
         """人工确认身份。
 
         Args:
             track_id: 需要确认的轨迹 ID。
-            person_id: 底库人物 ID（如不存在则自动创建）。
+            person_id: 底库人物 ID（如不存在或为 None 则自动创建）。
             name: 显示名称。
         """
         logger.info(
@@ -182,11 +182,16 @@ class VisionOrchestrator(BaseModel):
             track_id, person_id, name,
         )
 
-        if person_id not in self.gallery:
+        if not person_id:
+            # 传空表示创建新用户
             profile = PersonProfile.create_new(display_name=name)
-            profile.person_id = person_id
+            person_id = profile.person_id
             self.gallery[person_id] = profile
-            logger.info("Created new profile for {}", person_id)
+            logger.info("Created new profile for {} (no ID provided)", person_id)
+        elif person_id not in self.gallery:
+            # 传了 ID 但库里没有，视为错误
+            logger.error("Person ID {} not found in gallery", person_id)
+            raise ValueError(f"Person ID {person_id} not found in gallery")
 
         profile = self.gallery[person_id]
         profile.display_name = name
