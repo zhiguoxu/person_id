@@ -27,6 +27,7 @@ from src.gallery.data_models import (
     TrackedPerson, PoseBucket,
 )
 from src.gallery.data_models import FeatureEntry
+from src.gallery.persistence import get_gallery_persistence
 from src.pipeline.frame_buffer import CachedFrame
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 
@@ -525,18 +526,12 @@ class VisionOrchestrator(BaseModel):
     async def _load_gallery_from_db(self) -> None:
         """从 SQLite 加载当前摄像头的底库。"""
         try:
-            from src.gallery import load_gallery
-            self.gallery = await load_gallery(
-                get_config().server.gallery_db_path,
-                camera_id=self.camera_id,
-            )
+            persistence = get_gallery_persistence()
+            self.gallery = await persistence.load_all_profiles(self.camera_id)
             logger.info(
                 "[{}] Loaded {} persons from DB",
                 self.camera_id, len(self.gallery),
             )
-        except ImportError:
-            logger.warning("Gallery persistence not available; starting with empty gallery")
-            self.gallery = {}
         except Exception:
             logger.exception("Failed to load gallery from DB")
             self.gallery = {}
@@ -545,17 +540,9 @@ class VisionOrchestrator(BaseModel):
         """保存当前摄像头的底库到 SQLite（串行化，防止并发写入）。"""
         async with self.save_lock:
             try:
-                from src.gallery import save_gallery
-                await save_gallery(
-                    get_config().server.gallery_db_path,
-                    self.gallery,
-                    camera_id=self.camera_id,
+                persistence = get_gallery_persistence()
+                await persistence.save_all_profiles(
+                    self.gallery, self.camera_id,
                 )
-                logger.info(
-                    "[{}] Saved {} persons to DB",
-                    self.camera_id, len(self.gallery),
-                )
-            except ImportError:
-                logger.warning("Gallery persistence not available; data not saved")
             except Exception:
                 logger.exception("Failed to save gallery to DB")

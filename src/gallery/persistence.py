@@ -1,20 +1,19 @@
 """
-Gallery Persistence — SQLite 持久化
+Gallery Persistence — SQLModel ORM 持久化
 
-使用 aiosqlite 异步地将底库 PersonProfile 存储到 SQLite 数据库。
+使用 SQLModel + SQLAlchemy AsyncSession 异步地将底库 PersonProfile 存储到 SQLite。
 特征向量以 numpy 二进制 blob 存储 (tobytes / frombuffer), 保证精度无损。
 
-表结构:
-    - persons: 人物基本信息 + 体型比例
-    - face_features: 人脸特征条目 (一人多条, 按姿态桶)
-    - wardrobe: 衣橱记录 (一人多条)
+GalleryPersistence 通过 @cache 实现单例, 引擎在 FastAPI lifespan 中异步初始化。
 """
 from __future__ import annotations
 
+from functools import cache
 
-import aiosqlite
 import numpy as np
 from loguru import logger
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
+from sqlmodel import SQLModel, select
 
 from src.gallery.data_models import (
     BodyProportions,
@@ -23,214 +22,87 @@ from src.gallery.data_models import (
     PersonProfile,
     PoseBucket,
 )
+from src.gallery.db_models import (
+    BodyFeatureRow,
+    FaceFeatureRow,
+    PersonRow,
+    WardrobeRow,
+)
 
-# 默认特征维度 (InsightFace=512, ReID=2048), 通过 blob 自适应
-_FACE_EMBED_DIM = 512
-_BODY_EMBED_DIM = 2048
+
+@cache
+def get_gallery_persistence() -> GalleryPersistence:
+    """获取 GalleryPersistence 单例。"""
+    return GalleryPersistence()
 
 
 class GalleryPersistence:
-    """SQLite 底库持久化管理器。
+    """SQLModel ORM 底库持久化管理器 (单例)。
 
-    所有公共方法均为异步 (async), 需在 asyncio 事件循环中调用。
+    使用方式::
+
+        # lifespan startup
+        persistence = get_gallery_persistence()
+        await persistence.initialize(db_path)
+
+        # 业务代码
+        persistence = get_gallery_persistence()
+        await persistence.load_all_profiles(camera_id)
+
+        # lifespan shutdown
+        await get_gallery_persistence().close()
     """
 
-    def __init__(self, db_path: str, camera_id: str) -> None:
-        self._db_path = db_path
-        self._camera_id = camera_id
-        self._db: aiosqlite.Connection | None = None
-        logger.info("GalleryPersistence configured: db={}, camera={}", db_path, camera_id)
+    def __init__(self) -> None:
+        self._engine: AsyncEngine | None = None
 
-    # ------------------------------------------------------------------
-    # 初始化
-    # ------------------------------------------------------------------
-
-    async def initialize(self) -> None:
-        """创建数据库连接和表结构。
-
-        幂等操作: 已存在的表不会被覆盖。
-        """
-        self._db = await aiosqlite.connect(self._db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
-
-        await self._db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS persons (
-                person_id       TEXT NOT NULL,
-                camera_id       TEXT NOT NULL,
-                display_name    TEXT NOT NULL,
-                created_at      REAL NOT NULL,
-                last_updated    REAL NOT NULL,
-                update_count    INTEGER NOT NULL DEFAULT 0,
-                vlm_description TEXT,
-                -- 体型比例 (nullable)
-                bp_torso_leg    REAL,
-                bp_shoulder_hip REAL,
-                bp_arm_torso    REAL,
-                bp_head_body    REAL,
-                bp_height_px    REAL,
-                bp_samples      INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (person_id, camera_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS face_features (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                person_id       TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
-                pose_bucket     TEXT NOT NULL,
-                embedding       BLOB NOT NULL,
-                quality_score   REAL NOT NULL,
-                timestamp       REAL NOT NULL,
-                source_image    BLOB
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_face_person
-                ON face_features(person_id);
-
-            CREATE TABLE IF NOT EXISTS body_features (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                person_id       TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
-                pose_bucket     TEXT NOT NULL,
-                embedding       BLOB NOT NULL,
-                quality_score   REAL NOT NULL,
-                timestamp       REAL NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_body_person
-                ON body_features(person_id);
-
-            CREATE TABLE IF NOT EXISTS wardrobe (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                person_id       TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
-                body_embedding  BLOB NOT NULL,
-                quality_score   REAL NOT NULL,
-                first_seen      REAL NOT NULL,
-                last_seen       REAL NOT NULL,
-                seen_count      INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_wardrobe_person
-                ON wardrobe(person_id);
-            """
+    async def initialize(self, db_path: str) -> None:
+        """创建引擎并初始化表结构。在 FastAPI lifespan startup 中调用。"""
+        self._engine = create_async_engine(
+            f"sqlite+aiosqlite:///{db_path}",
+            echo=False,
         )
-        await self._db.commit()
-        logger.info("Database initialized at {}", self._db_path)
+        async with self._engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        logger.info("GalleryPersistence initialized: db={}", db_path)
+
+    async def close(self) -> None:
+        """关闭引擎。在 FastAPI lifespan shutdown 中调用。"""
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+            logger.info("GalleryPersistence closed")
+
+    @property
+    def engine(self) -> AsyncEngine:
+        if self._engine is None:
+            raise RuntimeError(
+                "GalleryPersistence not initialized. "
+                "Call await initialize(db_path) first."
+            )
+        return self._engine
 
     # ------------------------------------------------------------------
-    # 保存
+    # 保存 (单个)
     # ------------------------------------------------------------------
 
-    async def save_profile(self, profile: PersonProfile) -> None:
-        """将 PersonProfile 完整写入数据库 (INSERT OR REPLACE)。
-
-        Args:
-            profile: 待保存的人物档案。
-        """
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first.")
-
+    async def save_profile(
+        self, profile: PersonProfile, camera_id: str,
+    ) -> None:
+        """将 PersonProfile 完整写入数据库 (INSERT OR REPLACE)。"""
         try:
-            # 写入 persons 表
-            bp = profile.body_proportions
-            await self._db.execute(
-                """
-                INSERT OR REPLACE INTO persons
-                    (person_id, camera_id, display_name, created_at, last_updated,
-                     update_count, vlm_description,
-                     bp_torso_leg, bp_shoulder_hip, bp_arm_torso,
-                     bp_head_body, bp_height_px, bp_samples)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    profile.person_id,
-                    self._camera_id,
-                    profile.display_name,
-                    profile.created_at,
-                    profile.last_updated,
-                    profile.update_count,
-                    profile.vlm_description,
-                    bp.torso_leg_ratio if bp else None,
-                    bp.shoulder_hip_ratio if bp else None,
-                    bp.arm_torso_ratio if bp else None,
-                    bp.head_body_ratio if bp else None,
-                    bp.relative_height_px if bp else None,
-                    profile.body_proportions_samples,
-                ),
-            )
-
-            # 删除旧的人脸特征、人体特征和衣橱 (重写策略)
-            await self._db.execute(
-                "DELETE FROM face_features WHERE person_id = ?",
-                (profile.person_id,),
-            )
-            await self._db.execute(
-                "DELETE FROM body_features WHERE person_id = ?",
-                (profile.person_id,),
-            )
-            await self._db.execute(
-                "DELETE FROM wardrobe WHERE person_id = ?",
-                (profile.person_id,),
-            )
-
-            # 写入人脸特征
-            for bucket, entries in profile.face_features.items():
-                for entry in entries:
-                    await self._db.execute(
-                        """
-                        INSERT INTO face_features
-                            (person_id, pose_bucket, embedding,
-                             quality_score, timestamp, source_image)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            profile.person_id,
-                            bucket.value,
-                            entry.embedding.astype(np.float32).tobytes(),
-                            entry.quality_score,
-                            entry.timestamp,
-                            entry.source_image,
-                        ),
-                    )
-
-            # 写入人体特征
-            for bucket, entries in profile.body_features.items():
-                for entry in entries:
-                    await self._db.execute(
-                        """
-                        INSERT INTO body_features
-                            (person_id, pose_bucket, embedding,
-                             quality_score, timestamp)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (
-                            profile.person_id,
-                            bucket.value,
-                            entry.embedding.astype(np.float32).tobytes(),
-                            entry.quality_score,
-                            entry.timestamp,
-                        ),
-                    )
-
-            # 写入衣橱
-            for outfit in profile.wardrobe:
-                await self._db.execute(
-                    """
-                    INSERT INTO wardrobe
-                        (person_id, body_embedding, quality_score,
-                         first_seen, last_seen, seen_count)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        profile.person_id,
-                        outfit.body_embedding.astype(np.float32).tobytes(),
-                        outfit.quality_score,
-                        outfit.first_seen,
-                        outfit.last_seen,
-                        outfit.seen_count,
-                    ),
+            async with AsyncSession(self.engine) as session:
+                existing = await self._get_person_row(
+                    session, profile.person_id, camera_id,
                 )
+                if existing:
+                    await session.delete(existing)
+                    await session.flush()
 
-            await self._db.commit()
+                row = self._profile_to_row(profile, camera_id)
+                session.add(row)
+                await session.commit()
+
             logger.debug("Saved profile: {}", profile.person_id)
 
         except Exception:
@@ -238,140 +110,75 @@ class GalleryPersistence:
             raise
 
     # ------------------------------------------------------------------
+    # 保存 (批量)
+    # ------------------------------------------------------------------
+
+    async def save_all_profiles(
+        self, profiles: dict[str, PersonProfile], camera_id: str,
+    ) -> None:
+        """批量保存所有人物档案 (单事务)。"""
+        try:
+            async with AsyncSession(self.engine) as session:
+                stmt = select(PersonRow).where(
+                    PersonRow.camera_id == camera_id
+                )
+                result = await session.exec(stmt)
+                for old_row in result.all():
+                    await session.delete(old_row)
+                await session.flush()
+
+                for profile in profiles.values():
+                    row = self._profile_to_row(profile, camera_id)
+                    session.add(row)
+
+                await session.commit()
+
+            logger.info(
+                "Batch saved {} profiles (camera={})",
+                len(profiles), camera_id,
+            )
+        except Exception:
+            logger.exception("Failed to batch save profiles")
+            raise
+
+    # ------------------------------------------------------------------
     # 加载
     # ------------------------------------------------------------------
 
-    async def load_all_profiles(self) -> dict[str, PersonProfile]:
-        """从数据库加载全部人物档案。
-
-        Returns:
-            字典, key=person_id, value=PersonProfile。
-        """
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first.")
-
+    async def load_all_profiles(
+        self, camera_id: str,
+    ) -> dict[str, PersonProfile]:
+        """从数据库加载指定摄像头的全部人物档案。"""
         profiles: dict[str, PersonProfile] = {}
 
         try:
-            # 读取 persons 表 (按 camera_id 过滤)
-            async with self._db.execute(
-                "SELECT * FROM persons WHERE camera_id = ?",
-                (self._camera_id,),
-            ) as cursor:
-                rows = await cursor.fetchall()
-                col_names = [desc[0] for desc in cursor.description]
+            async with AsyncSession(self.engine) as session:
+                stmt = select(PersonRow).where(
+                    PersonRow.camera_id == camera_id
+                )
+                results = await session.exec(stmt)
+                person_rows = results.all()
 
-            for row in rows:
-                data = dict(zip(col_names, row))
-                pid = data["person_id"]
-
-                # 重建体型比例
-                bp: BodyProportions | None = None
-                if data["bp_torso_leg"] is not None:
-                    bp = BodyProportions(
-                        torso_leg_ratio=data["bp_torso_leg"],
-                        shoulder_hip_ratio=data["bp_shoulder_hip"],
-                        arm_torso_ratio=data["bp_arm_torso"],
-                        head_body_ratio=data["bp_head_body"],
-                        relative_height_px=data["bp_height_px"],
+                for person_row in person_rows:
+                    face_rows = await self._load_face_features(
+                        session, person_row.person_id,
+                    )
+                    body_rows = await self._load_body_features(
+                        session, person_row.person_id,
+                    )
+                    wardrobe_rows = await self._load_wardrobe(
+                        session, person_row.person_id,
                     )
 
-                profile = PersonProfile(
-                    person_id=pid,
-                    display_name=data["display_name"],
-                    created_at=data["created_at"],
-                    last_updated=data["last_updated"],
-                    update_count=data["update_count"],
-                    vlm_description=data["vlm_description"],
-                    body_proportions=bp,
-                    body_proportions_samples=data["bp_samples"],
-                )
-                profiles[pid] = profile
-
-            # 读取人脸特征
-            async with self._db.execute(
-                "SELECT * FROM face_features ORDER BY person_id"
-            ) as cursor:
-                face_rows = await cursor.fetchall()
-                face_cols = [desc[0] for desc in cursor.description]
-
-            for row in face_rows:
-                data = dict(zip(face_cols, row))
-                pid = data["person_id"]
-                if pid not in profiles:
-                    continue
-
-                embedding = np.frombuffer(
-                    data["embedding"], dtype=np.float32
-                ).copy()
-                bucket = PoseBucket(data["pose_bucket"])
-
-                entry = FeatureEntry(
-                    embedding=embedding,
-                    pose_bucket=bucket,
-                    quality_score=data["quality_score"],
-                    timestamp=data["timestamp"],
-                    source_image=data["source_image"],
-                )
-                profiles[pid].face_features.setdefault(bucket, []).append(entry)
-
-            # 读取人体特征
-            try:
-                async with self._db.execute(
-                    "SELECT * FROM body_features ORDER BY person_id"
-                ) as cursor:
-                    body_rows = await cursor.fetchall()
-                    body_cols = [desc[0] for desc in cursor.description]
-
-                for row in body_rows:
-                    data = dict(zip(body_cols, row))
-                    pid = data["person_id"]
-                    if pid not in profiles:
-                        continue
-
-                    embedding = np.frombuffer(
-                        data["embedding"], dtype=np.float32
-                    ).copy()
-                    bucket = PoseBucket(data["pose_bucket"])
-
-                    entry = FeatureEntry(
-                        embedding=embedding,
-                        pose_bucket=bucket,
-                        quality_score=data["quality_score"],
-                        timestamp=data["timestamp"],
+                    profile = self._row_to_profile(
+                        person_row, face_rows, body_rows, wardrobe_rows,
                     )
-                    profiles[pid].body_features.setdefault(bucket, []).append(entry)
-            except Exception:
-                # 兼容旧数据库 (无 body_features 表)
-                logger.warning("body_features table not found, skipping")
+                    profiles[profile.person_id] = profile
 
-            # 读取衣橱
-            async with self._db.execute(
-                "SELECT * FROM wardrobe ORDER BY person_id"
-            ) as cursor:
-                wardrobe_rows = await cursor.fetchall()
-                wardrobe_cols = [desc[0] for desc in cursor.description]
-
-            for row in wardrobe_rows:
-                data = dict(zip(wardrobe_cols, row))
-                pid = data["person_id"]
-                if pid not in profiles:
-                    continue
-
-                body_embedding = np.frombuffer(
-                    data["body_embedding"], dtype=np.float32
-                ).copy()
-
-                outfit = OutfitRecord(
-                    body_embedding=body_embedding,
-                    quality_score=data["quality_score"],
-                    first_seen=data["first_seen"],
-                    last_seen=data["last_seen"],
-                    seen_count=data["seen_count"],
-                )
-                profiles[pid].wardrobe.append(outfit)
-
-            logger.info("Loaded {} profiles from database", len(profiles))
+            logger.info(
+                "Loaded {} profiles (camera={})",
+                len(profiles), camera_id,
+            )
 
         except Exception:
             logger.exception("Failed to load profiles from database")
@@ -383,45 +190,203 @@ class GalleryPersistence:
     # 删除
     # ------------------------------------------------------------------
 
-    async def delete_profile(self, person_id: str) -> None:
-        """从数据库删除指定人物档案 (级联删除关联的特征和衣橱)。
-
-        Args:
-            person_id: 要删除的人物 ID。
-        """
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first.")
-
+    async def delete_profile(
+        self, person_id: str, camera_id: str,
+    ) -> None:
+        """从数据库删除指定人物档案 (级联删除关联的特征和衣橱)。"""
         try:
-            await self._db.execute(
-                "DELETE FROM persons WHERE person_id = ? AND camera_id = ?",
-                (person_id, self._camera_id),
-            )
-            await self._db.commit()
-            logger.info("Deleted profile: {} (camera={})", person_id, self._camera_id)
+            async with AsyncSession(self.engine) as session:
+                existing = await self._get_person_row(
+                    session, person_id, camera_id,
+                )
+                if existing:
+                    await session.delete(existing)
+                    await session.commit()
+                    logger.info(
+                        "Deleted profile: {} (camera={})",
+                        person_id, camera_id,
+                    )
+                else:
+                    logger.warning(
+                        "Profile not found for deletion: {} (camera={})",
+                        person_id, camera_id,
+                    )
         except Exception:
             logger.exception("Failed to delete profile: {}", person_id)
             raise
 
     # ------------------------------------------------------------------
-    # 更新
+    # 内部: 查询辅助
     # ------------------------------------------------------------------
 
-    async def update_profile(self, profile: PersonProfile) -> None:
-        """更新已存在的人物档案 (等同于 save_profile 的 INSERT OR REPLACE)。
+    @staticmethod
+    async def _get_person_row(
+        session: AsyncSession, person_id: str, camera_id: str,
+    ) -> PersonRow | None:
+        stmt = select(PersonRow).where(
+            PersonRow.person_id == person_id,
+            PersonRow.camera_id == camera_id,
+        )
+        result = await session.exec(stmt)
+        return result.first()
 
-        Args:
-            profile: 待更新的人物档案。
-        """
-        await self.save_profile(profile)
+    @staticmethod
+    async def _load_face_features(
+        session: AsyncSession, person_id: str,
+    ) -> list[FaceFeatureRow]:
+        stmt = select(FaceFeatureRow).where(
+            FaceFeatureRow.person_id == person_id
+        )
+        result = await session.exec(stmt)
+        return list(result.all())
+
+    @staticmethod
+    async def _load_body_features(
+        session: AsyncSession, person_id: str,
+    ) -> list[BodyFeatureRow]:
+        stmt = select(BodyFeatureRow).where(
+            BodyFeatureRow.person_id == person_id
+        )
+        result = await session.exec(stmt)
+        return list(result.all())
+
+    @staticmethod
+    async def _load_wardrobe(
+        session: AsyncSession, person_id: str,
+    ) -> list[WardrobeRow]:
+        stmt = select(WardrobeRow).where(
+            WardrobeRow.person_id == person_id
+        )
+        result = await session.exec(stmt)
+        return list(result.all())
 
     # ------------------------------------------------------------------
-    # 资源管理
+    # 内部: PersonProfile ↔ ORM Row 转换
     # ------------------------------------------------------------------
 
-    async def close(self) -> None:
-        """关闭数据库连接。"""
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-            logger.info("Database connection closed")
+    @staticmethod
+    def _profile_to_row(
+        profile: PersonProfile, camera_id: str,
+    ) -> PersonRow:
+        bp = profile.body_proportions
+
+        row = PersonRow(
+            person_id=profile.person_id,
+            camera_id=camera_id,
+            display_name=profile.display_name,
+            created_at=profile.created_at,
+            last_updated=profile.last_updated,
+            update_count=profile.update_count,
+            vlm_description=profile.vlm_description,
+            bp_torso_leg=bp.torso_leg_ratio if bp else None,
+            bp_shoulder_hip=bp.shoulder_hip_ratio if bp else None,
+            bp_arm_torso=bp.arm_torso_ratio if bp else None,
+            bp_head_body=bp.head_body_ratio if bp else None,
+            bp_height_px=bp.relative_height_px if bp else None,
+            bp_samples=profile.body_proportions_samples,
+        )
+
+        for bucket, entries in profile.face_features.items():
+            for entry in entries:
+                row.face_features.append(FaceFeatureRow(
+                    person_id=profile.person_id,
+                    pose_bucket=bucket.value,
+                    embedding=entry.embedding.astype(np.float32).tobytes(),
+                    quality_score=entry.quality_score,
+                    timestamp=entry.timestamp,
+                    source_image=entry.source_image,
+                ))
+
+        for bucket, entries in profile.body_features.items():
+            for entry in entries:
+                row.body_features.append(BodyFeatureRow(
+                    person_id=profile.person_id,
+                    pose_bucket=bucket.value,
+                    embedding=entry.embedding.astype(np.float32).tobytes(),
+                    quality_score=entry.quality_score,
+                    timestamp=entry.timestamp,
+                    source_image=entry.source_image,
+                ))
+
+        for outfit in profile.wardrobe:
+            row.wardrobe_items.append(WardrobeRow(
+                person_id=profile.person_id,
+                body_embedding=outfit.body_embedding.astype(np.float32).tobytes(),
+                quality_score=outfit.quality_score,
+                first_seen=outfit.first_seen,
+                last_seen=outfit.last_seen,
+                seen_count=outfit.seen_count,
+            ))
+
+        return row
+
+    @staticmethod
+    def _row_to_profile(
+        person_row: PersonRow,
+        face_rows: list[FaceFeatureRow],
+        body_rows: list[BodyFeatureRow],
+        wardrobe_rows: list[WardrobeRow],
+    ) -> PersonProfile:
+        bp: BodyProportions | None = None
+        if person_row.bp_torso_leg is not None:
+            bp = BodyProportions(
+                torso_leg_ratio=person_row.bp_torso_leg,
+                shoulder_hip_ratio=person_row.bp_shoulder_hip,
+                arm_torso_ratio=person_row.bp_arm_torso,
+                head_body_ratio=person_row.bp_head_body,
+                relative_height_px=person_row.bp_height_px,
+            )
+
+        profile = PersonProfile(
+            person_id=person_row.person_id,
+            display_name=person_row.display_name,
+            created_at=person_row.created_at,
+            last_updated=person_row.last_updated,
+            update_count=person_row.update_count,
+            vlm_description=person_row.vlm_description,
+            body_proportions=bp,
+            body_proportions_samples=person_row.bp_samples,
+        )
+
+        for face_row in face_rows:
+            embedding = np.frombuffer(
+                face_row.embedding, dtype=np.float32,
+            ).copy()
+            bucket = PoseBucket(face_row.pose_bucket)
+            entry = FeatureEntry(
+                embedding=embedding,
+                pose_bucket=bucket,
+                quality_score=face_row.quality_score,
+                timestamp=face_row.timestamp,
+                source_image=face_row.source_image,
+            )
+            profile.face_features.setdefault(bucket, []).append(entry)
+
+        for body_row in body_rows:
+            embedding = np.frombuffer(
+                body_row.embedding, dtype=np.float32,
+            ).copy()
+            bucket = PoseBucket(body_row.pose_bucket)
+            entry = FeatureEntry(
+                embedding=embedding,
+                pose_bucket=bucket,
+                quality_score=body_row.quality_score,
+                timestamp=body_row.timestamp,
+                source_image=body_row.source_image,
+            )
+            profile.body_features.setdefault(bucket, []).append(entry)
+
+        for wardrobe_row in wardrobe_rows:
+            body_embedding = np.frombuffer(
+                wardrobe_row.body_embedding, dtype=np.float32,
+            ).copy()
+            outfit = OutfitRecord(
+                body_embedding=body_embedding,
+                quality_score=wardrobe_row.quality_score,
+                first_seen=wardrobe_row.first_seen,
+                last_seen=wardrobe_row.last_seen,
+                seen_count=wardrobe_row.seen_count,
+            )
+            profile.wardrobe.append(outfit)
+
+        return profile

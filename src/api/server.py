@@ -39,17 +39,26 @@ def get_camera_orchestrator(camera_id: str) -> VisionOrchestrator | None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """应用生命周期。GPU 模型在首次 WebSocket 连接时惰性加载。"""
+    """应用生命周期。"""
+    # --- startup ---
+    from src.config import get_config
+    from src.gallery.persistence import get_gallery_persistence
+
+    persistence = get_gallery_persistence()
+    await persistence.initialize(get_config().server.gallery_db_path)
+
     logger.info("Application ready (cameras will initialize on first connection)")
 
     yield  # ← 应用运行中
 
-    # 关闭: 逐个 shutdown 所有活跃的摄像头 orchestrator
+    # --- shutdown ---
     logger.info("Application shutting down ({} cameras) ...", len(camera_registry))
     for cam_id, orch in camera_registry.items():
         logger.info("Shutting down camera: {}", cam_id)
         await orch.shutdown()
     camera_registry.clear()
+
+    await get_gallery_persistence().close()
     logger.info("Application shutdown complete")
 
 
