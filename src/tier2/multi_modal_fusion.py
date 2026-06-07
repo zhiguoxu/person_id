@@ -16,14 +16,14 @@ from src.config import get_config
 from src.gallery.data_models import MatchCandidate
 
 # sigmoid 门控参数
-_SIGMOID_K = 10.0    # 斜率
-_SIGMOID_Q0 = 0.5    # 翻转点
+_SIGMOID_K = 10.0  # 斜率
+_SIGMOID_Q0 = 0.5  # 翻转点
 
 
 def fuse(
-    face_candidates: list[MatchCandidate] | None,
-    body_candidates: list[MatchCandidate] | None,
-    proportion_candidates: list[MatchCandidate] | None
+        face_candidates: list[MatchCandidate],
+        body_candidates: list[MatchCandidate],
+        proportion_candidates: list[MatchCandidate]
 ) -> list[MatchCandidate]:
     """Per-Candidate 三模态质量门控融合
 
@@ -37,14 +37,10 @@ def fuse(
       q=0.7 → gate≈0.88  (基本开启)
 
     Args:
-        face_candidates: 人脸匹配结果 (may be None/empty)
-        body_candidates: 人体匹配结果 (may be None/empty)
-        proportion_candidates: 体型匹配结果 (may be None/empty)
-        body_quality: (已废弃, 保留兼容) 平均人体质量
+        face_candidates: 人脸匹配结果
+        body_candidates: 人体匹配结果
+        proportion_candidates: 体型匹配结果
     """
-    face_candidates = face_candidates or []
-    body_candidates = body_candidates or []
-    proportion_candidates = proportion_candidates or []
 
     if not face_candidates and not body_candidates and not proportion_candidates:
         return []
@@ -55,24 +51,21 @@ def fuse(
     candidate_map: dict[str, MatchCandidate] = {}
 
     for c in face_candidates:
-        if c.person_id not in candidate_map:
-            candidate_map[c.person_id] = MatchCandidate(
-                person_id=c.person_id, display_name=c.display_name)
-        candidate_map[c.person_id].face_score = c.face_score
-        candidate_map[c.person_id].face_match_quality = c.face_match_quality
+        candidate_map[c.person_id] = MatchCandidate(person_id=c.person_id,
+                                                    display_name=c.display_name,
+                                                    face_score=c.face_score,
+                                                    face_match_quality=c.face_match_quality)
 
     for c in body_candidates:
-        if c.person_id not in candidate_map:
-            candidate_map[c.person_id] = MatchCandidate(
-                person_id=c.person_id, display_name=c.display_name)
-        candidate_map[c.person_id].body_score = c.body_score
-        candidate_map[c.person_id].body_match_quality = c.body_match_quality
+        m = candidate_map.setdefault(c.person_id, MatchCandidate(
+            person_id=c.person_id, display_name=c.display_name))
+        m.body_score = c.body_score
+        m.body_match_quality = c.body_match_quality
 
     for c in proportion_candidates:
-        if c.person_id not in candidate_map:
-            candidate_map[c.person_id] = MatchCandidate(
-                person_id=c.person_id, display_name=c.display_name)
-        candidate_map[c.person_id].proportion_score = c.proportion_score
+        m = candidate_map.setdefault(c.person_id, MatchCandidate(
+            person_id=c.person_id, display_name=c.display_name))
+        m.proportion_score = c.proportion_score
 
     # Per-candidate 门控融合
     for c in candidate_map.values():

@@ -29,7 +29,6 @@ from src.gallery.data_models import (
 from src.pipeline.frame_buffer import RecentBuffer, QualityCache
 from src.tier2.batch_extractor import BatchExtractor
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
-from src.pipeline.scheduler import Tier2Action
 from src.gallery import matcher as gallery_matcher
 from src.tier2 import resolver
 from src.tier2 import multi_modal_fusion as fusion

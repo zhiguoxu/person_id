@@ -42,7 +42,7 @@ def should_trigger_tier2(state: TrackState) -> Tier2Action:
 
     # DEFINITE: 唯一终态, 仅做后台富化
     if status == IdentityStatus.DEFINITE:
-        elapsed = now - state.last_enrich_time
+        elapsed = now - state.last_tier2_time
         scale = 1.0 if state.is_current_target else config.non_attention_factor
         if elapsed >= config.definite_enrich_interval * scale:
             return Tier2Action.TRIGGER_ENRICH

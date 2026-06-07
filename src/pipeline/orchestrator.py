@@ -140,8 +140,13 @@ class VisionOrchestrator(BaseModel):
             result, is_enrich = state.process_frame(frame, self.gallery)
             if result is None:
                 continue
-            if self._apply_track_result(state, result, is_enrich):
+
+            if not is_enrich:
+                self._emit_match_event(state.person.track_id, result)
+
+            if result.status == IdentityStatus.DEFINITE:
                 gallery_dirty = True
+                self._update_gallery(result, state)
 
         # 统一：设 force_probe + 异步落盘
         if gallery_dirty:

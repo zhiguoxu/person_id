@@ -50,7 +50,6 @@ class TrackState(BaseModel):
     is_current_target: bool = False  # 是否为当前注意力目标
     last_tier2_time: float = 0.0  # 上次 Tier 2 处理时间
     last_vlm_time: float = 0.0  # 上次 VLM 处理时间
-    last_enrich_time: float = 0.0  # 上次 DEFINITE 富化时间
     tier2_count: int = 0  # Tier2 累计执行次数
     force_probe: bool = False  # 强制触发 Tier2 (如身份冲突后)
 
@@ -198,16 +197,15 @@ class TrackState(BaseModel):
             gallery=gallery,
         )
 
+        if result is None:
+            return None, False
+
         if action == Tier2Action.TRIGGER_ENRICH:
-            self.last_enrich_time = time.monotonic()
             # ENRICH 不更新身份, 也不触发 VLM
             if result.best_match.person_id != self.identity_result.person_id:
                 logger.error("TRIGGER_ENRICH 触发人物变更")
                 return None, False
             return result, True
-
-        if result is None:
-            return None, False
 
         # --- 4. 更新身份 + 非 DEFINITE 时尝试 VLM ---
         self.update_identity(result)
