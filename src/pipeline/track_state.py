@@ -133,7 +133,7 @@ class TrackState(BaseModel):
     # ==================================================================
 
     def resolve(self, gallery: dict[str, PersonProfile],
-                ) -> tuple[MatchResult | None, Tier2Action]:
+                ) -> tuple[MatchResult | None, bool]:
         """识别阶段: 消费 VLM 结果 / 执行 Tier2 / 触发 VLM, 更新 identity_result。
 
         内部自动管理 VLM 生命周期, 调用方无需感知 VLM 存在。
@@ -142,8 +142,9 @@ class TrackState(BaseModel):
             gallery: 当前底库 (Tier2 匹配需要)。
 
         Returns:
-            (MatchResult | None, Tier2Action)
+            (MatchResult | None, is_enrich)
             MatchResult 为 None 表示本帧无新结果。
+            is_enrich 为 True 表示本次是后台富化 (不更新身份/不发事件)。
         """
         track_id = self.person.track_id
 
@@ -154,7 +155,7 @@ class TrackState(BaseModel):
             if self.identity_result.status in (IdentityStatus.SUSPECTED, IdentityStatus.CONFLICT):
                 self.update_identity(vlm_result)
                 # VLM 结果已应用, 本帧跳过 Tier2, 避免覆盖仲裁结论
-                return vlm_result, Tier2Action.SKIP
+                return vlm_result, False
             else:
                 logger.debug(
                     "VLM result for track_id={} discarded: status already {}",
@@ -163,11 +164,11 @@ class TrackState(BaseModel):
 
         # --- 2. Tier2 调度 ---
         if len(self.buffer) == 0:
-            return None, Tier2Action.SKIP
+            return None, False
 
         action = should_trigger_tier2(self)
         if action == Tier2Action.SKIP:
-            return None, Tier2Action.SKIP
+            return None, False
 
         # 更新调度状态
         self.force_probe = False
@@ -186,10 +187,13 @@ class TrackState(BaseModel):
         if action == Tier2Action.TRIGGER_ENRICH:
             self.last_enrich_time = time.monotonic()
             # ENRICH 不更新身份, 也不触发 VLM
-            return result, action
+            if result.best_match.person_id != self.identity_result.person_id:
+                logger.error("TRIGGER_ENRICH 触发人物变更")
+                return None, False
+            return result, True
 
         if result is None:
-            return None, action
+            return None, False
 
         # --- 4. 更新身份 + 非 DEFINITE 时尝试 VLM ---
         self.update_identity(result)
@@ -197,7 +201,7 @@ class TrackState(BaseModel):
             self.cancel_vlm()
             self.vlm_task = asyncio.create_task(self._run_vlm(result, gallery))
 
-        return result, action
+        return result, False
 
     def update_identity(self, result: MatchResult) -> None:
         """将 MatchResult 写入 identity_result (纯状态更新, 无副作用)。"""

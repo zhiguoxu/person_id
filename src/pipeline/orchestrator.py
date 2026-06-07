@@ -28,7 +28,7 @@ from src.gallery.data_models import (
 )
 from src.gallery.data_models import FeatureEntry
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
-from src.pipeline.scheduler import Tier2Action
+
 from src.tier1.processor import Tier1Processor
 
 from src.pipeline.track_state import TrackState
@@ -138,11 +138,15 @@ class VisionOrchestrator(BaseModel):
         # --- 逐 track 处理 (VLM 应用 + Tier2 + VLM 触发) ---
         gallery_dirty = False
         for state in active_states:
-            result, action = state.resolve(self.gallery)
+            result, is_enrich = state.resolve(self.gallery)
             if result is None:
                 continue
-            if self._apply_track_result(state, result, action):
-                gallery_dirty = True
+            if not is_enrich:
+                self._emit_match_event(state.person.track_id, result)
+
+            gallery_dirty = result.status == IdentityStatus.DEFINITE
+            if gallery_dirty:
+                self._update_gallery(result, state)
 
         # 统一：设 force_probe + 异步落盘
         if gallery_dirty:
@@ -270,34 +274,6 @@ class VisionOrchestrator(BaseModel):
                 "Set force_probe on {} non-DEFINITE tracks",
                 count,
             )
-
-    # ==================================================================
-    # Tier 调度与执行
-    # ==================================================================
-    def _apply_track_result(
-            self, state: TrackState, result: MatchResult, action: Tier2Action,
-    ) -> bool:
-        """副作用阶段: 事件发送 + Gallery 更新。
-
-        Returns:
-            是否有 gallery 更新 (gallery_dirty)。
-        """
-        track_id = state.person.track_id
-        is_definite = result.status == IdentityStatus.DEFINITE
-        gallery_dirty = False
-
-        if action == Tier2Action.TRIGGER_ENRICH:
-            if is_definite and result.best_match.person_id == state.identity_result.person_id:
-                self._update_gallery(result, state)
-                gallery_dirty = True
-        else:
-            # REID 或 VLM 结果
-            self._emit_match_event(track_id, result)
-            if is_definite:
-                self._update_gallery(result, state)
-                gallery_dirty = True
-
-        return gallery_dirty
 
     def _update_gallery(
             self,
