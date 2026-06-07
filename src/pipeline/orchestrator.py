@@ -307,9 +307,9 @@ class VisionOrchestrator(BaseModel):
             profile.enroll_outfit(best_cf.body_embedding, best_cf.body_quality)
 
         # 体型比例
-        aggregated = MultiFrameAggregator.aggregate_from_cache(cache)
-        if aggregated.proportions is not None:
-            profile.update_proportions(aggregated.proportions)
+        proportions = MultiFrameAggregator.aggregate_proportions(cache.body_pool)
+        if proportions is not None:
+            profile.update_proportions(proportions)
 
         profile.touch(time.time())
         logger.info("Gallery updated for person_id={}", pid)

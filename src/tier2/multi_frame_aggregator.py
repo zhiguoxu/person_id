@@ -42,7 +42,7 @@ class MultiFrameAggregator:
         return AggregatedFeatures(
             face_per_pose=MultiFrameAggregator._aggregate_face(cache.face_pool),
             body_per_pose=MultiFrameAggregator._aggregate_body(cache.body_pool),
-            proportions=MultiFrameAggregator._aggregate_proportions(cache.body_pool)
+            proportions=MultiFrameAggregator.aggregate_proportions(cache.body_pool)
         )
 
     @staticmethod
@@ -101,8 +101,8 @@ class MultiFrameAggregator:
         return result
 
     @staticmethod
-    def _aggregate_proportions(body_pool: list[CachedFrame]
-                               ) -> BodyProportions | None:
+    def aggregate_proportions(body_pool: list[CachedFrame]
+                              ) -> BodyProportions | None:
         """鲁棒中位数聚合体型比例 (抗离群值)"""
         valid: list[BodyProportions] = [BodyProportions.from_keypoints(cf.entry.keypoints) for cf in body_pool]
         valid = [p for p in valid if p is not None]
