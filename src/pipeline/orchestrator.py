@@ -24,11 +24,10 @@ from src.gallery.data_models import (
     MatchResult,
     PersonProfile,
     SystemEvent,
-    TrackedPerson, PoseBucket,
+    TrackedPerson,
 )
 from src.gallery.data_models import FeatureEntry, GalleryUpdateResult
 from src.gallery.persistence import get_gallery_persistence
-from src.pipeline.frame_buffer import CachedFrame
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 
 from src.tier1.processor import Tier1Processor
@@ -288,48 +287,38 @@ class VisionOrchestrator(BaseModel):
         cache = state.quality_cache
         gallery_cfg = get_config().gallery
 
-        def _get_best_frames(
-            pool: list[CachedFrame],
-            quality_attr: str,
-        ) -> dict[PoseBucket, CachedFrame]:
-            best_frames: dict[PoseBucket, CachedFrame] = {}
+        # 人脸 / 人体: 每个姿态桶取质量最高的帧, 入库
+        enroll_tasks = [
+            (cache.face_pool, profile.enroll_face),
+            (cache.body_pool, profile.enroll_body_feature),
+        ]
+        body_best: dict = {}
+        for pool, enroll_fn in enroll_tasks:
+            best_frames: dict = {}
             for cf in pool:
-                quality = getattr(cf, quality_attr)
-                if quality >= gallery_cfg.quality_enroll_threshold:
+                if cf.quality >= gallery_cfg.quality_enroll_threshold:
                     pose = cf.entry.pose_bucket
-                    if pose not in best_frames or quality > getattr(best_frames[pose], quality_attr):
+                    if pose not in best_frames or cf.quality > best_frames[pose].quality:
                         best_frames[pose] = cf
-            return best_frames
 
-        # 人脸: 每个姿态桶取质量最高的帧
-        face_best = _get_best_frames(cache.face_pool, "face_quality")
-        for pose, cf in face_best.items():
-            entry = FeatureEntry(
-                embedding=cf.face_embedding,
-                pose_bucket=pose,
-                quality_score=cf.face_quality,
-                timestamp=cf.entry.timestamp,
-            )
-            if op := profile.enroll_face(entry):
-                changes.feature_ops.append(op)
+            for pose, cf in best_frames.items():
+                entry = FeatureEntry(
+                    embedding=cf.embedding,
+                    pose_bucket=pose,
+                    quality_score=cf.quality,
+                    timestamp=cf.entry.timestamp,
+                )
+                if op := enroll_fn(entry):
+                    changes.feature_ops.append(op)
 
-        # 人体: 每个姿态桶取质量最高的帧
-        body_best = _get_best_frames(cache.body_pool, "body_quality")
-        for pose, cf in body_best.items():
-            entry = FeatureEntry(
-                embedding=cf.body_embedding,
-                pose_bucket=pose,
-                quality_score=cf.body_quality,
-                timestamp=cf.entry.timestamp,
-            )
-            if op := profile.enroll_body_feature(entry):
-                changes.feature_ops.append(op)
+            if pool is cache.body_pool:
+                body_best = best_frames
 
         # 服装: 最高质量 body embedding
         if body_best:
-            best_cf = max(body_best.values(), key=lambda cf: cf.body_quality)
+            best_cf = max(body_best.values(), key=lambda cf: cf.quality)
             changes.wardrobe_op = profile.enroll_outfit(
-                best_cf.body_embedding, best_cf.body_quality,
+                best_cf.embedding, best_cf.quality,
             )
 
         # 体型比例 (存在 PersonRow 中, 由 upsert_person_row 保存)

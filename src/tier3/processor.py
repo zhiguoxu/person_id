@@ -48,10 +48,10 @@ class Tier3VLMProcessor:
         """
         if quality_cache.body_pool:
             # 取质量最高的 body 帧
-            best = max(quality_cache.body_pool, key=lambda cf: cf.body_quality)
+            best = max(quality_cache.body_pool, key=lambda cf: cf.quality)
             return best.entry.crop
         if quality_cache.face_pool:
-            best = max(quality_cache.face_pool, key=lambda cf: cf.face_quality)
+            best = max(quality_cache.face_pool, key=lambda cf: cf.quality)
             return best.entry.crop
         return None
 

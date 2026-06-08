@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -95,19 +94,17 @@ class RecentBuffer(BaseModel):
 # ==============================================================================
 
 class CachedFrame(BaseModel):
-    """质量缓存条目 — 由 Tier2 质量评估后填充"""
+    """质量缓存条目 — 由 Tier2 质量评估后填充
+
+    face_pool 和 body_pool 共用同一结构,
+    body 条目的 face_result 为 None。
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     entry: BufferEntry  # 原始帧数据
-
-    # 质量评分 (Tier2 批量计算)
-    face_quality: float = 0.0  # QualityAssessor 精确人脸质量
-    body_quality: float = 0.0  # quality_hint + sharpness 人体质量
-    face_result: FaceResult | None = None  # SCRFD 检测 + ArcFace 嵌入结果，用来缓存 quality asses 的 embedding 副产品
-
-    # 特征缓存 (入缓存后提取)
-    face_embedding: np.ndarray | None = None  # AdaFace
-    body_embedding: np.ndarray | None = None  # SOLIDER
+    quality: float = 0.0  # 质量评分
+    embedding: np.ndarray | None = None  # 特征向量
+    face_result: FaceResult | None = None  # SCRFD 检测 + ArcFace 嵌入结果 (仅 face)
 
 
 class QualityCache(BaseModel):
@@ -115,44 +112,25 @@ class QualityCache(BaseModel):
 
     face_pool: list[CachedFrame] = Field(default_factory=list)
     body_pool: list[CachedFrame] = Field(default_factory=list)
-    face_pool_size: int = Field(
-        default_factory=lambda: get_config().multiframe.face_pool_size,
-    )
-    body_pool_size: int = Field(
-        default_factory=lambda: get_config().multiframe.body_pool_size,
-    )
 
     def try_add_face(self, frame: CachedFrame) -> bool:
         """尝试加入 face_pool, 返回 True 表示新入缓存"""
-        if frame.face_result is None:
-            return False
-        return self._try_add(
-            self.face_pool, self.face_pool_size,
-            frame, key=lambda f: f.face_quality,
-        )
+        return self._try_add(self.face_pool, get_config().multiframe.face_pool_size, frame)
 
     def try_add_body(self, frame: CachedFrame) -> bool:
         """尝试加入 body_pool, 返回 True 表示新入缓存"""
-        return self._try_add(
-            self.body_pool, self.body_pool_size,
-            frame, key=lambda f: f.body_quality,
-        )
+        return self._try_add(self.body_pool, get_config().multiframe.body_pool_size, frame)
 
     @staticmethod
-    def _try_add(
-            pool: list[CachedFrame],
-            max_size: int,
-            frame: CachedFrame,
-            key: Callable[[CachedFrame], float],
-    ) -> bool:
-        """通用质量竞争入池: 未满直接加, 满了替换最差的。"""
+    def _try_add(pool: list[CachedFrame], max_size: int, frame: CachedFrame) -> bool:
+        """质量竞争入池: 未满直接加, 满了替换最差的。"""
         if len(pool) < max_size:
             pool.append(frame)
-            pool.sort(key=key, reverse=True)
+            pool.sort(key=lambda f: f.quality, reverse=True)
             return True
 
-        if key(frame) > key(pool[-1]):
+        if frame.quality > pool[-1].quality:
             pool[-1] = frame
-            pool.sort(key=key, reverse=True)
+            pool.sort(key=lambda f: f.quality, reverse=True)
             return True
         return False

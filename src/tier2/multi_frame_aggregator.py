@@ -38,46 +38,42 @@ class MultiFrameAggregator:
     @staticmethod
     def aggregate_from_cache(cache: QualityCache) -> AggregatedFeatures:
         """从 QualityCache 聚合特征 — 直接消费 CachedFrame"""
-
+        cfg = get_config().multiframe
         return AggregatedFeatures(
-            face_per_pose=MultiFrameAggregator._aggregate_face(cache.face_pool),
-            body_per_pose=MultiFrameAggregator._aggregate_body(cache.body_pool),
+            face_per_pose=MultiFrameAggregator._aggregate_pool(
+                cache.face_pool, cfg.agg_min_face_quality, fallback=False,
+            ),
+            body_per_pose=MultiFrameAggregator._aggregate_pool(
+                cache.body_pool, cfg.agg_min_body_quality, fallback=True,
+            ),
             proportions=MultiFrameAggregator.aggregate_proportions(cache.body_pool)
         )
 
     @staticmethod
-    def _aggregate_face(face_pool: list[CachedFrame]
-                        ) -> dict[PoseBucket, tuple[np.ndarray, float]]:
-        """按姿态分桶, 桶内质量加权聚合"""
-        min_quality = get_config().multiframe.agg_min_face_quality
-        buckets: dict[PoseBucket, list[tuple[np.ndarray, float]]] = defaultdict(list)
+    def _aggregate_pool(
+            pool: list[CachedFrame],
+            min_quality: float,
+            *,
+            fallback: bool = False,
+    ) -> dict[PoseBucket, tuple[np.ndarray, float]]:
+        """按姿态分桶, 桶内质量加权聚合。
 
-        for cf in face_pool:
-            if cf.face_quality >= min_quality:
-                buckets[cf.entry.pose_bucket].append((cf.face_embedding, cf.face_quality))
-
-        return MultiFrameAggregator._weighted_aggregate(buckets)
-
-    @staticmethod
-    def _aggregate_body(body_pool: list[CachedFrame]
-                        ) -> dict[PoseBucket, tuple[np.ndarray, float]]:
-        """按姿态分桶, 桶内质量加权聚合人体特征 (与 _aggregate_face 对称)
-
-        注: 同一批 Tier2 帧不会换装, 桶内质心是安全的.
-        Gallery 端因换装导致多峰分布, 所以 Gallery 端逐条保留不做质心.
+        Args:
+            pool: CachedFrame 列表 (face_pool 或 body_pool)
+            min_quality: 最低质量阈值
+            fallback: 若为 True, 当所有帧都低于阈值时使用全部帧 (人体降级)
         """
-        min_quality = get_config().multiframe.agg_min_body_quality
         buckets: dict[PoseBucket, list[tuple[np.ndarray, float]]] = defaultdict(list)
 
-        for cf in body_pool:
-            if cf.body_quality >= min_quality:
-                buckets[cf.entry.pose_bucket].append((cf.body_embedding, cf.body_quality))
+        for cf in pool:
+            if cf.quality >= min_quality:
+                buckets[cf.entry.pose_bucket].append((cf.embedding, cf.quality))
 
         # 降级: 如果所有帧都低于阈值, 使用所有帧
-        if not buckets:
-            for cf in body_pool:
+        if not buckets and fallback:
+            for cf in pool:
                 buckets[cf.entry.pose_bucket].append(
-                    (cf.body_embedding, max(cf.body_quality, 0.01)))
+                    (cf.embedding, max(cf.quality, 0.01)))
 
         return MultiFrameAggregator._weighted_aggregate(buckets)
 
