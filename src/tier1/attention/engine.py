@@ -15,7 +15,8 @@ from __future__ import annotations
 import numpy as np
 from loguru import logger
 
-from src.gallery.data_models import PoseBucket, TrackedPerson
+from src.gallery.data_models import PoseBucket
+from src.pipeline.data_models import TrackedPerson
 
 
 class AttentionEngine:

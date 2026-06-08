@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from src.gallery.data_models import IdentityStatus, MatchResult
+from src.pipeline.data_models import IdentityStatus, MatchResult
 from src.tier3.vlm_arbitrator import VLMResponse
 
 _GRADE_TO_STATUS = {

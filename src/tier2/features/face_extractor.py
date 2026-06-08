@@ -16,7 +16,7 @@ import numpy as np
 from loguru import logger
 
 from src.config import get_config
-from src.gallery.data_models import FaceResult
+from src.pipeline.data_models import FaceResult
 
 if TYPE_CHECKING:
     from insightface.app import FaceAnalysis

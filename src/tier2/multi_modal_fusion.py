@@ -13,7 +13,7 @@ import math
 from loguru import logger
 
 from src.config import get_config
-from src.gallery.data_models import MatchCandidate
+from src.pipeline.data_models import MatchCandidate
 
 # sigmoid 门控参数
 _SIGMOID_K = 10.0  # 斜率

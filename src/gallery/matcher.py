@@ -16,10 +16,10 @@ import numpy as np
 from src.config import get_config
 from src.gallery.data_models import (
     BodyProportions,
-    MatchCandidate,
     PersonProfile,
     PoseBucket,
 )
+from src.pipeline.data_models import MatchCandidate
 
 
 # ------------------------------------------------------------------

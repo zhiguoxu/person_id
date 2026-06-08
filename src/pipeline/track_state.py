@@ -18,11 +18,11 @@ import numpy as np
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.gallery.data_models import (
+from src.gallery.data_models import PersonProfile
+from src.pipeline.data_models import (
     IdentityResult,
     IdentityStatus,
     MatchResult,
-    PersonProfile,
     TrackedPerson,
 )
 from src.pipeline.frame_buffer import BufferEntry, QualityCache, RecentBuffer

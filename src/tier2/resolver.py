@@ -13,7 +13,7 @@ from __future__ import annotations
 from loguru import logger
 
 from src.config import get_config
-from src.gallery.data_models import IdentityStatus, MatchResult
+from src.pipeline.data_models import IdentityStatus, MatchResult
 
 
 def resolve_reid(match_result: MatchResult) -> MatchResult:

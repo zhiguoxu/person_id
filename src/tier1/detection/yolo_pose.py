@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 from loguru import logger
 
-from src.gallery.data_models import Detection
+from src.pipeline.data_models import Detection
 from src.tier1.detection.pose_classifier import classify_pose, has_visible_face
 from src.config import get_config
 

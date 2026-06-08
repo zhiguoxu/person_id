@@ -17,7 +17,7 @@ from loguru import logger
 
 from src.tier1.attention import AttentionEngine
 from src.tier1.detection import get_fast_detector
-from src.gallery.data_models import TrackedPerson
+from src.pipeline.data_models import TrackedPerson
 from src.tier1.tracking import TrackingEngine
 
 

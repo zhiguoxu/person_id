@@ -14,7 +14,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import get_config
-from src.gallery.data_models import FaceResult, PoseBucket
+from src.gallery.data_models import PoseBucket
+from src.pipeline.data_models import FaceResult
 
 
 # ==============================================================================

@@ -13,7 +13,7 @@ from boxmot import BotSort as BoTSORT  # type: ignore[import-untyped]
 from loguru import logger
 
 from src.config import get_config
-from src.gallery.data_models import (
+from src.pipeline.data_models import (
     Detection,
     TrackedPerson,
 )

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from src.gallery.data_models import IdentityResult, TrackedPerson
+from src.pipeline.data_models import IdentityResult, TrackedPerson
 
 # JSON 兼容值类型
 JsonValue = str | int | float | bool | None | list[str | int | float | bool | None] | dict[str, str | int | float | bool | None]

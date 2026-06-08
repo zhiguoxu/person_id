@@ -14,7 +14,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from src.config import get_config
-from src.gallery.data_models import IdentityStatus
+from src.pipeline.data_models import IdentityStatus
 
 if TYPE_CHECKING:
     from src.pipeline.track_state import TrackState

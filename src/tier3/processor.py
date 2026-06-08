@@ -19,10 +19,10 @@ from loguru import logger
 
 from src.tier3 import resolver, get_vlm_arbitrator
 
-from src.gallery.data_models import (
+from src.gallery.data_models import PersonProfile
+from src.pipeline.data_models import (
     MatchCandidate,
     MatchResult,
-    PersonProfile,
 )
 from src.pipeline.frame_buffer import QualityCache
 from src.config import get_config

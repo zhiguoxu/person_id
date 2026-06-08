@@ -18,15 +18,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import get_config
 from src.gallery.data_models import (
+    FeatureEntry,
+    GalleryUpdateResult,
+    PersonProfile,
+)
+from src.pipeline.data_models import (
     EventType,
     IdentityResult,
     IdentityStatus,
     MatchResult,
-    PersonProfile,
     SystemEvent,
     TrackedPerson,
 )
-from src.gallery.data_models import FeatureEntry, GalleryUpdateResult
 from src.gallery.persistence import get_gallery_persistence
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 
@@ -148,7 +151,7 @@ class VisionOrchestrator(BaseModel):
                 gallery_dirty = True
                 changes = self._update_gallery_person(result.best_match.person_id, state)
                 asyncio.ensure_future(
-                    self._save_gallery_incremental(result, changes)
+                    self._save_gallery_person_incremental(result.best_match.person_id, changes)
                 )
 
         # 统一：设 force_probe
@@ -526,17 +529,13 @@ class VisionOrchestrator(BaseModel):
         persistence = get_gallery_persistence()
         self.gallery = await persistence.load_all_profiles(self.camera_id)
 
-    async def _save_gallery_incremental(
+    async def _save_gallery_person_incremental(
             self,
-            result: MatchResult,
+            person_id: str,
             changes: GalleryUpdateResult,
     ) -> None:
         """增量持久化: 只写入 _update_gallery 实际变动的部分。"""
-        if not result.best_match:
-            return
-
-        pid = result.best_match.person_id
-        profile = self.gallery.get(pid)
+        profile = self.gallery.get(person_id)
         if not profile:
             return
 
@@ -551,11 +550,11 @@ class VisionOrchestrator(BaseModel):
             for op in changes.feature_ops:
                 if op.evicted is None:
                     # 桶未满 → INSERT 1 行
-                    await persistence.add_feature(pid, op.entry, op.kind)
+                    await persistence.add_feature(person_id, op.entry, op.kind)
                 else:
                     # 桶已满, 淘汰最差 → DELETE 1 行 + INSERT 1 行
                     await persistence.replace_feature(
-                        pid, op.entry, op.evicted, op.kind,
+                        person_id, op.entry, op.evicted, op.kind,
                     )
 
             # 3. 衣橱
@@ -564,20 +563,20 @@ class VisionOrchestrator(BaseModel):
                 if wop.updated is not None:
                     # EMA 更新已有 outfit → UPDATE 1 行
                     await persistence.update_outfit(
-                        pid, wop.updated, wop.outfit,
+                        person_id, wop.updated, wop.outfit,
                     )
                 elif wop.evicted is not None:
                     # 衣橱已满, 淘汰最旧 → DELETE 1 行 + INSERT 1 行
                     await persistence.replace_outfit(
-                        pid, wop.outfit, wop.evicted,
+                        person_id, wop.outfit, wop.evicted,
                     )
                 else:
                     # 衣橱未满 → INSERT 1 行
-                    await persistence.add_outfit(pid, wop.outfit)
+                    await persistence.add_outfit(person_id, wop.outfit)
 
             logger.debug(
                 "Incremental save for {}: {} feature ops, wardrobe={}",
-                pid,
+                person_id,
                 len(changes.feature_ops),
                 wop is not None,
             )

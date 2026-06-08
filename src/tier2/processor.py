@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from loguru import logger
 
-from src.gallery.data_models import (
+from src.gallery.data_models import PersonProfile
+from src.pipeline.data_models import (
     IdentityStatus,
     MatchResult,
     PipelineDebug,
-    PersonProfile,
 )
 from src.pipeline.frame_buffer import RecentBuffer, QualityCache
 from src.tier2.batch_extractor import BatchExtractor
