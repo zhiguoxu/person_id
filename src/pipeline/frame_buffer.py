@@ -106,6 +106,7 @@ class CachedFrame(BaseModel):
     quality: float = 0.0  # 质量评分
     embedding: np.ndarray | None = None  # 特征向量
     face_result: FaceResult | None = None  # SCRFD 检测 + ArcFace 嵌入结果 (仅 face)
+    enrolled: bool = False  # 是否已入库 (防止重复入库)
 
 
 class QualityCache(BaseModel):

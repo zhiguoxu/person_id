@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 
 import numpy as np
 from loguru import logger
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.config import get_config
 from src.gallery.data_models import (
     FeatureEntry,
+    FeatureOperation,
     GalleryUpdateResult,
     PersonProfile,
 )
@@ -31,6 +33,7 @@ from src.pipeline.data_models import (
     TrackedPerson,
 )
 from src.gallery.persistence import get_gallery_persistence
+from src.pipeline.frame_buffer import CachedFrame
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 
 from src.tier1.processor import Tier1Processor
@@ -285,8 +288,8 @@ class VisionOrchestrator(BaseModel):
         cache = state.quality_cache
         gallery_cfg = get_config().gallery
 
-        # 人脸 / 人体: 每个姿态桶取质量最高的帧, 入库
-        enroll_tasks = [
+        # 人脸 / 人体: 每个姿态桶取质量最高的未入库帧, 入库
+        enroll_tasks: list[tuple[list[CachedFrame], Callable[[FeatureEntry], FeatureOperation | None]]] = [
             (cache.face_pool, profile.enroll_face),
             (cache.body_pool, profile.enroll_body_feature),
         ]
@@ -294,7 +297,7 @@ class VisionOrchestrator(BaseModel):
         for pool, enroll_fn in enroll_tasks:
             best_frames: dict = {}
             for cf in pool:
-                if cf.quality >= gallery_cfg.quality_enroll_threshold:
+                if not cf.enrolled and cf.quality >= gallery_cfg.quality_enroll_threshold:
                     pose = cf.entry.pose_bucket
                     if pose not in best_frames or cf.quality > best_frames[pose].quality:
                         best_frames[pose] = cf
@@ -308,6 +311,7 @@ class VisionOrchestrator(BaseModel):
                 )
                 if op := enroll_fn(entry):
                     changes.feature_ops.append(op)
+                    cf.enrolled = True
 
             if pool is cache.body_pool:
                 body_best = best_frames
