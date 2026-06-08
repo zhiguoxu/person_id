@@ -115,7 +115,7 @@ class FaceExtractor:
         person_height: int = py2 - py1
 
         # Focus on upper body for face detection
-        crop_y2: int = min(py2, py1 + int(person_height * 0.6))
+        crop_y2: int = py1 + int(person_height * 0.6)
         crop: np.ndarray = frame[py1:crop_y2, px1:px2]
 
         if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 10:
@@ -178,59 +178,8 @@ class FaceExtractor:
             logger.debug("Failed to extract face features: {}", e)
             return None
 
-    def extract_batch(self, crops: list[np.ndarray]) -> list[FaceResult | None]:
-        """批量人脸检测+特征提取
-        
-        对每个 crop 独立执行人脸检测和特征提取。
-        InsightFace FaceAnalysis 不支持真正的 batch forward,
-        但合并到一个方法减少 Python 调用开销。
-        
-        Args:
-            crops: BGR 图像列表 (已裁剪的人体区域)
-        Returns:
-            FaceResult 列表, 未检测到人脸的位置为 None
-        """
-        if self._app is None:
-            return [None] * len(crops)
-
-        results: list[FaceResult | None] = []
-        for crop in crops:
-            try:
-                if crop.size == 0:
-                    results.append(None)
-                    continue
-
-                faces: list[Face] = self._app.get(crop)
-                if not faces:
-                    results.append(None)
-                    continue
-
-                # 取面积最大的人脸
-                face: Face = max(faces, key=_face_area)
-                embedding: np.ndarray = face.embedding.astype(np.float32)
-                norm: float = float(np.linalg.norm(embedding))
-                if norm > 1e-6:
-                    embedding = embedding / norm
-
-                face_bbox: np.ndarray = face.bbox.astype(np.float32)
-                det_score: float = float(face.det_score)
-                quality: float = self._compute_quality(face_bbox, det_score)
-
-                results.append(FaceResult(
-                    embedding=embedding,
-                    quality=quality,
-                    landmarks=face.landmark_2d_106 if hasattr(face, 'landmark_2d_106') else face.kps,
-                    bbox=face_bbox,
-                    det_score=det_score,
-                ))
-            except Exception as e:
-                logger.debug("Batch face extraction failed for crop: {}", e)
-                results.append(None)
-
-        return results
-
+    @staticmethod
     def _compute_quality(
-            self,
             face_bbox: np.ndarray,
             det_score: float,
     ) -> float:

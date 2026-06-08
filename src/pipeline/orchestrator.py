@@ -288,15 +288,21 @@ class VisionOrchestrator(BaseModel):
         cache = state.quality_cache
         gallery_cfg = get_config().gallery
 
-        # 人脸: 每个姿态桶取质量最高的帧
-        face_best: dict[PoseBucket, CachedFrame] = {}
-        if cache.face_pool:
-            for cf in cache.face_pool:
-                if cf.face_quality >= gallery_cfg.quality_enroll_threshold:
+        def _get_best_frames(
+            pool: list[CachedFrame],
+            quality_attr: str,
+        ) -> dict[PoseBucket, CachedFrame]:
+            best_frames: dict[PoseBucket, CachedFrame] = {}
+            for cf in pool:
+                quality = getattr(cf, quality_attr)
+                if quality >= gallery_cfg.quality_enroll_threshold:
                     pose = cf.entry.pose_bucket
-                    if pose not in face_best or cf.face_quality > face_best[pose].face_quality:
-                        face_best[pose] = cf
+                    if pose not in best_frames or quality > getattr(best_frames[pose], quality_attr):
+                        best_frames[pose] = cf
+            return best_frames
 
+        # 人脸: 每个姿态桶取质量最高的帧
+        face_best = _get_best_frames(cache.face_pool, "face_quality")
         for pose, cf in face_best.items():
             entry = FeatureEntry(
                 embedding=cf.face_embedding,
@@ -304,18 +310,11 @@ class VisionOrchestrator(BaseModel):
                 quality_score=cf.face_quality,
                 timestamp=cf.entry.timestamp,
             )
-            op = profile.enroll_face(entry)
-            if op is not None:
+            if op := profile.enroll_face(entry):
                 changes.feature_ops.append(op)
 
         # 人体: 每个姿态桶取质量最高的帧
-        body_best: dict[PoseBucket, CachedFrame] = {}
-        if cache.body_pool:
-            for cf in cache.body_pool:
-                pose = cf.entry.pose_bucket
-                if pose not in body_best or cf.body_quality > body_best[pose].body_quality:
-                    body_best[pose] = cf
-
+        body_best = _get_best_frames(cache.body_pool, "body_quality")
         for pose, cf in body_best.items():
             entry = FeatureEntry(
                 embedding=cf.body_embedding,
@@ -323,8 +322,7 @@ class VisionOrchestrator(BaseModel):
                 quality_score=cf.body_quality,
                 timestamp=cf.entry.timestamp,
             )
-            op = profile.enroll_body_feature(entry)
-            if op is not None:
+            if op := profile.enroll_body_feature(entry):
                 changes.feature_ops.append(op)
 
         # 服装: 最高质量 body embedding

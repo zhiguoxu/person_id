@@ -72,7 +72,6 @@ class GalleryConfig(BaseModel):
 
     # 入库质量门槛
     quality_enroll_threshold: float = 0.4  # 入库最低质量分
-    quality_update_threshold: float = 0.7  # 更新特征最低质量分
 
     # 入库衰减 — 统一量纲: 半衰期 (天)
     face_enroll_half_life_days: float = 100.0  # 人脸入库半衰期 (发型/妆容变化慢)
@@ -90,9 +89,6 @@ class MatchingConfig(BaseModel):
     B_threshold: float = 0.72  # 确定
     B_margin: float = 0.10  # 确定所需最小 margin
     C_threshold: float = 0.55  # 怀疑/陌生 分界线
-
-    # Tier1 人脸质量阈值
-    face_quality_threshold: float = 0.85  # 高质量人脸阈值 (用于 Tier2 人脸特征选帧)
 
     # Body Top-K Blend 参数
     blend_alpha: float = 0.7  # peak 权重 (1-α 为 depth 权重)

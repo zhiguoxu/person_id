@@ -103,7 +103,7 @@ class CachedFrame(BaseModel):
     # 质量评分 (Tier2 批量计算)
     face_quality: float = 0.0  # QualityAssessor 精确人脸质量
     body_quality: float = 0.0  # quality_hint + sharpness 人体质量
-    face_result: FaceResult | None = None  # SCRFD 检测 + ArcFace 嵌入结果
+    face_result: FaceResult | None = None  # SCRFD 检测 + ArcFace 嵌入结果，用来缓存 quality asses 的 embedding 副产品
 
     # 特征缓存 (入缓存后提取)
     face_embedding: np.ndarray | None = None  # AdaFace
