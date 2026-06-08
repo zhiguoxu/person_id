@@ -26,7 +26,7 @@ from src.gallery.data_models import (
     SystemEvent,
     TrackedPerson, PoseBucket,
 )
-from src.gallery.data_models import FeatureEntry
+from src.gallery.data_models import FeatureEntry, GalleryUpdateResult
 from src.gallery.persistence import get_gallery_persistence
 from src.pipeline.frame_buffer import CachedFrame
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
@@ -109,7 +109,6 @@ class VisionOrchestrator(BaseModel):
         for state in self.tracks.values():
             state.cancel_vlm()
 
-        await self._save_gallery_to_db()
         self.tracks.clear()
         logger.info("VisionOrchestrator shutdown complete")
 
@@ -148,12 +147,14 @@ class VisionOrchestrator(BaseModel):
 
             if result.status == IdentityStatus.DEFINITE:
                 gallery_dirty = True
-                self._update_gallery(result, state)
+                changes = self._update_gallery(result, state)
+                asyncio.ensure_future(
+                    self._save_gallery_incremental(result, changes)
+                )
 
-        # 统一：设 force_probe + 异步落盘
+        # 统一：设 force_probe
         if gallery_dirty:
             self._on_gallery_updated()
-            asyncio.ensure_future(self._save_gallery_to_db())
 
         # --- 注意力选择 ---
         self._select_target()
@@ -197,6 +198,10 @@ class VisionOrchestrator(BaseModel):
         profile = self.gallery[person_id]
         profile.display_name = name
         profile.touch()
+
+        # 立即增量落库
+        persistence = get_gallery_persistence()
+        await persistence.upsert_person_row(profile, self.camera_id)
 
         state = self.tracks.get(track_id)
         if state is not None:
@@ -264,18 +269,21 @@ class VisionOrchestrator(BaseModel):
             self,
             result: MatchResult,
             state: TrackState,
-    ) -> None:
+    ) -> GalleryUpdateResult:
         """统一的 Gallery 更新：从 QualityCache 写入特征到底库。
 
-        Tier2 和 Tier3 的 DEFINITE 结果均通过此方法更新 Gallery。
+        Returns:
+            GalleryUpdateResult: 包含了变动的特征和衣橱更新标记。
         """
+        changes = GalleryUpdateResult()
+
         if not result.best_match:
-            return
+            return changes
 
         pid = result.best_match.person_id
         profile = self.gallery.get(pid)
         if not profile:
-            return
+            return changes
 
         cache = state.quality_cache
         gallery_cfg = get_config().gallery
@@ -290,12 +298,15 @@ class VisionOrchestrator(BaseModel):
                         face_best[pose] = cf
 
         for pose, cf in face_best.items():
-            profile.enroll_face(FeatureEntry(
+            entry = FeatureEntry(
                 embedding=cf.face_embedding,
                 pose_bucket=pose,
                 quality_score=cf.face_quality,
                 timestamp=cf.entry.timestamp,
-            ))
+            )
+            op = profile.enroll_face(entry)
+            if op is not None:
+                changes.feature_ops.append(op)
 
         # 人体: 每个姿态桶取质量最高的帧
         body_best: dict[PoseBucket, CachedFrame] = {}
@@ -306,25 +317,31 @@ class VisionOrchestrator(BaseModel):
                     body_best[pose] = cf
 
         for pose, cf in body_best.items():
-            profile.enroll_body_feature(FeatureEntry(
+            entry = FeatureEntry(
                 embedding=cf.body_embedding,
                 pose_bucket=pose,
                 quality_score=cf.body_quality,
                 timestamp=cf.entry.timestamp,
-            ))
+            )
+            op = profile.enroll_body_feature(entry)
+            if op is not None:
+                changes.feature_ops.append(op)
 
         # 服装: 最高质量 body embedding
         if body_best:
             best_cf = max(body_best.values(), key=lambda cf: cf.body_quality)
-            profile.enroll_outfit(best_cf.body_embedding, best_cf.body_quality)
+            changes.wardrobe_op = profile.enroll_outfit(
+                best_cf.body_embedding, best_cf.body_quality,
+            )
 
-        # 体型比例
+        # 体型比例 (存在 PersonRow 中, 由 upsert_person_row 保存)
         proportions = MultiFrameAggregator.aggregate_proportions(cache.body_pool)
         if proportions is not None:
             profile.update_proportions(proportions)
 
         profile.touch(time.time())
         logger.info("Gallery updated for person_id={}", pid)
+        return changes
 
     def _emit_match_event(
             self, track_id: int, result: MatchResult,
@@ -525,24 +542,61 @@ class VisionOrchestrator(BaseModel):
 
     async def _load_gallery_from_db(self) -> None:
         """从 SQLite 加载当前摄像头的底库。"""
-        try:
-            persistence = get_gallery_persistence()
-            self.gallery = await persistence.load_all_profiles(self.camera_id)
-            logger.info(
-                "[{}] Loaded {} persons from DB",
-                self.camera_id, len(self.gallery),
-            )
-        except Exception:
-            logger.exception("Failed to load gallery from DB")
-            self.gallery = {}
+        persistence = get_gallery_persistence()
+        self.gallery = await persistence.load_all_profiles(self.camera_id)
 
-    async def _save_gallery_to_db(self) -> None:
-        """保存当前摄像头的底库到 SQLite（串行化，防止并发写入）。"""
+    async def _save_gallery_incremental(
+            self,
+            result: MatchResult,
+            changes: GalleryUpdateResult,
+    ) -> None:
+        """增量持久化: 只写入 _update_gallery 实际变动的部分。"""
+        if not result.best_match:
+            return
+
+        pid = result.best_match.person_id
+        profile = self.gallery.get(pid)
+        if not profile:
+            return
+
         async with self.save_lock:
-            try:
-                persistence = get_gallery_persistence()
-                await persistence.save_all_profiles(
-                    self.gallery, self.camera_id,
-                )
-            except Exception:
-                logger.exception("Failed to save gallery to DB")
+            persistence = get_gallery_persistence()
+
+            # 1. persons 表 (touch / proportions 变动)
+            # 就算只是 touch 也会更新 last_updated，所以每次只要有更新就调用
+            await persistence.upsert_person_row(profile, self.camera_id)
+
+            # 2. 精确的单行特征操作
+            for op in changes.feature_ops:
+                if op.evicted is None:
+                    # 桶未满 → INSERT 1 行
+                    await persistence.add_feature(pid, op.entry, op.kind)
+                else:
+                    # 桶已满, 淘汰最差 → DELETE 1 行 + INSERT 1 行
+                    await persistence.replace_feature(
+                        pid, op.entry, op.evicted, op.kind,
+                    )
+
+            # 3. 衣橱
+            wop = changes.wardrobe_op
+            if wop is not None:
+                if wop.updated is not None:
+                    # EMA 更新已有 outfit → UPDATE 1 行
+                    await persistence.update_outfit(
+                        pid, wop.updated, wop.outfit,
+                    )
+                elif wop.evicted is not None:
+                    # 衣橱已满, 淘汰最旧 → DELETE 1 行 + INSERT 1 行
+                    await persistence.replace_outfit(
+                        pid, wop.outfit, wop.evicted,
+                    )
+                else:
+                    # 衣橱未满 → INSERT 1 行
+                    await persistence.add_outfit(pid, wop.outfit)
+
+            logger.debug(
+                "Incremental save for {}: {} feature ops, wardrobe={}",
+                pid,
+                len(changes.feature_ops),
+                wop is not None,
+            )

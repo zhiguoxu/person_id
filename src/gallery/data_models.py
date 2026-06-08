@@ -18,7 +18,7 @@ from loguru import logger
 from enum import Enum
 import numpy as np
 
-from typing import Annotated
+from typing import Annotated, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field, PlainSerializer
 
 from src.config import get_config
@@ -115,6 +115,13 @@ class FeatureEntry(BaseModel):
         return 0.5 ** (age_days / half_life_days)
 
 
+class FeatureOperation(BaseModel):
+    """单次特征的变动操作（仅入库成功时创建）。"""
+    entry: FeatureEntry  # 新入库的特征
+    evicted: FeatureEntry | None = None  # 不为 None 表示替换, 为 None 表示新增
+    kind: Literal["face", "body"]
+
+
 class OutfitRecord(BaseModel):
     """
     衣橱记录
@@ -143,6 +150,25 @@ class OutfitRecord(BaseModel):
             return 0.3
         else:
             return 0.1
+
+
+class OutfitEnrollResult(BaseModel):
+    """衣橱入库操作的结果（仅成功时返回）。
+
+    三种情况:
+    - updated 不为 None: EMA 更新了已有 outfit → DB UPDATE
+    - evicted 不为 None: 替换了最旧 outfit → DB DELETE + INSERT
+    - 两者都为 None: 新增 outfit (衣橱未满) → DB INSERT
+    """
+    outfit: OutfitRecord  # 新增或更新后的 outfit
+    updated: OutfitRecord | None = None  # EMA 更新前的旧版本 (用于定位 DB 行)
+    evicted: OutfitRecord | None = None  # 被替换淘汰的旧 outfit
+
+
+class GalleryUpdateResult(BaseModel):
+    """Gallery 的增量更新结果。"""
+    feature_ops: list[FeatureOperation] = Field(default_factory=list)
+    wardrobe_op: OutfitEnrollResult | None = None
 
 
 class BodyProportions(BaseModel):
@@ -377,71 +403,82 @@ class PersonProfile(BaseModel):
         return f.quality_score * (1.0 - 0.5 * ratio)
 
     def _enroll_feature(self, features: list[FeatureEntry], entry: FeatureEntry,
-                        max_per_bucket: int, half_life_days: float) -> bool:
-        """通用入库: 未满直接加, 满了按衰减后质量淘汰最差的"""
+                        max_per_bucket: int, half_life_days: float,
+                        ) -> tuple[bool, FeatureEntry | None]:
+        """通用入库: 未满直接加, 满了按衰减后质量淘汰最差的。
+
+        Returns:
+            (success, evicted): success=False 表示质量不够未入库。
+            evicted 为被淘汰的旧条目, 桶未满时为 None。
+        """
         if len(features) < max_per_bucket:
             features.append(entry)
-            return True
+            return True, None
 
         now = time.time()
         min_idx = min(range(len(features)),
                       key=lambda i: self._effective_quality(features[i], now, half_life_days))
 
         if entry.quality_score > self._effective_quality(features[min_idx], now, half_life_days):
+            evicted = features[min_idx]
             features[min_idx] = entry
-            return True
-        return False
+            return True, evicted
+        return False, None
 
-    def enroll_face(self, entry: FeatureEntry) -> bool:
-        """入库人脸特征 — 质量门槛 + 时间衰减淘汰。"""
+    def enroll_face(self, entry: FeatureEntry) -> FeatureOperation | None:
+        """入库人脸特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
         gallery_cfg = get_config().gallery
         if entry.quality_score < gallery_cfg.quality_enroll_threshold:
             logger.debug(
                 "Face quality {:.3f} below threshold {:.3f} for {}",
                 entry.quality_score, gallery_cfg.quality_enroll_threshold, self.person_id,
             )
-            return False
-        success = self._enroll_feature(self.face_features[entry.pose_bucket],
-                                       entry,
-                                       gallery_cfg.max_faces_per_bucket,
-                                       gallery_cfg.face_enroll_half_life_days)
+            return None
+        success, evicted = self._enroll_feature(
+            self.face_features[entry.pose_bucket], entry,
+            gallery_cfg.max_faces_per_bucket,
+            gallery_cfg.face_enroll_half_life_days,
+        )
         if success:
             self._face_centroids = None  # 失效缓存
             logger.debug(
                 "Enrolled face for {} in bucket {} (quality={:.3f})",
                 self.person_id, entry.pose_bucket.value, entry.quality_score,
             )
-        return success
+            return FeatureOperation(entry=entry, evicted=evicted, kind="face")
+        return None
 
-    def enroll_body_feature(self, entry: FeatureEntry) -> bool:
-        """入库人体特征 — 质量门槛 + 时间衰减淘汰。"""
+    def enroll_body_feature(self, entry: FeatureEntry) -> FeatureOperation | None:
+        """入库人体特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
         gallery_cfg = get_config().gallery
         if entry.quality_score < gallery_cfg.quality_enroll_threshold:
             logger.debug(
                 "Body feature quality {:.3f} below threshold for {}",
                 entry.quality_score, self.person_id,
             )
-            return False
-        success = self._enroll_feature(self.body_features[entry.pose_bucket],
-                                       entry,
-                                       gallery_cfg.max_body_per_bucket,
-                                       gallery_cfg.body_enroll_half_life_days)
+            return None
+        success, evicted = self._enroll_feature(
+            self.body_features[entry.pose_bucket], entry,
+            gallery_cfg.max_body_per_bucket,
+            gallery_cfg.body_enroll_half_life_days,
+        )
         if success:
             logger.debug(
                 "Enrolled body feature for {} in bucket {} (quality={:.3f})",
                 self.person_id, entry.pose_bucket.value, entry.quality_score,
             )
-        return success
+            return FeatureOperation(entry=entry, evicted=evicted, kind="body")
+        return None
 
-    def enroll_outfit(self, body_embedding: np.ndarray, quality: float) -> None:
-        """入库/更新衣橱记录 — 质量门槛 + EMA 更新。"""
+    def enroll_outfit(self, body_embedding: np.ndarray, quality: float) -> OutfitEnrollResult | None:
+        """入库/更新衣橱记录 — 质量门槛 + EMA 更新。失败返回 None。"""
         gallery_cfg = get_config().gallery
         if quality < gallery_cfg.quality_enroll_threshold:
             logger.debug(
                 "Body quality {:.3f} below threshold for {}",
                 quality, self.person_id,
             )
-            return
+            return None
 
         now = time.time()
 
@@ -449,12 +486,14 @@ class PersonProfile(BaseModel):
         for outfit in self.wardrobe:
             sim = float(np.dot(body_embedding, outfit.body_embedding))
             if sim > gallery_cfg.outfit_match_threshold:
+                # 记住更新前的快照 (用于 DB 定位)
+                old_snapshot = outfit.model_copy(deep=True)
                 # EMA 更新特征
                 alpha = 0.3
                 updated = (1 - alpha) * outfit.body_embedding + alpha * body_embedding
                 norm = np.linalg.norm(updated)
                 if norm < 0.1:
-                    return
+                    return None
                 outfit.body_embedding = updated / norm
                 outfit.last_seen = now
                 outfit.seen_count += 1
@@ -462,7 +501,7 @@ class PersonProfile(BaseModel):
                     "Updated outfit for {} (quality={:.3f}, wardrobe_size={})",
                     self.person_id, quality, len(self.wardrobe),
                 )
-                return
+                return OutfitEnrollResult(outfit=outfit, updated=old_snapshot)
 
         # 新衣服
         new_outfit = OutfitRecord(
@@ -472,16 +511,19 @@ class PersonProfile(BaseModel):
             last_seen=now,
         )
 
+        evicted: OutfitRecord | None = None
         if len(self.wardrobe) < gallery_cfg.max_outfits:
             self.wardrobe.append(new_outfit)
         else:
             oldest_idx = min(range(len(self.wardrobe)), key=lambda i: self.wardrobe[i].last_seen)
+            evicted = self.wardrobe[oldest_idx]
             self.wardrobe[oldest_idx] = new_outfit
 
         logger.debug(
             "Enrolled new outfit for {} (quality={:.3f}, wardrobe_size={})",
             self.person_id, quality, len(self.wardrobe),
         )
+        return OutfitEnrollResult(outfit=new_outfit, evicted=evicted)
 
     def update_proportions(self, proportions: BodyProportions) -> None:
         """累积平均更新体型比例。"""

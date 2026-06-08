@@ -25,7 +25,7 @@ class PersonRow(SQLModel, table=True):
     __tablename__ = "persons"
 
     person_id: str = Field(primary_key=True)
-    camera_id: str = Field(primary_key=True)
+    camera_id: str = Field(index=True)
     display_name: str
     created_at: float
     last_updated: float
@@ -56,13 +56,11 @@ class PersonRow(SQLModel, table=True):
 
 
 # ==============================================================================
-# face_features 表
+# 特征条目基类 (不建表, 仅字段复用)
 # ==============================================================================
 
-class FaceFeatureRow(SQLModel, table=True):
-    """人脸特征条目。"""
-
-    __tablename__ = "face_features"
+class FeatureRowBase(SQLModel):
+    """人脸/人体特征条目的公共字段。"""
 
     id: int | None = Field(default=None, primary_key=True)
     person_id: str = Field(foreign_key="persons.person_id")
@@ -71,6 +69,16 @@ class FaceFeatureRow(SQLModel, table=True):
     quality_score: float
     timestamp: float
     source_image: bytes | None = Field(default=None)
+
+
+# ==============================================================================
+# face_features 表
+# ==============================================================================
+
+class FaceFeatureRow(FeatureRowBase, table=True):
+    """人脸特征条目。"""
+
+    __tablename__ = "face_features"
 
     person: PersonRow | None = Relationship(back_populates="face_features")
 
@@ -79,18 +87,10 @@ class FaceFeatureRow(SQLModel, table=True):
 # body_features 表
 # ==============================================================================
 
-class BodyFeatureRow(SQLModel, table=True):
+class BodyFeatureRow(FeatureRowBase, table=True):
     """人体特征条目。"""
 
     __tablename__ = "body_features"
-
-    id: int | None = Field(default=None, primary_key=True)
-    person_id: str = Field(foreign_key="persons.person_id")
-    pose_bucket: str
-    embedding: bytes  # numpy float32 tobytes
-    quality_score: float
-    timestamp: float
-    source_image: bytes | None = Field(default=None)
 
     person: PersonRow | None = Relationship(back_populates="body_features")
 
