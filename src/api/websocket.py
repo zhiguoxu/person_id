@@ -150,7 +150,7 @@ async def _handle_binary(
         pending_vlm=result.get("pending_vlm", []),
         pipeline_debug=result.get("pipeline_debug"),
     )
-    await _send_json(websocket, response.model_dump())
+    await _send_json(websocket, response.model_dump(mode='json'))
 
     # 推送新事件
     new_events = orchestrator.drain_new_events()
@@ -165,7 +165,7 @@ async def _handle_binary(
             source=event.source,
             message=event.message,
         )
-        await _send_json(websocket, ws_event.model_dump())
+        await _send_json(websocket, ws_event.model_dump(mode='json'))
 
 
 async def _handle_text(
@@ -243,7 +243,7 @@ async def _send_json(websocket: WebSocket, data: dict[str, JsonValue]) -> None:
 async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
     """发送错误消息。"""
     error = WSError(code=code, message=message)
-    await _send_json(websocket, error.model_dump())
+    await _send_json(websocket, error.model_dump(mode='json'))
 
 
 async def _iter_messages(websocket: WebSocket) -> AsyncIterator[bytes | str]:

@@ -39,8 +39,10 @@ class FaceExtractor:
         config = get_config().face
 
         try:
+            from insightface.app import FaceAnalysis
             self._app: FaceAnalysis = FaceAnalysis(
                 name=config.insightface_model,
+                allowed_modules=["detection", "recognition"],
                 providers=self._get_providers(config.insightface_ctx_id),
             )
             self._app.prepare(

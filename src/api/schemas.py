@@ -6,12 +6,14 @@ API 数据模型 — Pydantic schemas
 from __future__ import annotations
 
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from src.pipeline.data_models import IdentityResult, TrackedPerson
 
 # JSON 兼容值类型
-JsonValue = str | int | float | bool | None | list[str | int | float | bool | None] | dict[str, str | int | float | bool | None]
+JsonValue = Any
 
 
 # ==============================================================================

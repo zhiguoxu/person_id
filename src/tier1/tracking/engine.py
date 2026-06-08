@@ -5,11 +5,15 @@
 """
 from __future__ import annotations
 
-from pathlib import Path
+from typing import Any
 
 import numpy as np
-import torch
-from boxmot import BotSort as BoTSORT  # type: ignore[import-untyped]
+
+try:
+    from boxmot.trackers import BotSort  # type: ignore[import-untyped]
+except ImportError:
+    # Legacy boxmot (<v18) exported BoTSORT from root
+    from boxmot import BoTSORT as BotSort  # type: ignore[import-untyped]
 from loguru import logger
 
 from src.config import get_config
@@ -125,14 +129,11 @@ class TrackingEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _create_tracker() -> BoTSORT:
+    def _create_tracker() -> BotSort:
         """Create the BoT-SORT tracker backend."""
         config = get_config()
-        device = torch.device(config.detection.yolo_device)
-        tracker = BoTSORT(
-            reid_weights=Path(""),
-            device=device,
-            half=False,
+        tracker = BotSort(
+            reid_model=None,
             track_high_thresh=config.tracking.track_high_thresh,
             track_low_thresh=config.tracking.track_low_thresh,
             new_track_thresh=config.tracking.new_track_thresh,

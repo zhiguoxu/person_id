@@ -397,7 +397,7 @@ class VisionOrchestrator(BaseModel):
                 current_score = current_state.person.attention_score
                 best_score = best.person.attention_score
                 # 新目标必须超过当前目标 + margin 才切换
-                if best_score < current_score + self._HYSTERESIS_MARGIN:
+                if best_score < current_score + _HYSTERESIS_MARGIN:
                     best = current_state
 
         best.is_current_target = True

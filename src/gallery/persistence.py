@@ -100,8 +100,8 @@ class GalleryPersistence:
                 stmt = select(PersonRow).where(
                     PersonRow.camera_id == camera_id
                 )
-                results = await session.exec(stmt)
-                person_rows = results.all()
+                results = await session.execute(stmt)
+                person_rows = results.scalars().all()
 
                 for person_row in person_rows:
                     face_rows = await self._load_face_features(
@@ -231,8 +231,8 @@ class GalleryPersistence:
                 row_cls.pose_bucket == evicted.pose_bucket.value,
                 row_cls.timestamp == evicted.timestamp,
             )
-            result = await session.exec(stmt)
-            old_row = result.first()
+            result = await session.execute(stmt)
+            old_row = result.scalars().first()
             if old_row:
                 await session.delete(old_row)
 
@@ -257,8 +257,8 @@ class GalleryPersistence:
                 WardrobeRow.person_id == person_id,
                 WardrobeRow.first_seen == old.first_seen,
             )
-            result = await session.exec(stmt)
-            row = result.first()
+            result = await session.execute(stmt)
+            row = result.scalars().first()
             if row:
                 sync_outfit_fields(row, updated)
                 session.add(row)
@@ -274,8 +274,8 @@ class GalleryPersistence:
                 WardrobeRow.person_id == person_id,
                 WardrobeRow.first_seen == evicted.first_seen,
             )
-            result = await session.exec(stmt)
-            old_row = result.first()
+            result = await session.execute(stmt)
+            old_row = result.scalars().first()
             if old_row:
                 await session.delete(old_row)
 
@@ -295,8 +295,8 @@ class GalleryPersistence:
             PersonRow.person_id == person_id,
             PersonRow.camera_id == camera_id,
         )
-        result = await session.exec(stmt)
-        return result.first()
+        result = await session.execute(stmt)
+        return result.scalars().first()
 
     @staticmethod
     async def _load_face_features(
@@ -305,8 +305,8 @@ class GalleryPersistence:
         stmt = select(FaceFeatureRow).where(
             FaceFeatureRow.person_id == person_id
         )
-        result = await session.exec(stmt)
-        return list(result.all())
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     @staticmethod
     async def _load_body_features(
@@ -315,8 +315,8 @@ class GalleryPersistence:
         stmt = select(BodyFeatureRow).where(
             BodyFeatureRow.person_id == person_id
         )
-        result = await session.exec(stmt)
-        return list(result.all())
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     @staticmethod
     async def _load_wardrobe(
@@ -325,5 +325,5 @@ class GalleryPersistence:
         stmt = select(WardrobeRow).where(
             WardrobeRow.person_id == person_id
         )
-        result = await session.exec(stmt)
-        return list(result.all())
+        result = await session.execute(stmt)
+        return list(result.scalars().all())

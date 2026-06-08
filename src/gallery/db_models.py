@@ -10,7 +10,6 @@ Gallery DB Models — SQLModel ORM 表定义
     - body_features: 人体特征条目 (一人多条, 按姿态桶)
     - wardrobe: 衣橱记录 (一人多条)
 """
-from __future__ import annotations
 
 from sqlmodel import SQLModel, Field, Relationship
 
@@ -41,15 +40,15 @@ class PersonRow(SQLModel, table=True):
     bp_samples: int = Field(default=0)
 
     # Relationships
-    face_features: list[FaceFeatureRow] = Relationship(
+    face_features: list["FaceFeatureRow"] = Relationship(
         back_populates="person",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    body_features: list[BodyFeatureRow] = Relationship(
+    body_features: list["BodyFeatureRow"] = Relationship(
         back_populates="person",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    wardrobe_items: list[WardrobeRow] = Relationship(
+    wardrobe_items: list["WardrobeRow"] = Relationship(
         back_populates="person",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )

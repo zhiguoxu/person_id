@@ -8,13 +8,14 @@ const BACKEND_CONFIG = {
     // 远程 CUDA 服务器地址
     host: '8.145.38.125',
     port: 10003,
+    cameraId: 'zhiguo',  // 默认摄像头 ID
     
     // 自动构建 URL
     get baseUrl() {
         return `http://${this.host}:${this.port}`;
     },
     get wsUrl() {
-        return `ws://${this.host}:${this.port}/ws/vision`;
+        return `ws://${this.host}:${this.port}/ws/vision?camera_id=${this.cameraId}`;
     },
     get apiUrl() {
         return `${this.baseUrl}/api`;
