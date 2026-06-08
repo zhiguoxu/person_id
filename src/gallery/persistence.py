@@ -168,8 +168,13 @@ class GalleryPersistence:
     ) -> None:
         """仅更新 persons 表的元数据 (不触碰特征子表)。
 
-        适用于 touch()、update_proportions()、rename 等只修改 person 字段的场景。
+        自动设置 last_updated 为当前时间, update_count 自增。
         """
+        import time
+        now = time.time()
+        profile.last_updated = now
+        profile.update_count += 1
+
         async with AsyncSession(self.engine) as session:
             existing = await self._get_person_row(
                 session, profile.person_id, camera_id,

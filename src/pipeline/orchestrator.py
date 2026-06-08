@@ -146,7 +146,7 @@ class VisionOrchestrator(BaseModel):
 
             if result.status == IdentityStatus.DEFINITE:
                 gallery_dirty = True
-                changes = self._update_gallery(result, state)
+                changes = self._update_gallery_person(result.best_match.person_id, state)
                 asyncio.ensure_future(
                     self._save_gallery_incremental(result, changes)
                 )
@@ -196,7 +196,6 @@ class VisionOrchestrator(BaseModel):
 
         profile = self.gallery[person_id]
         profile.display_name = name
-        profile.touch()
 
         # 立即增量落库
         persistence = get_gallery_persistence()
@@ -264,9 +263,9 @@ class VisionOrchestrator(BaseModel):
             if state.identity_result.status != IdentityStatus.DEFINITE:
                 state.force_probe = True
 
-    def _update_gallery(
+    def _update_gallery_person(
             self,
-            result: MatchResult,
+            person_id: str,
             state: TrackState,
     ) -> GalleryUpdateResult:
         """统一的 Gallery 更新：从 QualityCache 写入特征到底库。
@@ -276,11 +275,7 @@ class VisionOrchestrator(BaseModel):
         """
         changes = GalleryUpdateResult()
 
-        if not result.best_match:
-            return changes
-
-        pid = result.best_match.person_id
-        profile = self.gallery.get(pid)
+        profile = self.gallery.get(person_id)
         if not profile:
             return changes
 
@@ -326,8 +321,7 @@ class VisionOrchestrator(BaseModel):
         if proportions is not None:
             profile.update_proportions(proportions)
 
-        profile.touch(time.time())
-        logger.info("Gallery updated for person_id={}", pid)
+        logger.info("Gallery updated for person_id={}", person_id)
         return changes
 
     def _emit_match_event(

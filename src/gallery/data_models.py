@@ -548,10 +548,6 @@ class PersonProfile(BaseModel):
             self.person_id, self.body_proportions_samples,
         )
 
-    def touch(self, now: float | None = None) -> None:
-        """更新最后出现时间和出现次数"""
-        self.last_updated = now or time.time()
-        self.update_count += 1
 
     def total_face_features(self) -> int:
         """所有姿态桶的人脸特征总数"""
