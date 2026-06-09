@@ -71,9 +71,13 @@ def should_trigger_vlm(state: TrackState) -> bool:
     """判断是否应该触发 Tier3 VLM 仲裁
 
     条件:
-    1. 当前状态为 SUSPECTED 或 CONFLICT
-    2. VLM 冷却期已过
+    1. VLM 已启用
+    2. 当前状态为 SUSPECTED 或 CONFLICT
+    3. VLM 冷却期已过
     """
+    if not get_config().vlm.enabled:
+        return False
+
     if state.identity_result.status not in (IdentityStatus.SUSPECTED, IdentityStatus.CONFLICT):
         return False
 

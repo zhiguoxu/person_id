@@ -153,6 +153,7 @@ class MultiFrameConfig(BaseModel):
 
 class VLMConfig(BaseModel):
     """VLM 仲裁配置"""
+    enabled: bool = False  # 是否启用 Tier3 VLM 仲裁
     model: str = "qwen-vl-max"
     api_key: str = ""
     base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
