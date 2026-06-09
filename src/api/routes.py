@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
-
+from src.api.registry import get_camera_orchestrator
 from src.config import get_config as _get_config
 
 from src.api.schemas import (
@@ -32,7 +32,6 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 def _get_camera_orchestrator(camera_id: str):
     """获取指定摄像头的编排器。"""
-    from src.api.server import get_camera_orchestrator
     orch = get_camera_orchestrator(camera_id)
     if orch is None:
         raise HTTPException(
@@ -72,7 +71,7 @@ async def update_config_endpoint(request: ConfigUpdateRequest) -> ConfigUpdateRe
 @router.get("/cameras")
 async def list_cameras() -> dict[str, list[str]]:
     """列出当前活跃的摄像头。"""
-    from src.api.server import camera_registry
+    from src.api.registry import camera_registry
     return {"cameras": list(camera_registry.keys())}
 
 
@@ -82,9 +81,21 @@ async def list_cameras() -> dict[str, list[str]]:
 
 @router.get("/{camera_id}/gallery/persons", response_model=PersonListResponse)
 async def list_persons(camera_id: str) -> PersonListResponse:
-    """列出指定摄像头底库中所有人物。"""
-    orch = _get_camera_orchestrator(camera_id)
-    gallery = orch.gallery
+    """列出指定摄像头底库中所有人物。
+
+    优先从活跃的 orchestrator 内存读取, 不在线时从数据库加载。
+    """
+    # 尝试从活跃 orchestrator 获取 (最快)
+    if (orch := get_camera_orchestrator(camera_id)) is not None:
+        gallery = orch.gallery
+    else:
+        # Camera 不在线, 直接从数据库加载
+        from src.gallery.persistence import get_gallery_persistence
+        try:
+            gallery = await get_gallery_persistence().load_all_profiles(camera_id)
+        except Exception as e:
+            logger.warning("Failed to load gallery from DB for camera {}: {}", camera_id, e)
+            gallery = {}
 
     persons = []
     for pid, profile in gallery.items():
@@ -157,7 +168,7 @@ async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
 
 @router.post("/{camera_id}/vision/confirm_identity")
 async def confirm_identity(
-    camera_id: str, request: ConfirmIdentityRequest
+        camera_id: str, request: ConfirmIdentityRequest
 ) -> dict:
     """
     人工确认身份 (Human-in-the-loop)。
@@ -191,3 +202,45 @@ async def confirm_identity(
             status_code=500,
             detail=f"Confirmation failed: {str(e)}",
         ) from e
+
+
+@router.delete("/{camera_id}/gallery/person/{person_id}")
+async def delete_person(camera_id: str, person_id: str) -> dict:
+    """
+    删除底库中的人物。
+
+    同时从内存 gallery 和数据库中移除。
+    """
+    from src.gallery.persistence import get_gallery_persistence
+
+    # 从活跃 orchestrator 内存中移除 (同步: 标记 + 清 gallery + reset tracks)
+    orch = get_camera_orchestrator(camera_id)
+    if orch is not None:
+        orch.delete_person(person_id)
+    else:
+        from src.api.registry import camera_registry
+        logger.warning(
+            "DELETE person={} camera={}: orch=NOT_FOUND, registry_keys={}",
+            person_id, camera_id, list(camera_registry.keys()),
+        )
+
+    # 从数据库中移除 (orch 在线时走 save_lock 防止与入库 commit 交叉)
+    try:
+        if orch is not None:
+            await orch.delete_person_from_db(person_id)
+        else:
+            persistence = get_gallery_persistence()
+            await persistence.delete_profile(person_id, camera_id)
+    except Exception as e:
+        logger.exception("Failed to delete person {} from DB", person_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Delete failed: {str(e)}",
+        ) from e
+
+    logger.info("Deleted person {} (camera={})", person_id, camera_id)
+    return {
+        "status": "deleted",
+        "camera_id": camera_id,
+        "person_id": person_id,
+    }

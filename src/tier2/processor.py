@@ -32,6 +32,7 @@ from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 from src.gallery import matcher as gallery_matcher
 from src.tier2 import resolver
 from src.tier2 import multi_modal_fusion as fusion
+from src.config import get_config
 
 
 # ---------------------------------------------------------------------------
@@ -123,9 +124,27 @@ class Tier2Processor:
         result = resolver.resolve_reid(match_result)
 
         elapsed = (_time.perf_counter() - t0) * 1000
+
+        # --- Diagnostic logging ---
+        cfg = get_config().matching
+        top3 = candidates[:3]
+        top3_info = " | ".join(
+            f"{c.display_name}(fused={c.fused_score:.3f}, "
+            f"face={c.face_score or 0:.3f}[q={c.face_match_quality:.2f}], "
+            f"body={c.body_score or 0:.3f}[q={c.body_match_quality:.2f}], "
+            f"prop={c.proportion_score or 0:.3f})"
+            for c in top3
+        ) if top3 else "(no candidates)"
+
         logger.info(
-            "Tier2 multiframe: track={}, status={}, n_frames={}, n_new={}, {:.1f}ms",
-            track_id, result.status.value, len(frames), n_new, elapsed,
+            "Tier2 track={} | gallery={} | face_cand={} body_cand={} prop_cand={} "
+            "| fused_top3: [{}] | status={} "
+            "| thresholds A={:.2f} B={:.2f} C={:.2f} | {:.1f}ms",
+            track_id, len(gallery),
+            len(face_candidates), len(body_candidates), len(proportion_candidates),
+            top3_info, result.status.value,
+            cfg.A_threshold, cfg.B_threshold, cfg.C_threshold,
+            elapsed,
         )
 
         return result, debug

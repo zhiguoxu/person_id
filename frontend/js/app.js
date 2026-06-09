@@ -27,9 +27,6 @@
         // 5. 连接 WebSocket
         window.wsManager.connect();
 
-        // 6. 加载服务端配置
-        loadServerConfig();
-
         console.log('[App] Initialization complete');
     }
 
@@ -63,6 +60,18 @@
             });
             result.tracked_persons = persons;
 
+            // 清除已删除用户的身份标记
+            const deletedIds = window.personGallery?._deletedIds;
+            if (deletedIds && deletedIds.size > 0) {
+                for (const p of persons) {
+                    if (p.person_id && deletedIds.has(p.person_id)) {
+                        p.person_id = null;
+                        p.display_name = null;
+                        p.identity_status = 'identifying';
+                    }
+                }
+            }
+
             // 更新 Canvas 叠加层 (后端用 tracked_persons)
             window.overlayRenderer.update(persons);
 
@@ -85,6 +94,8 @@
         // 连接成功
         window.wsManager.onConnected = () => {
             loadServerConfig();
+            // WS 重连后后端状态已刷新, 清除前端的删除标记
+            window.personGallery._deletedIds.clear();
         };
     }
 
@@ -130,12 +141,94 @@
         const inputTrackId = document.getElementById('confirm-track-id');
         const inputPersonId = document.getElementById('confirm-person-id');
         const inputName = document.getElementById('confirm-name');
-        
+        const candidatesSection = document.getElementById('confirm-candidates-section');
+        const candidatesList = document.getElementById('confirm-candidates-list');
+
+        /**
+         * 从服务端加载 gallery 人物列表，填充候选卡片
+         */
+        async function populateCandidates() {
+            candidatesList.innerHTML = '';
+
+            // 拉取服务端 gallery 数据
+            let galleryPersons = [];
+            try {
+                const cameraId = window.BACKEND_CONFIG.cameraId;
+                const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${cameraId}/gallery/persons`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    galleryPersons = data.persons || data || [];
+                }
+            } catch (e) {
+                console.log('[App] Could not load gallery persons for candidates');
+            }
+
+            // 如果 gallery 为空则隐藏候选区
+            if (galleryPersons.length === 0) {
+                candidatesSection.classList.add('empty');
+                return;
+            }
+            candidatesSection.classList.remove('empty');
+
+            // 添加 "+ New Person" 卡片
+            const newCard = document.createElement('div');
+            newCard.className = 'candidate-card new-person';
+            newCard.dataset.personId = '';
+            newCard.dataset.displayName = '';
+            newCard.innerHTML = `
+                <div class="candidate-avatar">＋</div>
+                <div class="candidate-info">
+                    <span class="candidate-display-name">New Person</span>
+                    <span class="candidate-person-id">Create new gallery entry</span>
+                </div>
+            `;
+            candidatesList.appendChild(newCard);
+
+            // 添加 gallery 人物卡片
+            for (const person of galleryPersons) {
+                const initial = (person.display_name || '?')[0].toUpperCase();
+                const card = document.createElement('div');
+                card.className = 'candidate-card';
+                card.dataset.personId = person.person_id;
+                card.dataset.displayName = person.display_name;
+                card.innerHTML = `
+                    <div class="candidate-avatar">${initial}</div>
+                    <div class="candidate-info">
+                        <span class="candidate-display-name">${person.display_name}</span>
+                        <span class="candidate-person-id">${person.person_id}</span>
+                    </div>
+                `;
+                candidatesList.appendChild(card);
+            }
+
+            // 点击候选卡片 → 选中并填充表单 (事件委托, 只绑一次)
+            if (!candidatesList._bindDone) {
+                candidatesList.addEventListener('click', (e) => {
+                    const card = e.target.closest('.candidate-card');
+                    if (!card) return;
+
+                    candidatesList.querySelectorAll('.candidate-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+
+                    inputPersonId.value = card.dataset.personId || '';
+                    inputName.value = card.dataset.displayName || '';
+                    if (!card.dataset.personId) {
+                        inputName.value = '';
+                        inputName.focus();
+                    }
+                });
+                candidatesList._bindDone = true;
+            }
+        }
+
         window.overlayRenderer.onPersonClicked = (person) => {
-            inputTrackId.value = person.person?.track_id || '';
-            inputPersonId.value = person.identity_result?.person_id || '';
-            inputName.value = person.identity_result?.display_name || '';
+            inputTrackId.value = person.track_id || '';
+            inputPersonId.value = person.person_id || '';
+            inputName.value = person.display_name || '';
             confirmModal.classList.remove('hidden');
+
+            // 异步加载候选列表
+            populateCandidates();
             inputName.focus();
         };
 
@@ -183,8 +276,8 @@
             const response = await fetch(`${window.BACKEND_CONFIG.apiUrl}/config`);
             if (response.ok) {
                 const data = await response.json();
-                if (data.tunable_params) {
-                    window.controlsPanel.initialize(data.tunable_params);
+                if (data.params) {
+                    window.controlsPanel.initialize(data.params);
                 }
                 console.log('[App] Config loaded from server:', window.BACKEND_CONFIG.baseUrl);
             }

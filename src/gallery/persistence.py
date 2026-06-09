@@ -138,23 +138,33 @@ class GalleryPersistence:
             self, person_id: str, camera_id: str,
     ) -> None:
         """从数据库删除指定人物档案 (级联删除关联的特征和衣橱)。"""
+        from sqlalchemy import delete as sa_delete
+
         try:
             async with AsyncSession(self.engine) as session:
+                # 先手动删除子表 (不依赖 ORM cascade, 确保干净)
+                await session.execute(
+                    sa_delete(FaceFeatureRow).where(FaceFeatureRow.person_id == person_id)
+                )
+                await session.execute(
+                    sa_delete(BodyFeatureRow).where(BodyFeatureRow.person_id == person_id)
+                )
+                await session.execute(
+                    sa_delete(WardrobeRow).where(WardrobeRow.person_id == person_id)
+                )
+
+                # 再删主表
                 existing = await self._get_person_row(
                     session, person_id, camera_id,
                 )
                 if existing:
                     await session.delete(existing)
-                    await session.commit()
-                    logger.info(
-                        "Deleted profile: {} (camera={})",
-                        person_id, camera_id,
-                    )
-                else:
-                    logger.warning(
-                        "Profile not found for deletion: {} (camera={})",
-                        person_id, camera_id,
-                    )
+
+                await session.commit()
+                logger.info(
+                    "Deleted profile: {} (camera={})",
+                    person_id, camera_id,
+                )
         except Exception:
             logger.exception("Failed to delete profile: {}", person_id)
             raise
@@ -282,6 +292,107 @@ class GalleryPersistence:
             # INSERT 新行
             session.add(outfit_to_row(person_id, new_outfit))
             await session.commit()
+
+    # ------------------------------------------------------------------
+    # 共享 Session 版本 (调用方管理事务, 不 commit)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def upsert_person_row_in(
+            session: AsyncSession,
+            profile: PersonProfile, camera_id: str,
+            person_row: PersonRow | None,
+    ) -> None:
+        """在外部 session 中 upsert persons 行 (不 commit)。
+
+        Args:
+            session: 调用方提供的 AsyncSession。
+            profile: 人物档案。
+            camera_id: 摄像头 ID。
+            person_row: 已查询的现有行 (None 表示新建)。
+        """
+        import time as _time
+        profile.last_updated = _time.time()
+        profile.update_count += 1
+
+        if person_row:
+            sync_person_fields(person_row, profile)
+            session.add(person_row)
+        else:
+            row = PersonRow(
+                person_id=profile.person_id,
+                camera_id=camera_id,
+            )
+            sync_person_fields(row, profile)
+            session.add(row)
+
+    @staticmethod
+    def add_feature_in(
+            session: AsyncSession,
+            person_id: str, entry: FeatureEntry, kind: str,
+    ) -> None:
+        """在外部 session 中 INSERT 单条特征行 (不 commit)。"""
+        row_cls = FaceFeatureRow if kind == "face" else BodyFeatureRow
+        session.add(entry_to_feature_row(person_id, entry, row_cls))
+
+    @staticmethod
+    async def replace_feature_in(
+            session: AsyncSession,
+            person_id: str, new_entry: FeatureEntry,
+            evicted: FeatureEntry, kind: str,
+    ) -> None:
+        """在外部 session 中原子替换特征行 (不 commit)。"""
+        row_cls = FaceFeatureRow if kind == "face" else BodyFeatureRow
+        stmt = select(row_cls).where(
+            row_cls.person_id == person_id,
+            row_cls.pose_bucket == evicted.pose_bucket.value,
+            row_cls.timestamp == evicted.timestamp,
+        )
+        result = await session.execute(stmt)
+        old_row = result.scalars().first()
+        if old_row:
+            await session.delete(old_row)
+        session.add(entry_to_feature_row(person_id, new_entry, row_cls))
+
+    @staticmethod
+    def add_outfit_in(
+            session: AsyncSession,
+            person_id: str, outfit: OutfitRecord,
+    ) -> None:
+        """在外部 session 中 INSERT 单条衣橱记录 (不 commit)。"""
+        session.add(outfit_to_row(person_id, outfit))
+
+    @staticmethod
+    async def update_outfit_in(
+            session: AsyncSession,
+            person_id: str, old: OutfitRecord, updated: OutfitRecord,
+    ) -> None:
+        """在外部 session 中 UPDATE 衣橱记录 (不 commit)。"""
+        stmt = select(WardrobeRow).where(
+            WardrobeRow.person_id == person_id,
+            WardrobeRow.first_seen == old.first_seen,
+        )
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        if row:
+            sync_outfit_fields(row, updated)
+            session.add(row)
+
+    @staticmethod
+    async def replace_outfit_in(
+            session: AsyncSession,
+            person_id: str, new_outfit: OutfitRecord, evicted: OutfitRecord,
+    ) -> None:
+        """在外部 session 中原子替换衣橱记录 (不 commit)。"""
+        stmt = select(WardrobeRow).where(
+            WardrobeRow.person_id == person_id,
+            WardrobeRow.first_seen == evicted.first_seen,
+        )
+        result = await session.execute(stmt)
+        old_row = result.scalars().first()
+        if old_row:
+            await session.delete(old_row)
+        session.add(outfit_to_row(person_id, new_outfit))
 
     # ------------------------------------------------------------------
     # 内部: 查询辅助

@@ -26,7 +26,7 @@ class BufferEntry(BaseModel):
     """帧缓冲条目 — Tier1 每帧生成"""
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    timestamp: float  # time.monotonic()
+    timestamp: float  # time.time() — Unix timestamp
     crop: np.ndarray  # BGR 人体裁剪 (bbox 区域拷贝, 非整帧引用)
     bbox: np.ndarray  # [x1, y1, x2, y2]
     keypoints: np.ndarray  # (17, 3) COCO keypoints

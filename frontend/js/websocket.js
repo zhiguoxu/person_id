@@ -20,13 +20,11 @@ class WebSocketManager {
         this.maxInterval = 200;   // 最低 5 FPS
         this.reconnectDelay = 2000;
         this.reconnectTimer = null;
-        this.frameTimer = null;
 
         // 回调
         this.onResult = null;      // (result: Object) => void
         this.onEvent = null;       // (event: Object) => void
         this.onConnected = null;   // () => void
-        this.onDisconnected = null;// () => void
 
         // 统计
         this.lastResultTime = 0;
@@ -73,7 +71,6 @@ class WebSocketManager {
             this.connected = false;
             this.pendingFrame = false;
             this._updateStatusUI(false);
-            if (this.onDisconnected) this.onDisconnected();
             this._scheduleReconnect();
         };
 
@@ -126,7 +123,7 @@ class WebSocketManager {
     sendConfigUpdate(params) {
         this._sendJSON({
             type: 'config_update',
-            payload: params
+            updates: params
         });
     }
 

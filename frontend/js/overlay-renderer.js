@@ -44,7 +44,6 @@ class OverlayRenderer {
             target_glow: '#00e5ff',
             skeleton_high: 'rgba(0, 255, 136, 0.8)',
             skeleton_low: 'rgba(100, 100, 100, 0.4)',
-            trail: '#00e5ff',
         };
 
         this.onPersonClicked = null;
@@ -293,7 +292,6 @@ class OverlayRenderer {
         const x = bbox[2] + 4;
         const y = bbox[1] + 4;
 
-        ctx.font = '10px Inter, sans-serif';
         ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
         ctx.beginPath();
         ctx.roundRect(x, y, 22, 16, 3);

@@ -164,6 +164,7 @@ async def _handle_binary(
             fused_score=event.fused_score,
             source=event.source,
             message=event.message,
+            candidates=event.candidates,
         )
         await _send_json(websocket, ws_event.model_dump(mode='json'))
 

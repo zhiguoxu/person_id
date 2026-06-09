@@ -11,32 +11,26 @@ class ControlsPanel {
         this.presets = {
             conservative: {
                 YOLO_CONFIDENCE: 0.6,
-                REID_CONFIDENT_THRESHOLD: 0.80,
-                REID_SUSPECTED_THRESHOLD: 0.65,
-                VLM_CONFIDENT_THRESHOLD: 0.85,
-                VLM_SUSPECTED_THRESHOLD: 0.70,
+                A_THRESHOLD: 0.85,
+                B_THRESHOLD: 0.75,
+                C_THRESHOLD: 0.60,
                 QUALITY_ENROLL_THRESHOLD: 0.55,
-                FACE_SHORTCUT_THRESHOLD: 0.80,
                 OUTFIT_MATCH_THRESHOLD: 0.90,
             },
             balanced: {
                 YOLO_CONFIDENCE: 0.5,
-                REID_CONFIDENT_THRESHOLD: 0.72,
-                REID_SUSPECTED_THRESHOLD: 0.55,
-                VLM_CONFIDENT_THRESHOLD: 0.80,
-                VLM_SUSPECTED_THRESHOLD: 0.60,
+                A_THRESHOLD: 0.78,
+                B_THRESHOLD: 0.68,
+                C_THRESHOLD: 0.50,
                 QUALITY_ENROLL_THRESHOLD: 0.40,
-                FACE_SHORTCUT_THRESHOLD: 0.75,
                 OUTFIT_MATCH_THRESHOLD: 0.85,
             },
             aggressive: {
                 YOLO_CONFIDENCE: 0.35,
-                REID_CONFIDENT_THRESHOLD: 0.60,
-                REID_SUSPECTED_THRESHOLD: 0.45,
-                VLM_CONFIDENT_THRESHOLD: 0.70,
-                VLM_SUSPECTED_THRESHOLD: 0.50,
+                A_THRESHOLD: 0.70,
+                B_THRESHOLD: 0.60,
+                C_THRESHOLD: 0.40,
                 QUALITY_ENROLL_THRESHOLD: 0.30,
-                FACE_SHORTCUT_THRESHOLD: 0.65,
                 OUTFIT_MATCH_THRESHOLD: 0.75,
             },
         };
@@ -54,14 +48,12 @@ class ControlsPanel {
 
     _defaultParams() {
         return {
-            YOLO_CONFIDENCE: { value: 0.5, min: 0.1, max: 0.9, step: 0.05, group: 'detection', label: 'Detection Conf' },
-            REID_CONFIDENT_THRESHOLD: { value: 0.72, min: 0.50, max: 0.95, step: 0.01, group: 'reid', label: 'ReID Confident (X)' },
-            REID_SUSPECTED_THRESHOLD: { value: 0.55, min: 0.30, max: 0.80, step: 0.01, group: 'reid', label: 'ReID Suspected (Y)' },
-            VLM_CONFIDENT_THRESHOLD: { value: 0.80, min: 0.50, max: 0.95, step: 0.01, group: 'vlm', label: 'VLM Confident (X)' },
-            VLM_SUSPECTED_THRESHOLD: { value: 0.60, min: 0.30, max: 0.80, step: 0.01, group: 'vlm', label: 'VLM Suspected (Y)' },
-            QUALITY_ENROLL_THRESHOLD: { value: 0.40, min: 0.10, max: 0.90, step: 0.05, group: 'quality', label: 'Face Quality Min' },
-            FACE_SHORTCUT_THRESHOLD: { value: 0.75, min: 0.50, max: 0.95, step: 0.01, group: 'matching', label: 'Face Shortcut' },
-            OUTFIT_MATCH_THRESHOLD: { value: 0.85, min: 0.50, max: 0.95, step: 0.01, group: 'matching', label: 'Outfit Match' },
+            YOLO_CONFIDENCE: { value: 0.5, min: 0, max: 1, step: 0.05, group: 'detection', label: 'Detection Confidence' },
+            A_THRESHOLD: { value: 0.78, min: 0, max: 1, step: 0.01, group: 'reid', label: 'A Threshold (笃定)' },
+            B_THRESHOLD: { value: 0.68, min: 0, max: 1, step: 0.01, group: 'reid', label: 'B Threshold (确定)' },
+            C_THRESHOLD: { value: 0.50, min: 0, max: 1, step: 0.01, group: 'reid', label: 'C Threshold (怀疑)' },
+            QUALITY_ENROLL_THRESHOLD: { value: 0.40, min: 0, max: 1, step: 0.05, group: 'quality', label: '入库质量门槛' },
+            OUTFIT_MATCH_THRESHOLD: { value: 0.85, min: 0, max: 1, step: 0.01, group: 'matching', label: '衣橱匹配阈值' },
         };
     }
 
@@ -80,7 +72,6 @@ class ControlsPanel {
         const groupLabels = {
             detection: '🎯 Detection',
             reid: '🔍 ReID',
-            vlm: '🧠 VLM',
             quality: '📊 Quality',
             matching: '🔗 Matching',
         };

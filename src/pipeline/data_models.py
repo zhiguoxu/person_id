@@ -45,7 +45,9 @@ class IdentityStatus(str, Enum):
 class EventType(str, Enum):
     """系统事件类型"""
     NEW_PERSON = "new_person"
-    IDENTITY_CONFIRMED = "identity_confirmed"
+    IDENTITY_DEFINITE = "identity_definite"
+    IDENTITY_CONFIDENT = "identity_confident"
+    IDENTITY_SUSPECTED = "identity_suspected"
     IDENTITY_CONFLICT = "identity_conflict"
     VLM_INVOKED = "vlm_invoked"
     VLM_RESULT = "vlm_result"
@@ -194,6 +196,7 @@ class SystemEvent(BaseModel):
     fused_score: float | None = None
     source: str = "system"  # "system" | "reid" | "vlm" | "human" | "spatial"
     message: str = ""
+    candidates: list[dict] = Field(default_factory=list)  # 匹配候选详情 (debug)
 
     def to_dict(self) -> dict[str, str | int | float | bool | None]:
         return self.model_dump()

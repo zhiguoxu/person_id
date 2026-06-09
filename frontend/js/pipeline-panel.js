@@ -129,7 +129,7 @@ class PipelinePanel {
 
         let html = '';
         results.forEach(r => {
-            const quality = r.quality !== null ? r.quality.toFixed(2) : 'N/A';
+            const quality = r.quality != null ? r.quality.toFixed(2) : 'N/A';
             const icon = r.extracted ? (r.quality > 0.7 ? '✅' : '⚠️') : '❌';
             html += `<div class="detail-line">
                 Track #${r.track_id}: ${icon} quality=${quality}

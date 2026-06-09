@@ -101,7 +101,6 @@ class MatchingConfig(BaseModel):
     proportion_base_weight: float = 0.15  # 体型比例基础权重
 
 
-
 class TrackingConfig(BaseModel):
     """追踪引擎配置"""
     # BoT-SORT 参数
@@ -160,7 +159,6 @@ class VLMConfig(BaseModel):
     timeout_sec: float = 30.0
     max_retries: int = 2
     max_candidates: int = 3
-
 
 
 class ServerConfig(BaseModel):
@@ -225,33 +223,33 @@ class Config(BaseModel):
         return {
             "YOLO_CONFIDENCE": {
                 "value": self.detection.yolo_confidence,
-                "min": 0.1, "max": 0.9, "step": 0.05,
+                "min": 0, "max": 1, "step": 0.05,
                 "group": "detection", "label": "Detection Confidence",
             },
             "A_THRESHOLD": {
                 "value": self.matching.A_threshold,
-                "min": 0.50, "max": 0.95, "step": 0.01,
+                "min": 0, "max": 1, "step": 0.01,
                 "group": "reid", "label": "A Threshold (笃定)",
             },
             "B_THRESHOLD": {
                 "value": self.matching.B_threshold,
-                "min": 0.50, "max": 0.95, "step": 0.01,
+                "min": 0, "max": 1, "step": 0.01,
                 "group": "reid", "label": "B Threshold (确定)",
             },
             "C_THRESHOLD": {
                 "value": self.matching.C_threshold,
-                "min": 0.30, "max": 0.80, "step": 0.01,
+                "min": 0, "max": 1, "step": 0.01,
                 "group": "reid", "label": "C Threshold (怀疑)",
             },
             "QUALITY_ENROLL_THRESHOLD": {
                 "value": self.gallery.quality_enroll_threshold,
-                "min": 0.10, "max": 0.90, "step": 0.05,
-                "group": "quality", "label": "Face Quality Min",
+                "min": 0, "max": 1, "step": 0.05,
+                "group": "quality", "label": "入库质量门槛",
             },
             "OUTFIT_MATCH_THRESHOLD": {
                 "value": self.gallery.outfit_match_threshold,
-                "min": 0.50, "max": 0.95, "step": 0.01,
-                "group": "matching", "label": "Outfit Match",
+                "min": 0, "max": 1, "step": 0.01,
+                "group": "matching", "label": "衣橱匹配阈值",
             },
         }
 
@@ -282,8 +280,12 @@ class Config(BaseModel):
 def load_config() -> Config:
     """
     加载配置并设为全局单例。
-    优先级: 环境变量 > 默认值
+    优先级: 环境变量 > .env 文件 > 默认值
     """
+    # 从项目根目录加载 .env 文件
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+
     config = Config()
 
     # 从环境变量覆盖关键配置

@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable
 
 import numpy as np
+import cv2
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,7 +23,7 @@ from src.gallery.data_models import (
     FeatureEntry,
     FeatureOperation,
     GalleryUpdateResult,
-    PersonProfile,
+    PersonProfile, PoseBucket,
 )
 from src.pipeline.data_models import (
     EventType,
@@ -171,6 +172,39 @@ class VisionOrchestrator(BaseModel):
         return response
 
     # ==================================================================
+    # Gallery 删除
+    # ==================================================================
+
+    def delete_person(self, person_id: str) -> None:
+        """同步删除: 清理内存 gallery 和 track 状态。
+
+        gallery.pop 必须第一行执行 (同步, 不可被打断),
+        后续所有 save 路径通过 `person_id not in self.gallery` 判断是否已删除。
+        DB 删除由调用方 (routes.py) 单独处理。
+        """
+        removed = self.gallery.pop(person_id, None)
+
+        reset_count = 0
+        for state in self.tracks.values():
+            if state.identity_result.person_id == person_id:
+                state.identity_result = IdentityResult(
+                    status=IdentityStatus.IDENTIFYING,
+                )
+                state.force_probe = True
+                reset_count += 1
+
+        logger.info(
+            "delete_person: person_id={}, gallery_removed={}, tracks_reset={}",
+            person_id, removed is not None, reset_count,
+        )
+
+    async def delete_person_from_db(self, person_id: str) -> None:
+        """在 save_lock 保护下删除 DB 数据, 防止与入库 commit 交叉。"""
+        async with self.save_lock:
+            persistence = get_gallery_persistence()
+            await persistence.delete_profile(person_id, self.camera_id)
+
+    # ==================================================================
     # Human-in-the-loop
     # ==================================================================
 
@@ -189,6 +223,10 @@ class VisionOrchestrator(BaseModel):
             track_id, person_id, name,
         )
 
+        state = self.tracks.get(track_id)
+        if state is None:
+            raise ValueError(f"Track {track_id} not found, cannot confirm")
+
         if not person_id:
             # 传空表示创建新用户
             profile = PersonProfile.create_new(display_name=name)
@@ -203,18 +241,29 @@ class VisionOrchestrator(BaseModel):
         profile = self.gallery[person_id]
         profile.display_name = name
 
-        # 立即增量落库
-        persistence = get_gallery_persistence()
-        await persistence.upsert_person_row(profile, self.camera_id)
+        # 将当前 track 缓存的特征立即入库
+        changes = self._update_gallery_person(person_id, state)
 
-        state = self.tracks.get(track_id)
-        if state is not None:
-            state.identity_result = IdentityResult(
-                person_id=person_id,
-                display_name=name,
-                status=IdentityStatus.CONFIDENT,
-                fused_score=1.0,
-            )
+        # 统一走 save_lock + 共享 session 落库 (含 upsert_person_row)
+        await self._save_gallery_person_incremental(person_id, changes)
+
+        face_count = profile.total_face_features()
+        body_count = sum(len(v) for v in profile.body_features.values())
+        wardrobe_count = len(profile.wardrobe)
+        logger.info(
+            "Enrolled features for {}: face={}, body={}, wardrobe={}",
+            person_id, face_count, body_count, wardrobe_count,
+        )
+
+        state.identity_result = IdentityResult(
+            person_id=person_id,
+            display_name=name,
+            status=IdentityStatus.DEFINITE,
+            fused_score=1.0,
+        )
+
+        # Gallery 变动, 通知其他 track 重新匹配
+        self._on_gallery_updated()
 
         self._emit_event(
             EventType.HUMAN_CONFIRMED,
@@ -245,7 +294,7 @@ class VisionOrchestrator(BaseModel):
     # Per-track 状态管理 (原 CameraPipeline)
     # ==================================================================
     def _refresh_track_states(self, persons: list[TrackedPerson]) -> None:
-        """同步活跃轨迹状态，清理失效轨迹，返回当前活跃的 TrackState 列表。"""
+        """同步活跃轨迹状态，清理失效轨迹。"""
         active_ids = set()
 
         # 创建或更新当前帧的 active states
@@ -262,6 +311,7 @@ class VisionOrchestrator(BaseModel):
         stale = set(self.tracks.keys()) - active_ids
         for tid in stale:
             self.tracks[tid].cancel_vlm()
+            del self.tracks[tid]
 
     def _on_gallery_updated(self) -> None:
         """Gallery 更新后，所有非 DEFINITE 的 track 标记 force_probe。"""
@@ -293,9 +343,9 @@ class VisionOrchestrator(BaseModel):
             (cache.face_pool, profile.enroll_face),
             (cache.body_pool, profile.enroll_body_feature),
         ]
-        body_best: dict = {}
+        body_best: dict[PoseBucket, CachedFrame] = {}
         for pool, enroll_fn in enroll_tasks:
-            best_frames: dict = {}
+            best_frames: dict[PoseBucket, CachedFrame] = {}
             for cf in pool:
                 if not cf.enrolled and cf.quality >= gallery_cfg.quality_enroll_threshold:
                     pose = cf.entry.pose_bucket
@@ -303,11 +353,16 @@ class VisionOrchestrator(BaseModel):
                         best_frames[pose] = cf
 
             for pose, cf in best_frames.items():
+                # 编码 crop 为 JPEG 缩略图, 供 VLM 仲裁使用
+                _, buf = cv2.imencode('.jpg', cf.entry.crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                source_img = buf.tobytes()
+
                 entry = FeatureEntry(
                     embedding=cf.embedding,
                     pose_bucket=pose,
                     quality_score=cf.quality,
                     timestamp=cf.entry.timestamp,
+                    source_image=source_img,
                 )
                 if op := enroll_fn(entry):
                     changes.feature_ops.append(op)
@@ -334,37 +389,42 @@ class VisionOrchestrator(BaseModel):
     def _emit_match_event(
             self, track_id: int, result: MatchResult,
     ) -> None:
-        """根据匹配结果发出事件（带全局冷却）。"""
-        now = time.time()
-        event_key = f"{result.status.value}:{track_id}"
-        if (now - self.last_event_time.get(event_key, 0)) <= self.event_cooldown_sec:
-            return
+        """每次 Tier2 执行完后发出匹配事件 (含候选详情)。"""
+        # 构建候选详情
+        candidates_detail = []
+        for c in result.candidates[:5]:  # top 5
+            candidates_detail.append({
+                "person_id": c.person_id,
+                "display_name": c.display_name,
+                "fused_score": round(c.fused_score, 3),
+                "face_score": round(c.face_score, 3) if c.face_score is not None else None,
+                "body_score": round(c.body_score, 3) if c.body_score is not None else None,
+                "proportion_score": round(c.proportion_score, 3) if c.proportion_score is not None else None,
+                "face_match_quality": round(c.face_match_quality, 2),
+                "body_match_quality": round(c.body_match_quality, 2),
+            })
 
-        self.last_event_time[event_key] = now
+        # 映射 status → event_type
+        status_event_map = {
+            IdentityStatus.DEFINITE: EventType.IDENTITY_DEFINITE,
+            IdentityStatus.CONFIDENT: EventType.IDENTITY_CONFIDENT,
+            IdentityStatus.SUSPECTED: EventType.IDENTITY_SUSPECTED,
+            IdentityStatus.CONFLICT: EventType.IDENTITY_CONFLICT,
+            IdentityStatus.STRANGER: EventType.NEW_PERSON,
+        }
+        event_type = status_event_map.get(result.status, EventType.NEW_PERSON)
 
-        if result.status == IdentityStatus.CONFIDENT and result.best_match:
-            self._emit_event(
-                EventType.IDENTITY_CONFIRMED,
-                track_id=track_id,
-                person_id=result.best_match.person_id,
-                display_name=result.best_match.display_name,
-                fused_score=result.best_match.fused_score,
-                source="reid",
-            )
-        elif result.status == IdentityStatus.CONFLICT:
-            self._emit_event(
-                EventType.IDENTITY_CONFLICT,
-                track_id=track_id,
-                source="reid",
-                message=f"Conflict among {len(result.candidates)} candidates",
-            )
-        elif result.status == IdentityStatus.STRANGER:
-            self._emit_event(
-                EventType.NEW_PERSON,
-                track_id=track_id,
-                source="system",
-                message="New person detected (stranger)",
-            )
+        best = result.best_match
+        self._emit_event(
+            event_type,
+            track_id=track_id,
+            person_id=best.person_id if best else None,
+            display_name=best.display_name if best else None,
+            fused_score=best.fused_score if best else None,
+            source="reid",
+            message=f"{result.status.value}",
+            candidates=candidates_detail,
+        )
 
     def _select_target(self) -> None:
         """选择注意力最高的目标（带滞后防抖）。
@@ -502,6 +562,7 @@ class VisionOrchestrator(BaseModel):
             fused_score: float | None = None,
             source: str = "system",
             message: str = "",
+            candidates: list[dict] | None = None,
     ) -> None:
         """发出系统事件并加入日志。"""
         event = SystemEvent(
@@ -512,6 +573,7 @@ class VisionOrchestrator(BaseModel):
             fused_score=fused_score,
             source=source,
             message=message,
+            candidates=candidates or [],
         )
         self.event_log.append(event)
         self.new_events.append(event)
@@ -538,49 +600,73 @@ class VisionOrchestrator(BaseModel):
             person_id: str,
             changes: GalleryUpdateResult,
     ) -> None:
-        """增量持久化: 只写入 _update_gallery 实际变动的部分。"""
+        """增量持久化: 只写入 _update_gallery 实际变动的部分。
+
+        使用共享 session 将所有 DB 操作合并为单一事务,
+        commit 前检查 gallery 成员关系防止竞态写回。
+        """
+        # 快速检查: 不在 gallery 中则跳过 (已删除或从未存在)
         profile = self.gallery.get(person_id)
         if not profile:
             return
 
+        persistence = get_gallery_persistence()
+        from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
         async with self.save_lock:
-            persistence = get_gallery_persistence()
+            # 拿锁后再检查 (delete 可能在等锁期间执行)
+            if person_id not in self.gallery:
+                return
 
-            # 1. persons 表 (touch / proportions 变动)
-            # 就算只是 touch 也会更新 last_updated，所以每次只要有更新就调用
-            await persistence.upsert_person_row(profile, self.camera_id)
+            async with _AsyncSession(persistence.engine) as session:
+                # 1. persons 表
+                person_row = await persistence._get_person_row(
+                    session, profile.person_id, self.camera_id,
+                )
+                persistence.upsert_person_row_in(
+                    session, profile, self.camera_id, person_row,
+                )
 
-            # 2. 精确的单行特征操作
-            for op in changes.feature_ops:
-                if op.evicted is None:
-                    # 桶未满 → INSERT 1 行
-                    await persistence.add_feature(person_id, op.entry, op.kind)
-                else:
-                    # 桶已满, 淘汰最差 → DELETE 1 行 + INSERT 1 行
-                    await persistence.replace_feature(
-                        person_id, op.entry, op.evicted, op.kind,
+                # 2. 特征操作
+                for op in changes.feature_ops:
+                    if op.evicted is None:
+                        persistence.add_feature_in(
+                            session, person_id, op.entry, op.kind,
+                        )
+                    else:
+                        await persistence.replace_feature_in(
+                            session, person_id, op.entry, op.evicted, op.kind,
+                        )
+
+                # 3. 衣橱
+                wop = changes.wardrobe_op
+                if wop is not None:
+                    if wop.updated is not None:
+                        await persistence.update_outfit_in(
+                            session, person_id, wop.updated, wop.outfit,
+                        )
+                    elif wop.evicted is not None:
+                        await persistence.replace_outfit_in(
+                            session, person_id, wop.outfit, wop.evicted,
+                        )
+                    else:
+                        persistence.add_outfit_in(
+                            session, person_id, wop.outfit,
+                        )
+
+                # 提交前最终检查
+                if person_id not in self.gallery:
+                    logger.debug(
+                        "Save aborted for {} (deleted during transaction)",
+                        person_id,
                     )
+                    return  # session close 自动 rollback
 
-            # 3. 衣橱
-            wop = changes.wardrobe_op
-            if wop is not None:
-                if wop.updated is not None:
-                    # EMA 更新已有 outfit → UPDATE 1 行
-                    await persistence.update_outfit(
-                        person_id, wop.updated, wop.outfit,
-                    )
-                elif wop.evicted is not None:
-                    # 衣橱已满, 淘汰最旧 → DELETE 1 行 + INSERT 1 行
-                    await persistence.replace_outfit(
-                        person_id, wop.outfit, wop.evicted,
-                    )
-                else:
-                    # 衣橱未满 → INSERT 1 行
-                    await persistence.add_outfit(person_id, wop.outfit)
+                await session.commit()
 
-            logger.debug(
-                "Incremental save for {}: {} feature ops, wardrobe={}",
-                person_id,
-                len(changes.feature_ops),
-                wop is not None,
-            )
+        logger.debug(
+            "Incremental save for {}: {} feature ops, wardrobe={}",
+            person_id,
+            len(changes.feature_ops),
+            changes.wardrobe_op is not None,
+        )

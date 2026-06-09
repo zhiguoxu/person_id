@@ -378,6 +378,8 @@ class PersonProfile(BaseModel):
 
     def enroll_face(self, entry: FeatureEntry) -> FeatureOperation | None:
         """入库人脸特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
+        if entry.pose_bucket == PoseBucket.UNKNOWN:
+            return None
         gallery_cfg = get_config().gallery
         if entry.quality_score < gallery_cfg.quality_enroll_threshold:
             logger.debug(
@@ -401,6 +403,8 @@ class PersonProfile(BaseModel):
 
     def enroll_body_feature(self, entry: FeatureEntry) -> FeatureOperation | None:
         """入库人体特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
+        if entry.pose_bucket == PoseBucket.UNKNOWN:
+            return None
         gallery_cfg = get_config().gallery
         if entry.quality_score < gallery_cfg.quality_enroll_threshold:
             logger.debug(

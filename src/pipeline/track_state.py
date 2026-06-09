@@ -137,7 +137,7 @@ class TrackState(BaseModel):
             local_kps[:, 1] -= y1
 
         entry = BufferEntry(
-            timestamp=time.monotonic(),
+            timestamp=time.time(),
             crop=crop,
             bbox=det.bbox,
             keypoints=local_kps,

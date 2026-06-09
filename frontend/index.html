@@ -192,6 +192,10 @@
         <section id="gallery-panel">
             <div class="panel-header">
                 <h2>👥 Gallery</h2>
+                <div class="gallery-tabs">
+                    <button class="gallery-tab active" data-mode="active">Active</button>
+                    <button class="gallery-tab" data-mode="all">All</button>
+                </div>
                 <span id="gallery-count" class="badge">0 persons</span>
             </div>
             <div id="person-gallery">
@@ -227,13 +231,18 @@
                 <button class="modal-close" id="confirm-modal-close">&times;</button>
             </div>
             <div class="modal-body" id="confirm-modal-body">
+                <!-- Gallery Candidates -->
+                <div id="confirm-candidates-section">
+                    <label class="confirm-section-label">Select from Gallery</label>
+                    <div id="confirm-candidates-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
                 <form id="confirm-identity-form">
                     <input type="hidden" id="confirm-track-id">
-                    <div class="form-group">
-                        <label for="confirm-person-id">Person ID (Leave empty for new person)</label>
-                        <input type="text" id="confirm-person-id" class="text-input" placeholder="e.g. person_abc123">
-                    </div>
-                    <div class="form-group">
+                    <input type="hidden" id="confirm-person-id">
+                    <div class="form-group" style="margin-top: 12px;">
                         <label for="confirm-name">Name</label>
                         <input type="text" id="confirm-name" class="text-input" placeholder="Enter name" required>
                     </div>

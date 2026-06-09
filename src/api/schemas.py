@@ -191,6 +191,7 @@ class WSEvent(BaseModel):
     fused_score: float | None = None
     source: str = "system"
     message: str = ""
+    candidates: list[dict] = Field(default_factory=list)
 
 
 class WSError(BaseModel):

@@ -17,6 +17,7 @@ class VideoCapture {
         this.captureCanvas.height = 480;
         this.maxCaptureWidth = 640;  // 限制最大发送宽度
         this.frameTimer = null;
+        this._adjustTimer = null;  // 动态帧率调整定时器
     }
 
     /**
@@ -99,6 +100,10 @@ class VideoCapture {
             clearInterval(this.frameTimer);
             this.frameTimer = null;
         }
+        if (this._adjustTimer) {
+            clearInterval(this._adjustTimer);
+            this._adjustTimer = null;
+        }
 
         if (this.stream) {
             this.stream.getTracks().forEach(t => t.stop());
@@ -122,8 +127,9 @@ class VideoCapture {
             this._captureAndSend();
         }, window.wsManager.frameInterval);
 
-        // 动态调整发送频率
-        setInterval(() => {
+        // 动态调整发送频率 (每 2s 检查一次 frameInterval 是否变化)
+        if (this._adjustTimer) clearInterval(this._adjustTimer);
+        this._adjustTimer = setInterval(() => {
             if (this.frameTimer && this.capturing) {
                 clearInterval(this.frameTimer);
                 this.frameTimer = setInterval(() => {

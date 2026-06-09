@@ -63,7 +63,7 @@ class Tier1Processor:
             person.attention_score = scores.get(person.track_id, 0.0)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        logger.debug(
+        logger.trace(
             "Tier1: {} detections, {} tracked, {:.1f}ms",
             len(detections),
             len(persons),

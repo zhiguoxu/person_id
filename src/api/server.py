@@ -19,18 +19,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from src.api.registry import camera_registry, get_camera_orchestrator
 from src.api.routes import router as api_router
 from src.api.websocket import handle_ws_connection
 from src.config import FRONTEND_DIR, load_config
-from src.pipeline.orchestrator import VisionOrchestrator
-
-# 全局摄像头注册表: camera_id → VisionOrchestrator
-camera_registry: dict[str, VisionOrchestrator] = {}
-
-
-def get_camera_orchestrator(camera_id: str) -> VisionOrchestrator | None:
-    """获取指定摄像头的编排器（供 REST routes 使用）。"""
-    return camera_registry.get(camera_id)
 
 
 # ==============================================================================
@@ -118,6 +110,8 @@ def create_app() -> FastAPI:
 
 def main() -> None:
     """直接运行时的入口点。在远程 CUDA 服务器上运行。"""
+    import asyncio
+
     config = load_config()
 
     logger.info(
@@ -127,13 +121,18 @@ def main() -> None:
 
     app = create_app()
 
-    uvicorn.run(
+    # 直接调用 asyncio.run(server.serve())，
+    # 绕过 uvicorn.Server.run() 中传递 loop_factory 的逻辑，
+    # 避免 PyCharm 调试器 patch asyncio.run() 导致的不兼容
+    uv_config = uvicorn.Config(
         app,
         host=config.server.host,
         port=config.server.port,
         log_level=config.server.log_level.lower(),
         ws_max_size=config.server.ws_max_frame_size,
     )
+    server = uvicorn.Server(uv_config)
+    asyncio.run(server.serve())
 
 
 if __name__ == "__main__":
