@@ -115,6 +115,10 @@ class QualityCache(BaseModel):
     face_pool: list[CachedFrame] = Field(default_factory=list)
     body_pool: list[CachedFrame] = Field(default_factory=list)
 
+    def clear(self) -> None:
+        self.face_pool.clear()
+        self.body_pool.clear()
+
     def try_add_face(self, frame: CachedFrame) -> bool:
         """尝试加入 face_pool, 返回 True 表示新入缓存"""
         return self._try_add(self.face_pool, get_config().multiframe.face_pool_size, frame)

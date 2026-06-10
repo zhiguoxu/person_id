@@ -14,7 +14,8 @@ from loguru import logger
 from src.pipeline.frame_buffer import BufferEntry, CachedFrame, QualityCache
 from src.pipeline.quality_utils import compute_sharpness
 from src.gallery.data_models import PoseBucket
-from src.tier2.features import get_face_extractor, get_body_extractor, get_quality_assessor
+from src.tier2.features import get_face_extractor, get_body_extractor
+from src.tier2.features.face_quality_assessor import FaceQualityAssessor
 
 
 class BatchExtractor:
@@ -38,7 +39,6 @@ class BatchExtractor:
             return
 
         face_extractor = get_face_extractor()
-        quality_assessor = get_quality_assessor()
 
         for entry in new_frames:
             body_cf = CachedFrame(entry=entry)
@@ -55,7 +55,7 @@ class BatchExtractor:
                 if face_result is not None:
                     face_cf = CachedFrame(entry=entry)
                     face_cf.face_result = face_result
-                    face_cf.quality = quality_assessor.assess(
+                    face_cf.quality = FaceQualityAssessor.assess(
                         entry.crop,
                         face_result.landmarks,
                         face_result.bbox,

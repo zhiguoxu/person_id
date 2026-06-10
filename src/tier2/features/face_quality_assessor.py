@@ -13,12 +13,18 @@
 """
 from __future__ import annotations
 
-
 import cv2
 import numpy as np
 from loguru import logger
 
 from src.config import get_config
+
+# Laplacian blur score normalization: scores above this threshold
+# are considered sharp (score = 1.0)
+_BLUR_SATURATE = 500.0
+
+# Lighting score: ideal std range for face grayscale histogram
+_LIGHTING_IDEAL_STD = 60.0
 
 
 class FaceQualityAssessor:
@@ -27,36 +33,15 @@ class FaceQualityAssessor:
     对人脸裁剪图评估多维度质量, 用于决定特征是否满足入库门槛,
     以及在匹配时进行质量加权。
 
-    Attributes:
-        config: 人脸配置 (包含各维度权重)。
+    所有方法均为 staticmethod, 无实例状态。
     """
 
-    # Laplacian blur score normalization: scores above this threshold
-    # are considered sharp (score = 1.0)
-    _BLUR_SATURATE = 500.0
-
-    # Lighting score: ideal std range for face grayscale histogram
-    _LIGHTING_IDEAL_STD = 60.0
-
-    def __init__(self) -> None:
-        """初始化质量评估器。"""
-        config = get_config().face
-        logger.debug(
-            "QualityAssessor initialized: weights=[blur={}, size={}, "
-            "landmark={}, pose={}, lighting={}]",
-            config.quality_blur_weight,
-            config.quality_size_weight,
-            config.quality_landmark_weight,
-            config.quality_pose_weight,
-            config.quality_lighting_weight,
-        )
-
+    @staticmethod
     def assess(
-        self,
-        face_crop: np.ndarray,
-        landmarks: np.ndarray,
-        face_bbox: np.ndarray,
-        keypoints: np.ndarray | None = None,
+            face_crop: np.ndarray,
+            landmarks: np.ndarray,
+            face_bbox: np.ndarray,
+            keypoints: np.ndarray | None = None,
     ) -> float:
         """综合评估人脸质量。
 
@@ -74,20 +59,20 @@ class FaceQualityAssessor:
             return 0.0
 
         try:
-            blur = self._blur_score(face_crop)
-            size = self._size_score(face_bbox)
-            landmark = self._landmark_conf_score(landmarks)
-            pose = self._pose_score(landmarks, keypoints)
-            lighting = self._lighting_score(face_crop)
+            blur = FaceQualityAssessor._blur_score(face_crop)
+            size = FaceQualityAssessor._size_score(face_bbox)
+            landmark = FaceQualityAssessor._landmark_conf_score(landmarks)
+            pose = FaceQualityAssessor._pose_score(landmarks, keypoints)
+            lighting = FaceQualityAssessor._lighting_score(face_crop)
 
             # Weighted sum
             cfg = get_config().face
             quality = (
-                cfg.quality_blur_weight * blur
-                + cfg.quality_size_weight * size
-                + cfg.quality_landmark_weight * landmark
-                + cfg.quality_pose_weight * pose
-                + cfg.quality_lighting_weight * lighting
+                    cfg.quality_blur_weight * blur
+                    + cfg.quality_size_weight * size
+                    + cfg.quality_landmark_weight * landmark
+                    + cfg.quality_pose_weight * pose
+                    + cfg.quality_lighting_weight * lighting
             )
 
             return float(np.clip(quality, 0.0, 1.0))
@@ -96,7 +81,8 @@ class FaceQualityAssessor:
             logger.debug("Quality assessment failed: {}", e)
             return 0.0
 
-    def _blur_score(self, face_crop: np.ndarray) -> float:
+    @staticmethod
+    def _blur_score(face_crop: np.ndarray) -> float:
         """模糊度评分 — 基于 Laplacian 方差。
 
         Laplacian 方差越高, 图像越清晰。
@@ -111,10 +97,11 @@ class FaceQualityAssessor:
         laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
 
         # Normalize: saturate at _BLUR_SATURATE
-        score = min(1.0, laplacian_var / self._BLUR_SATURATE)
+        score = min(1.0, laplacian_var / _BLUR_SATURATE)
         return float(score)
 
-    def _size_score(self, face_bbox: np.ndarray) -> float:
+    @staticmethod
+    def _size_score(face_bbox: np.ndarray) -> float:
         """尺寸评分 — 人脸像素尺寸相对于最小要求。
 
         Args:
@@ -135,11 +122,14 @@ class FaceQualityAssessor:
         score = face_size / (2.0 * min_size)
         return float(np.clip(score, 0.0, 1.0))
 
-    def _landmark_conf_score(self, landmarks: np.ndarray) -> float:
-        """关键点置信度评分。
+    @staticmethod
+    def _landmark_conf_score(landmarks: np.ndarray) -> float:
+        """关键点可信度评分。
 
         对于 InsightFace 5 点关键点, 没有独立的置信度值,
-        因此使用关键点坐标的合理性来估计。
+        因此使用关键点坐标的几何合理性和对称性来估计。
+
+        所有判断均使用比值, 不依赖绝对像素, 适应远近不同的人脸尺寸。
 
         如果 landmarks 含有第 3 列 (置信度), 则直接取平均。
 
@@ -157,31 +147,63 @@ class FaceQualityAssessor:
             conf = landmarks[:, 2]
             return float(np.clip(np.mean(conf), 0.0, 1.0))
 
-        # For InsightFace (no per-landmark confidence), evaluate landmark
-        # consistency: inter-eye distance should be reasonable
-        if landmarks.shape[0] >= 2:
-            eye_dist = np.linalg.norm(landmarks[0] - landmarks[1])
-            # Reasonable inter-eye distance: 15-200 pixels
-            if 15 < eye_dist < 200:
-                return 0.8
-            elif 5 < eye_dist < 300:
-                return 0.5
+        # For InsightFace (no per-landmark confidence)
+        if landmarks.shape[0] >= 5:
+            left_eye = landmarks[0, :2]
+            right_eye = landmarks[1, :2]
+            nose = landmarks[2, :2]
+            left_mouth = landmarks[3, :2]
+            right_mouth = landmarks[4, :2]
+
+            # 用五点 bounding box 的对角线作为尺度参考 (远近无关)
+            all_pts = landmarks[:5, :2]
+            face_span = np.linalg.norm(all_pts.max(axis=0) - all_pts.min(axis=0))
+            if face_span < 1e-3:
+                return 0.1  # 五点几乎重叠 → 退化
+
+            eye_dist = np.linalg.norm(left_eye - right_eye)
+            eye_ratio = eye_dist / face_span
+            # 正常人脸: eye_ratio ≈ 0.35–0.55
+            # 双眼重合 (严重侧面): eye_ratio → 0
+            if eye_ratio < 0.05:
+                return 0.1  # 双眼几乎重合
+            elif 0.2 < eye_ratio < 0.7:
+                base = 0.8
+            elif 0.05 < eye_ratio < 0.8:
+                base = 0.5
             else:
-                return 0.2
+                return 0.2  # 异常布局
+
+            # 对称性检查: 鼻子到左右眼的距离比值
+            # 正面人脸 nose 在双眼中间, 侧面/遮挡时严重偏移
+            d_left = np.linalg.norm(nose - left_eye)
+            d_right = np.linalg.norm(nose - right_eye)
+            ratio = min(d_left, d_right) / max(d_left, d_right, 1e-6)
+            symmetry_score = np.clip(ratio, 0.0, 1.0)
+
+            # 嘴角对称性 (辅助判断)
+            dm_left = np.linalg.norm(nose - left_mouth)
+            dm_right = np.linalg.norm(nose - right_mouth)
+            m_ratio = min(dm_left, dm_right) / max(dm_left, dm_right, 1e-6)
+            mouth_symmetry = np.clip(m_ratio, 0.0, 1.0)
+
+            # 综合: 对称性差时大幅惩罚
+            sym = 0.7 * symmetry_score + 0.3 * mouth_symmetry
+            return float(base * (0.3 + 0.7 * sym))
 
         return 0.5
 
+    @staticmethod
     def _pose_score(
-        self,
-        landmarks: np.ndarray,
-        keypoints: np.ndarray | None = None,
+            landmarks: np.ndarray,
+            keypoints: np.ndarray | None = None,
     ) -> float:
         """姿态评分 — 正面人脸得分高, 侧面得分低。
 
         使用人脸 5 点关键点的对称性估计姿态角。
         InsightFace 5 点: [left_eye, right_eye, nose, left_mouth, right_mouth]
 
-        如果提供 COCO 关键点, 可进一步利用耳朵可见性判断。
+        如果提供 COCO 关键点, 利用眼耳可见性做更精确判断。
 
         Args:
             landmarks: 5 点人脸关键点, shape (5, 2)。
@@ -222,21 +244,34 @@ class FaceQualityAssessor:
 
         # Supplement with COCO keypoints if available
         if keypoints is not None and keypoints.shape[0] >= 5:
-            # Check ear visibility as side-view indicator
+            # COCO: 0=nose, 1=left_eye, 2=right_eye, 3=left_ear, 4=right_ear
+            nose_vis = float(keypoints[0, 2]) > 0.3
+            left_eye_vis = float(keypoints[1, 2]) > 0.3
+            right_eye_vis = float(keypoints[2, 2]) > 0.3
             left_ear_vis = float(keypoints[3, 2]) > 0.3
             right_ear_vis = float(keypoints[4, 2]) > 0.3
-            nose_vis = float(keypoints[0, 2]) > 0.3
 
-            if nose_vis and not left_ear_vis and not right_ear_vis:
-                # Pure frontal — boost score
-                score = max(score, 0.9)
-            elif not nose_vis:
-                # Back view — penalize
+            if not nose_vis:
+                # 背面 → 严重惩罚
                 score = min(score, 0.2)
+            elif nose_vis and not left_ear_vis and not right_ear_vis:
+                # 双耳不可见 = 纯正面 → boost
+                score = max(score, 0.9)
+            elif left_ear_vis != right_ear_vis:
+                # 只有一只耳朵可见 = 侧面 → 限制上限
+                score = min(score, 0.5)
+
+            # 只有一只眼可见 → 半脸, 重罚
+            if left_eye_vis != right_eye_vis:
+                score = min(score, 0.3)
+            elif not left_eye_vis and not right_eye_vis:
+                # 双眼都不可见
+                score = min(score, 0.15)
 
         return float(np.clip(score, 0.0, 1.0))
 
-    def _lighting_score(self, face_crop: np.ndarray) -> float:
+    @staticmethod
+    def _lighting_score(face_crop: np.ndarray) -> float:
         """光照评分 — 基于灰度直方图标准差。
 
         标准差过低 → 光照不均或过暗/过亮。
@@ -260,7 +295,7 @@ class FaceQualityAssessor:
             brightness_score = (255.0 - mean_val) / 35.0
 
         # Std-based score: ideal around 50-70
-        std_score = min(1.0, std / self._LIGHTING_IDEAL_STD)
+        std_score = min(1.0, std / _LIGHTING_IDEAL_STD)
 
         # Combine
         score = 0.6 * std_score + 0.4 * brightness_score

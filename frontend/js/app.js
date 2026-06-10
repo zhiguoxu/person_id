@@ -75,6 +75,12 @@
             // 更新 Canvas 叠加层 (后端用 tracked_persons)
             window.overlayRenderer.update(persons);
 
+            // 更新事件时间线的活跃 track IDs
+            const activeTrackIds = persons
+                .map(p => p.track_id)
+                .filter(id => id != null);
+            window.eventsTimeline.updateActiveTracks(activeTrackIds);
+
             // 更新流水线调试面板
             if (result.pipeline_debug) {
                 window.pipelinePanel.update(result.pipeline_debug);

@@ -6,6 +6,8 @@ API 数据模型 — Pydantic schemas
 from __future__ import annotations
 
 
+from src.gallery.data_models import BodyProportions
+
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -61,6 +63,31 @@ class ConfirmIdentityRequest(BaseModel):
     track_id: int = Field(..., description="Track ID to confirm")
     person_id: str | None = Field(None, description="Gallery person ID (None to create new)")
     name: str = Field(..., description="Display name")
+
+
+class RenamePersonRequest(BaseModel):
+    """重命名人物请求。"""
+    display_name: str = Field(..., description="New display name", min_length=1, max_length=100)
+
+
+# ==============================================================================
+# Quality Cache
+# ==============================================================================
+
+class CachedFrameInfo(BaseModel):
+    """质量缓存条目信息 (用于前端展示)。"""
+    image_b64: str
+    quality: float
+    timestamp: float
+    pose_bucket: str
+    enrolled: bool = False
+
+
+class QualityCacheResponse(BaseModel):
+    """Track 质量缓存响应。"""
+    track_id: int
+    face_pool: list[CachedFrameInfo] = Field(default_factory=list)
+    body_pool: list[CachedFrameInfo] = Field(default_factory=list)
 
 
 # ==============================================================================
@@ -119,6 +146,8 @@ class FeatureEntryInfo(BaseModel):
     pose_bucket: str
     quality_score: float
     timestamp: float
+    source_image_b64: str | None = None
+    face_bbox: list[float] | None = None  # [x1,y1,x2,y2] 相对于 source_image
 
 
 class OutfitInfo(BaseModel):
@@ -136,8 +165,11 @@ class PersonDetailResponse(BaseModel):
     face_features: dict[str, list[FeatureEntryInfo]] = Field(
         default_factory=dict
     )
+    body_features: dict[str, list[FeatureEntryInfo]] = Field(
+        default_factory=dict
+    )
     wardrobe: list[OutfitInfo] = Field(default_factory=list)
-    has_proportions: bool = False
+    body_proportions: BodyProportions | None = None
     vlm_description: str | None = None
     created_at: float = 0.0
     last_updated: float = 0.0

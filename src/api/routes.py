@@ -9,12 +9,15 @@ REST API 路由 — 配置管理、底库查询、身份确认
 """
 from __future__ import annotations
 
+import base64
+
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from src.api.registry import get_camera_orchestrator
 from src.config import get_config as _get_config
 
 from src.api.schemas import (
+    CachedFrameInfo,
     ConfigResponse,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
@@ -24,8 +27,11 @@ from src.api.schemas import (
     PersonDetailResponse,
     PersonListResponse,
     PersonSummary,
+    QualityCacheResponse,
+    RenamePersonRequest,
     TunableParam,
 )
+from src.pipeline.frame_buffer import CachedFrame
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -134,6 +140,22 @@ async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
                 pose_bucket=bucket_key,
                 quality_score=round(entry.quality_score, 3),
                 timestamp=entry.timestamp,
+                source_image_b64=base64.b64encode(entry.source_image).decode('ascii') if entry.source_image else None,
+                face_bbox=entry.face_bbox,
+            )
+            for entry in entries
+        ]
+
+    # 转换体态特征
+    body_features: dict[str, list[FeatureEntryInfo]] = {}
+    for bucket, entries in profile.body_features.items():
+        bucket_key = bucket.value if hasattr(bucket, 'value') else str(bucket)
+        body_features[bucket_key] = [
+            FeatureEntryInfo(
+                pose_bucket=bucket_key,
+                quality_score=round(entry.quality_score, 3),
+                timestamp=entry.timestamp,
+                source_image_b64=base64.b64encode(entry.source_image).decode('ascii') if entry.source_image else None,
             )
             for entry in entries
         ]
@@ -153,12 +175,102 @@ async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
         person_id=profile.person_id,
         display_name=profile.display_name,
         face_features=face_features,
+        body_features=body_features,
         wardrobe=wardrobe,
-        has_proportions=profile.body_proportions is not None,
+        body_proportions=profile.body_proportions,
         vlm_description=profile.vlm_description,
         created_at=profile.created_at,
         last_updated=profile.last_updated,
         update_count=profile.update_count,
+    )
+
+
+@router.patch("/{camera_id}/gallery/person/{person_id}")
+async def rename_person(
+        camera_id: str, person_id: str, request: RenamePersonRequest,
+) -> dict:
+    """
+    重命名人物 display_name。
+
+    同时更新内存 gallery 和数据库。
+    """
+    from src.gallery.persistence import get_gallery_persistence
+
+    new_name = request.display_name.strip()
+
+    # 更新内存中的 profile
+    orch = get_camera_orchestrator(camera_id)
+    if orch is not None:
+        gallery = orch.gallery
+        if person_id not in gallery:
+            raise HTTPException(status_code=404, detail="Person not found")
+        profile = gallery[person_id]
+        profile.display_name = new_name
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Camera '{camera_id}' not found or not connected",
+        )
+
+    # 持久化到数据库
+    try:
+        persistence = get_gallery_persistence()
+        await persistence.upsert_person_row(profile, camera_id)
+    except Exception as e:
+        logger.exception("Failed to persist rename for {}", person_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Rename failed: {str(e)}",
+        ) from e
+
+    logger.info("Renamed person {} to '{}' (camera={})", person_id, new_name, camera_id)
+    return {
+        "status": "renamed",
+        "camera_id": camera_id,
+        "person_id": person_id,
+        "display_name": new_name,
+    }
+
+
+# ==============================================================================
+# Track Quality Cache (per-camera)
+# ==============================================================================
+
+@router.get("/{camera_id}/track/{track_id}/quality_cache", response_model=QualityCacheResponse)
+async def get_quality_cache(camera_id: str, track_id: int) -> QualityCacheResponse:
+    """
+    获取指定 track 的质量缓存 (face/body pool 的图片和元数据)。
+    """
+    import cv2
+
+    orch = _get_camera_orchestrator(camera_id)
+    state = orch.tracks.get(track_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Track {track_id} not found")
+
+    cache = state.quality_cache
+
+    def _convert_pool(pool: list[CachedFrame]) -> list[CachedFrameInfo]:
+        items = []
+        for cf in pool:
+            try:
+                _, buf = cv2.imencode('.jpg', cf.entry.crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                img_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+            except Exception:
+                continue
+            items.append(CachedFrameInfo(
+                image_b64=img_b64,
+                quality=round(cf.quality, 3),
+                timestamp=cf.entry.timestamp,
+                pose_bucket=cf.entry.pose_bucket.value,
+                enrolled=cf.enrolled,
+            ))
+        return items
+
+    return QualityCacheResponse(
+        track_id=track_id,
+        face_pool=_convert_pool(cache.face_pool),
+        body_pool=_convert_pool(cache.body_pool),
     )
 
 

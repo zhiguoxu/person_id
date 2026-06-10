@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+
 
 import numpy as np
 import cv2
@@ -148,8 +148,7 @@ class VisionOrchestrator(BaseModel):
             if result is None:
                 continue
 
-            if not is_enrich:
-                self._emit_match_event(state.person.track_id, result)
+            self._emit_match_event(state.person.track_id, result)
 
             if result.status == IdentityStatus.DEFINITE:
                 gallery_dirty = True
@@ -190,6 +189,7 @@ class VisionOrchestrator(BaseModel):
                 state.identity_result = IdentityResult(
                     status=IdentityStatus.IDENTIFYING,
                 )
+                state.quality_cache.clear()
                 state.force_probe = True
                 reset_count += 1
 
@@ -338,13 +338,13 @@ class VisionOrchestrator(BaseModel):
         cache = state.quality_cache
         gallery_cfg = get_config().gallery
 
-        # 人脸 / 人体: 每个姿态桶取质量最高的未入库帧, 入库
-        enroll_tasks: list[tuple[list[CachedFrame], Callable[[FeatureEntry], FeatureOperation | None]]] = [
-            (cache.face_pool, profile.enroll_face),
-            (cache.body_pool, profile.enroll_body_feature),
-        ]
+        # --- 人脸 / 人体特征入库 ---
         body_best: dict[PoseBucket, CachedFrame] = {}
-        for pool, enroll_fn in enroll_tasks:
+        for pool, enroll_fn, with_face in [
+            (cache.face_pool, profile.enroll_face, True),
+            (cache.body_pool, profile.enroll_body_feature, False),
+        ]:
+            # 每个姿态桶选最高质量的未入库帧
             best_frames: dict[PoseBucket, CachedFrame] = {}
             for cf in pool:
                 if not cf.enrolled and cf.quality >= gallery_cfg.quality_enroll_threshold:
@@ -353,22 +353,29 @@ class VisionOrchestrator(BaseModel):
                         best_frames[pose] = cf
 
             for pose, cf in best_frames.items():
-                # 编码 crop 为 JPEG 缩略图, 供 VLM 仲裁使用
-                _, buf = cv2.imencode('.jpg', cf.entry.crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                source_img = buf.tobytes()
-
+                crop = cf.entry.crop
+                face_bbox = None
+                if with_face and cf.face_result is not None:
+                    x1, y1, x2, y2 = cf.face_result.bbox[:4].tolist()
+                    h, w = crop.shape[:2]
+                    face_bbox = [
+                        max(0.0, x1), max(0.0, y1),
+                        min(float(w), x2), min(float(h), y2),
+                    ]
+                _, buf = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 entry = FeatureEntry(
                     embedding=cf.embedding,
                     pose_bucket=pose,
                     quality_score=cf.quality,
                     timestamp=cf.entry.timestamp,
-                    source_image=source_img,
+                    source_image=buf.tobytes(),
+                    face_bbox=face_bbox,
                 )
                 if op := enroll_fn(entry):
                     changes.feature_ops.append(op)
                     cf.enrolled = True
 
-            if pool is cache.body_pool:
+            if not with_face:
                 body_best = best_frames
 
         # 服装: 最高质量 body embedding

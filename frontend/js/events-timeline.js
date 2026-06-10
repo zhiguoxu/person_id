@@ -4,6 +4,7 @@
  * 显示每次 Tier2 匹配结果，包括 identity status + fused score。
  * - 连续相同 status 的事件合并为一行，水平追加 score badge
  * - 点击 score badge 弹出匹配候选详情 popover
+ * - 支持按 track 过滤: All / Active Tracks
  */
 class EventsTimeline {
     constructor() {
@@ -13,6 +14,45 @@ class EventsTimeline {
         this._lastCard = null;        // 上一个 event card DOM
         this._lastEventKey = null;    // 上一个事件的合并 key
         this._activePopover = null;   // 当前打开的 popover
+        this._filterMode = 'all';     // 'all' | 'active'
+        this._activeTrackIds = new Set(); // 当前帧活跃的 track IDs
+
+        this._bindFilterTabs();
+    }
+
+    // =========================================================================
+    // Filter Tabs
+    // =========================================================================
+    _bindFilterTabs() {
+        document.querySelectorAll('.events-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.events-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                this._filterMode = tab.dataset.filter;
+                this._fullRender();
+            });
+        });
+    }
+
+    /**
+     * 更新当前活跃的 track IDs (由 app.js 每帧调用)
+     */
+    updateActiveTracks(trackIds) {
+        const newSet = new Set(trackIds);
+        // 只在集合真正变化时才重新渲染，避免每帧 DOM 重建导致闪烁
+        if (this._sameTrackSet(this._activeTrackIds, newSet)) return;
+        this._activeTrackIds = newSet;
+        if (this._filterMode === 'active') {
+            this._fullRender();
+        }
+    }
+
+    _sameTrackSet(a, b) {
+        if (a.size !== b.size) return false;
+        for (const id of a) {
+            if (!b.has(id)) return false;
+        }
+        return true;
     }
 
     /**
@@ -22,6 +62,11 @@ class EventsTimeline {
         this.events.unshift(event);
         if (this.events.length > this.maxEvents) {
             this.events = this.events.slice(0, this.maxEvents);
+        }
+
+        // 如果在 active 模式且 event 不属于当前 track，跳过渲染
+        if (this._filterMode === 'active' && !this._isEventVisible(event)) {
+            return;
         }
 
         // 合并 key: 同一 track + 同一 status (message 字段存 status 值)
@@ -34,6 +79,49 @@ class EventsTimeline {
             // 新建卡片
             this._renderEvent(event);
             this._lastEventKey = eventKey;
+        }
+    }
+
+    /**
+     * 检查事件是否在当前过滤器下可见
+     */
+    _isEventVisible(event) {
+        if (this._filterMode === 'all') return true;
+        // active 模式: 只显示当前活跃 track 的事件
+        return event.track_id != null && this._activeTrackIds.has(event.track_id);
+    }
+
+    /**
+     * 完整重渲染 (切换过滤器或活跃 tracks 变化时调用)
+     */
+    _fullRender() {
+        // 清空容器
+        this.container.innerHTML = '';
+        this._lastCard = null;
+        this._lastEventKey = null;
+
+        // 按过滤条件筛选事件
+        const filtered = this.events.filter(e => this._isEventVisible(e));
+
+        if (filtered.length === 0) {
+            const emptyMsg = this._filterMode === 'active'
+                ? 'No events for active tracks.'
+                : 'No events yet. Start the camera to begin detection.';
+            this.container.innerHTML = `<div class="timeline-empty">${emptyMsg}</div>`;
+            return;
+        }
+
+        // 倒序遍历 (events[0] 是最新的，需要最后渲染才能在顶部)
+        for (let i = filtered.length - 1; i >= 0; i--) {
+            const event = filtered[i];
+            const eventKey = `${event.track_id}:${event.message || event.event_type}`;
+
+            if (this._lastCard && this._lastEventKey === eventKey) {
+                this._appendScore(this._lastCard, event);
+            } else {
+                this._renderEvent(event);
+                this._lastEventKey = eventKey;
+            }
         }
     }
 
@@ -59,6 +147,7 @@ class EventsTimeline {
         const card = document.createElement('div');
         card.className = 'event-card';
         card.dataset.type = event.event_type;
+        card.dataset.trackId = event.track_id != null ? event.track_id : '';
 
         // 状态圆点
         const dot = document.createElement('span');
@@ -197,6 +286,15 @@ class EventsTimeline {
         table.appendChild(tbody);
         popover.appendChild(table);
 
+        // Quality Cache section (placeholder, async load)
+        const cacheSection = document.createElement('div');
+        cacheSection.className = 'pop-cache-section';
+        cacheSection.innerHTML = '<div class="pop-cache-loading">Loading quality cache…</div>';
+        popover.appendChild(cacheSection);
+
+        // 异步加载 quality cache
+        this._loadQualityCache(event.track_id, cacheSection);
+
         // 定位
         document.body.appendChild(popover);
         const anchorRect = anchor.getBoundingClientRect();
@@ -221,6 +319,102 @@ class EventsTimeline {
         }, 0);
 
         this._activePopover = popover;
+    }
+
+    /**
+     * 异步加载并渲染 quality cache 图片
+     */
+    async _loadQualityCache(trackId, container) {
+        const cameraId = window.BACKEND_CONFIG?.cameraId;
+        if (!cameraId || trackId == null) {
+            container.innerHTML = '<div class="pop-cache-empty">—</div>';
+            return;
+        }
+
+        try {
+            const resp = await fetch(
+                `${window.BACKEND_CONFIG.apiUrl}/${cameraId}/track/${trackId}/quality_cache`
+            );
+            if (!resp.ok) {
+                container.innerHTML = '<div class="pop-cache-empty">Cache not available</div>';
+                return;
+            }
+            const data = await resp.json();
+            container.innerHTML = '';
+
+            const facePool = data.face_pool || [];
+            const bodyPool = data.body_pool || [];
+
+            if (facePool.length === 0 && bodyPool.length === 0) {
+                container.innerHTML = '<div class="pop-cache-empty">Quality cache empty</div>';
+                return;
+            }
+
+            if (facePool.length > 0) {
+                container.appendChild(this._renderCachePool('👤 Face Pool', facePool));
+            }
+            if (bodyPool.length > 0) {
+                container.appendChild(this._renderCachePool('🏃 Body Pool', bodyPool));
+            }
+
+            // 重新定位 popover (内容变化后可能溢出)
+            if (this._activePopover) {
+                requestAnimationFrame(() => {
+                    const popRect = this._activePopover.getBoundingClientRect();
+                    if (popRect.bottom > window.innerHeight - 8) {
+                        this._activePopover.style.top = `${window.innerHeight - popRect.height - 8}px`;
+                    }
+                    if (popRect.right > window.innerWidth - 8) {
+                        this._activePopover.style.left = `${window.innerWidth - popRect.width - 8}px`;
+                    }
+                });
+            }
+        } catch (e) {
+            container.innerHTML = `<div class="pop-cache-empty">Failed: ${e.message}</div>`;
+        }
+    }
+
+    /**
+     * 渲染单个 cache pool (face 或 body)
+     */
+    _renderCachePool(title, pool) {
+        const section = document.createElement('div');
+        section.className = 'pop-cache-pool';
+
+        const header = document.createElement('div');
+        header.className = 'pop-cache-pool-header';
+        header.textContent = `${title} (${pool.length})`;
+        section.appendChild(header);
+
+        const grid = document.createElement('div');
+        grid.className = 'pop-cache-grid';
+
+        for (const item of pool) {
+            const card = document.createElement('div');
+            card.className = `pop-cache-card${item.enrolled ? ' enrolled' : ''}`;
+
+            const img = document.createElement('img');
+            img.className = 'pop-cache-img';
+            img.src = `data:image/jpeg;base64,${item.image_b64}`;
+            img.alt = item.pose_bucket;
+            card.appendChild(img);
+
+            const info = document.createElement('div');
+            info.className = 'pop-cache-info';
+
+            const qClass = item.quality >= 0.7 ? 'high' : item.quality >= 0.4 ? 'mid' : 'low';
+            info.innerHTML = `
+                <span class="pop-cache-quality pop-cache-q-${qClass}">Q: ${item.quality.toFixed(2)}</span>
+                <span class="pop-cache-pose">${item.pose_bucket}</span>
+                <span class="pop-cache-time">${this._formatTime(item.timestamp)}</span>
+                ${item.enrolled ? '<span class="pop-cache-enrolled">✓</span>' : ''}
+            `;
+            card.appendChild(info);
+            grid.appendChild(card);
+        }
+
+        section.appendChild(grid);
+        return section;
     }
 
     _closePopover() {

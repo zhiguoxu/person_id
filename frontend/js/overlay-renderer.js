@@ -249,7 +249,19 @@ class OverlayRenderer {
 
     _drawLabel(bbox, person, color) {
         const ctx = this.ctx;
-        const name = person.display_name || person.person_id || 'Unknown';
+        const status = person.identity_status || person.status || 'identifying';
+
+        // 根据身份状态决定显示名称
+        let name;
+        if (status === 'stranger') {
+            name = 'Unknown';
+        } else if (status === 'suspected') {
+            const rawName = person.display_name || person.person_id || '?';
+            name = `Suspect (${rawName})`;
+        } else {
+            name = person.display_name || person.person_id || 'Unknown';
+        }
+
         const conf = person.confidence ? ` ${(person.confidence * 100).toFixed(0)}%` : '';
         const trackId = person.track_id !== undefined ? `[#${person.track_id}] ` : '';
         const text = `${trackId}${name}${conf}`;

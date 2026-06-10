@@ -27,11 +27,6 @@ def get_body_extractor() -> BodyExtractor:
     return BodyExtractor()
 
 
-@cache
-def get_quality_assessor() -> FaceQualityAssessor:
-    """创建质量评估器（单例缓存）。"""
-    return FaceQualityAssessor()
-
 __all__ = [
     "FaceExtractor",
     "FaceResult",
@@ -39,5 +34,4 @@ __all__ = [
     "FaceQualityAssessor",
     "get_face_extractor",
     "get_body_extractor",
-    "get_quality_assessor",
 ]
