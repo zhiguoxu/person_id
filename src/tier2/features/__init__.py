@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from functools import cache
 
-from src.pipeline.data_models import FaceResult
+
 from src.tier2.features.body_extractor import BodyExtractor
+from src.tier2.features.edifiqa import EDifFIQA, get_edifiqa
 from src.tier2.features.face_extractor import FaceExtractor
-from src.tier2.features.face_quality_assessor import FaceQualityAssessor
 
 
 @cache
@@ -29,9 +29,10 @@ def get_body_extractor() -> BodyExtractor:
 
 __all__ = [
     "FaceExtractor",
-    "FaceResult",
+
     "BodyExtractor",
-    "FaceQualityAssessor",
+    "EDifFIQA",
     "get_face_extractor",
     "get_body_extractor",
+    "get_edifiqa",
 ]

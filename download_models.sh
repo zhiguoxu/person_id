@@ -107,10 +107,63 @@ download_gdrive() {
     return 1
 }
 
+# --------------------------------------------------------------------------
+# HuggingFace 下载
+# --------------------------------------------------------------------------
+download_huggingface() {
+    repo="$1"
+    filename="$2"
+    filepath="$3"
+
+    if [ -f "$filepath" ]; then
+        echo "[SKIP] $(basename "$filepath") already exists"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$filepath")"
+    echo "[DOWN] $(basename "$filepath") (HuggingFace)"
+
+    url="https://huggingface.co/${repo}/resolve/main/${filename}"
+
+    # 国内镜像 + 直连
+    for mirror in \
+        "https://hf-mirror.com" \
+        "https://huggingface-mirror.com" \
+        "https://huggingface.co"; do
+        mirror_url="${mirror}/${repo}/resolve/main/${filename}"
+        echo "  Trying: ${mirror}..."
+        if curl -fSL --connect-timeout 10 --max-time 120 --progress-bar -o "$filepath" "$mirror_url"; then
+            if [ -f "$filepath" ] && [ -s "$filepath" ]; then
+                echo "  ✅ OK"
+                return 0
+            fi
+        fi
+        rm -f "$filepath"
+    done
+
+    # GitHub 代理 (部分 HF 模型在 GitHub 有镜像)
+    for proxy in "https://ghfast.top/" "https://gh-proxy.com/"; do
+        proxy_url="${proxy}https://huggingface.co/${repo}/resolve/main/${filename}"
+        echo "  Trying proxy: ${proxy}..."
+        if curl -fSL --connect-timeout 10 --max-time 120 --progress-bar -o "$filepath" "$proxy_url"; then
+            if [ -f "$filepath" ] && [ -s "$filepath" ]; then
+                echo "  ✅ OK"
+                return 0
+            fi
+        fi
+        rm -f "$filepath"
+    done
+
+    echo "  ❌ Failed: $(basename "$filepath")"
+    echo "     Manual download: $url"
+    echo "     Then place at: $filepath"
+    return 1
+}
+
 # ==========================================================================
 # 1. YOLO Pose
 # ==========================================================================
-echo "=== [1/4] YOLO11-Pose ==="
+echo "=== [1/5] YOLO11-Pose ==="
 download_github \
     "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n-pose.pt" \
     "yolo11n-pose.pt"
@@ -123,7 +176,7 @@ download_github \
 # 2. InsightFace buffalo_l
 # ==========================================================================
 echo ""
-echo "=== [2/4] InsightFace (buffalo_l) ==="
+echo "=== [2/5] InsightFace (buffalo_l) ==="
 INSIGHTFACE_DIR="$HOME/.insightface/models"
 BUFFALO_DIR="$INSIGHTFACE_DIR/buffalo_l"
 
@@ -148,7 +201,7 @@ fi
 # 3. torchreid OSNet-AIN x1.0
 # ==========================================================================
 echo ""
-echo "=== [3/4] torchreid (osnet_ain_x1_0) ==="
+echo "=== [3/5] torchreid (osnet_ain_x1_0) ==="
 
 # torchreid 缓存路径
 TORCH_CACHE="${TORCH_HOME:-$HOME/.cache/torch}/checkpoints"
@@ -163,12 +216,19 @@ download_gdrive "$OSNET_GDRIVE_ID" "$OSNET_FILE"
 # 4. BoT-SORT (boxmot 自动下载, 此处预下载加速)
 # ==========================================================================
 echo ""
-echo "=== [4/4] BoT-SORT ReID weights (optional) ==="
+echo "=== [4/5] BoT-SORT ReID weights (optional) ==="
 echo "[SKIP] boxmot runs without ReID weights (with_reid=False)"
 
 # ==========================================================================
-# Summary
+# 5. eDifFIQA Tiny (人脸质量评估)
 # ==========================================================================
+echo ""
+echo "=== [5/5] eDifFIQA Tiny (face quality) ==="
+download_huggingface \
+    "opencv/face_image_quality_assessment_ediffiqa" \
+    "ediffiqa_tiny_jun2024.onnx" \
+    "models/edifiqa_tiny.onnx"
+
 echo ""
 echo "══════════════════════════════════════════════"
 echo "  Summary"
@@ -177,7 +237,7 @@ echo ""
 echo "YOLO Pose:"
 ls -lh "$SCRIPT_DIR"/yolo11*-pose.pt 2>/dev/null || echo "  ❌ not found"
 echo ""
-echo "InsightFace:"
+echo "InsightFace (buffalo_l, 含 SCRFD_10G + ArcFace):"
 ls -lh "$BUFFALO_DIR"/*.onnx 2>/dev/null || echo "  ❌ not found"
 echo ""
 echo "torchreid:"
@@ -188,3 +248,7 @@ else
     echo "  Manual: download from Google Drive and place at:"
     echo "  $OSNET_FILE"
 fi
+echo ""
+echo "eDifFIQA:"
+ls -lh "$SCRIPT_DIR"/models/edifiqa_tiny.onnx 2>/dev/null || echo "  ❌ not found"
+

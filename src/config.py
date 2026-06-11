@@ -40,12 +40,6 @@ class FaceConfig(BaseModel):
     insightface_ctx_id: int = 0  # CUDA 设备 ID
     det_size: tuple[int, int] = (640, 640)  # 人脸检测输入尺寸
 
-    # 人脸质量评估权重
-    quality_blur_weight: float = 0.25  # 模糊度权重
-    quality_size_weight: float = 0.15  # 尺寸权重
-    quality_landmark_weight: float = 0.15  # 关键点置信度权重
-    quality_pose_weight: float = 0.30  # 姿态角权重
-    quality_lighting_weight: float = 0.15  # 光照权重
     min_face_size: int = 40  # 最小人脸像素尺寸
 
 
@@ -96,9 +90,9 @@ class MatchingConfig(BaseModel):
     wardrobe_boost_gamma: float = 0.2  # wardrobe 提升因子 (贝叶斯 lift ≈ 1.5×)
 
     # 多模态融合
-    face_base_weight: float = 0.50  # 人脸基础权重 (multi_modal_fusion.fuse 使用)
-    body_base_weight: float = 0.35  # 全身基础权重
-    proportion_base_weight: float = 0.15  # 体型比例基础权重
+    face_base_weight: float = 0.60  # 人脸基础权重 (multi_modal_fusion.fuse 使用)
+    body_base_weight: float = 0.3  # 全身基础权重
+    proportion_base_weight: float = 0.1  # 体型比例基础权重
 
 
 class TrackingConfig(BaseModel):

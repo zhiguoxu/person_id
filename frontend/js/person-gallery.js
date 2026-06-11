@@ -413,16 +413,23 @@ class PersonGallery {
                     canvas.width = displayW;
                     canvas.height = displayH;
 
-                    const scaleX = displayW / naturalW;
-                    const scaleY = displayH / naturalH;
+                    // object-fit: cover 缩放计算
+                    // cover 模式取较大缩放比, 图像居中裁切
+                    const scale = Math.max(displayW / naturalW, displayH / naturalH);
+                    const renderedW = naturalW * scale;
+                    const renderedH = naturalH * scale;
+                    // 居中偏移 (被裁切的部分)
+                    const offsetX = (displayW - renderedW) / 2;
+                    const offsetY = (displayH - renderedH) / 2;
+
                     const [x1, y1, x2, y2] = entry.face_bbox;
 
                     const ctx = canvas.getContext('2d');
                     ctx.strokeStyle = '#00e5ff';
                     ctx.lineWidth = 2;
                     ctx.strokeRect(
-                        x1 * scaleX, y1 * scaleY,
-                        (x2 - x1) * scaleX, (y2 - y1) * scaleY
+                        x1 * scale + offsetX, y1 * scale + offsetY,
+                        (x2 - x1) * scale, (y2 - y1) * scale
                     );
                 };
 

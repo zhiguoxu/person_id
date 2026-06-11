@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import time
 
-
 import numpy as np
 import cv2
 from loguru import logger
@@ -143,8 +142,12 @@ class VisionOrchestrator(BaseModel):
 
         # --- track 逐个进处理 ---
         gallery_dirty = False
+        total_face_detect_ms = 0.0
+        total_face_assess_ms = 0.0
         for state in self.tracks.values():
-            result, is_enrich = state.process_frame(frame, self.gallery)
+            result, is_enrich, face_detect_ms, face_assess_ms = state.process_frame(frame, self.gallery)
+            total_face_detect_ms += face_detect_ms
+            total_face_assess_ms += face_assess_ms
             if result is None:
                 continue
 
@@ -167,7 +170,7 @@ class VisionOrchestrator(BaseModel):
         # --- 构建响应 ---
         elapsed_ms = (time.perf_counter() - t0) * 1000
         response = self._build_response(elapsed_ms)
-        response["pipeline_debug"] = self._build_debug(tier1_ms, elapsed_ms)
+        response["pipeline_debug"] = self._build_debug(tier1_ms, elapsed_ms, total_face_detect_ms, total_face_assess_ms)
         return response
 
     # ==================================================================
@@ -355,8 +358,8 @@ class VisionOrchestrator(BaseModel):
             for pose, cf in best_frames.items():
                 crop = cf.entry.crop
                 face_bbox = None
-                if with_face and cf.face_result is not None:
-                    x1, y1, x2, y2 = cf.face_result.bbox[:4].tolist()
+                if with_face and cf.entry.face_bbox is not None:
+                    x1, y1, x2, y2 = cf.entry.face_bbox[:4].tolist()
                     h, w = crop.shape[:2]
                     face_bbox = [
                         max(0.0, x1), max(0.0, y1),
@@ -508,52 +511,48 @@ class VisionOrchestrator(BaseModel):
             self,
             tier1_ms: float,
             total_ms: float,
+            face_detect_ms: float = 0.0,
+            face_assess_ms: float = 0.0,
     ) -> dict[str, object]:
         """构建 pipeline_debug 字典。"""
         active_states = self.tracks.values()
         n_states = len(active_states)
-        n_identified = sum(1 for s in active_states if s.identity_result.person_id)
-        n_identifying = sum(1 for s in active_states if s.identity_result.status == IdentityStatus.IDENTIFYING)
         n_vlm_pending = sum(1 for s in active_states if s.vlm_task is not None)
-        has_tier2 = total_ms - tier1_ms > 1.0  # 有显著 tier2 耗时
+        face_total_ms = face_detect_ms + face_assess_ms
+        reid_ms = total_ms - tier1_ms - face_total_ms
 
-        if has_tier2:
-            tier2_ms = total_ms - tier1_ms
+        # 人脸检测统计
+        n_face_detected = sum(
+            1 for s in active_states
+            if s.person.detection and s.person.detection.pose_bucket != PoseBucket.BACK
+        )
+        face_detect_status = "done" if face_detect_ms > 0 else "skipped"
+        face_assess_status = "done" if face_assess_ms > 0 else "skipped"
+
+        if reid_ms > 1.0:  # 有显著 ReID 耗时
             return {
                 "detection": {"status": "done", "time_ms": round(tier1_ms, 1), "details": {"count": n_states}},
-                "pose": {"status": "done", "time_ms": 0, "details": {}},
-                "face": {"status": "done", "time_ms": 0, "details": {
-                    "results": [
-                        {"track_id": s.person.track_id,
-                         "face_match_quality": s.identity_result.face_match_quality,
-                         "body_match_quality": s.identity_result.body_match_quality}
-                        for s in active_states],
-                }},
-                "reid": {"status": "done", "time_ms": round(tier2_ms, 1),
+                "face_detect": {"status": face_detect_status, "time_ms": round(face_detect_ms, 1),
+                                "details": {"detected": n_face_detected, "total": n_states}},
+                "face_assess": {"status": face_assess_status, "time_ms": round(face_assess_ms, 1),
+                                "details": {
+                                    "results": [
+                                        {"track_id": s.person.track_id,
+                                         "face_match_quality": s.identity_result.face_match_quality,
+                                         "body_match_quality": s.identity_result.body_match_quality}
+                                        for s in active_states],
+                                }},
+                "reid": {"status": "done", "time_ms": round(max(0, reid_ms), 1),
                          "details": {"multiframe": True}},
-                "matching": {"status": "done", "time_ms": 0, "details": {
-                    "results": [
-                        {"track_id": s.person.track_id,
-                         "decision": s.identity_result.status.value,
-                         "matched_id": s.identity_result.person_id,
-                         "candidates": []}
-                        for s in active_states],
-                }},
-                "identity": {"status": "done", "time_ms": 0,
-                             "details": {"confirmed": n_identified, "identifying": n_identifying,
-                                         "vlm_pending": n_vlm_pending}},
             }
 
         pending_status = "running" if n_vlm_pending > 0 else "pending"
         return {
             "detection": {"status": "done", "time_ms": round(tier1_ms, 1), "details": {"count": n_states}},
-            "pose": {"status": pending_status, "time_ms": 0, "details": {}},
-            "face": {"status": pending_status, "time_ms": 0, "details": {}},
+            "face_detect": {"status": face_detect_status, "time_ms": round(face_detect_ms, 1),
+                            "details": {"detected": n_face_detected, "total": n_states}},
+            "face_assess": {"status": face_assess_status, "time_ms": round(face_assess_ms, 1), "details": {}},
             "reid": {"status": pending_status, "time_ms": 0, "details": {}},
-            "matching": {"status": pending_status, "time_ms": 0, "details": {}},
-            "identity": {"status": pending_status, "time_ms": 0, "details": {
-                "confirmed": n_identified, "identifying": n_identifying, "vlm_pending": n_vlm_pending,
-            }},
         }
 
     # ==================================================================

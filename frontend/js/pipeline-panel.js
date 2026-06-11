@@ -5,7 +5,8 @@
  */
 class PipelinePanel {
     constructor() {
-        this.stages = ['detection', 'pose', 'face', 'reid', 'matching', 'identity'];
+        this.stages = ['detection', 'face_detect', 'face_assess', 'reid'];
+        this._lastTimeMs = {};  // 缓存每个阶段的最后执行时长
         this._bindExpanders();
     }
 
@@ -46,11 +47,18 @@ class PipelinePanel {
             statusEl.textContent = this._statusIcon(status);
 
             // 耗时
-            if (data.time_ms !== undefined) {
+            if (data.time_ms !== undefined && data.time_ms > 0) {
                 timeEl.textContent = `${data.time_ms.toFixed(1)}ms`;
+                timeEl.classList.remove('stale');
                 totalMs += data.time_ms;
+                this._lastTimeMs[stage] = data.time_ms;
+            } else if (this._lastTimeMs[stage] > 0) {
+                // pending/skipped 时显示上次的时长 (变灰)
+                timeEl.textContent = `${this._lastTimeMs[stage].toFixed(1)}ms`;
+                timeEl.classList.add('stale');
             } else {
                 timeEl.textContent = '—';
+                timeEl.classList.remove('stale');
             }
 
             // 高亮当前处理中的阶段
@@ -79,16 +87,12 @@ class PipelinePanel {
         switch (stage) {
             case 'detection':
                 return this._renderDetectionDetails(data);
-            case 'pose':
-                return this._renderPoseDetails(data);
-            case 'face':
-                return this._renderFaceDetails(data);
+            case 'face_detect':
+                return this._renderFaceDetectDetails(data);
+            case 'face_assess':
+                return this._renderFaceAssessDetails(data);
             case 'reid':
                 return this._renderReIDDetails(data);
-            case 'matching':
-                return this._renderMatchingDetails(data);
-            case 'identity':
-                return this._renderIdentityDetails(data);
             default:
                 return '';
         }
@@ -109,21 +113,15 @@ class PipelinePanel {
         return html;
     }
 
-    _renderPoseDetails(data) {
-        const results = data.details?.results || [];
-        if (results.length === 0) return '';
-
-        let html = '';
-        results.forEach(r => {
-            const bucketEmoji = { frontal: '👤', left: '◀', right: '▶', back: '🔙', unknown: '❓' };
-            html += `<div class="detail-line">
-                Track #${r.track_id}: ${bucketEmoji[r.bucket] || '?'} ${r.bucket}
-            </div>`;
-        });
-        return html;
+    _renderFaceDetectDetails(data) {
+        const details = data.details || {};
+        const count = details.detected || 0;
+        const total = details.total || 0;
+        if (total === 0) return '';
+        return `<div class="detail-line">${count}/${total} faces detected (SCRFD)</div>`;
     }
 
-    _renderFaceDetails(data) {
+    _renderFaceAssessDetails(data) {
         const results = data.details?.results || [];
         if (results.length === 0) return '';
 
@@ -148,74 +146,6 @@ class PipelinePanel {
                 Track #${r.track_id}: ${r.feature_dim || 2048}-d extracted
             </div>`;
         });
-        return html;
-    }
-
-    _renderMatchingDetails(data) {
-        const results = data.details?.results || [];
-        if (results.length === 0) return '';
-
-        let html = '';
-        results.forEach(r => {
-            html += `<div class="match-person-header">Track #${r.track_id}</div>`;
-
-            if (r.candidates && r.candidates.length > 0) {
-                html += this._renderScoreBars(r.candidates, r.thresholds_used || {});
-            }
-
-            const decisionColor = {
-                confident: '#00ff88',
-                suspected: '#ffa500',
-                conflict: '#ff6b6b',
-                stranger: '#6b7280'
-            };
-            const color = decisionColor[r.decision] || '#6b7280';
-            html += `<div class="detail-line" style="color: ${color}; font-weight: 600;">
-                → ${r.decision?.toUpperCase() || 'UNKNOWN'}
-                ${r.matched_id ? `= ${r.matched_id}` : ''}
-            </div>`;
-        });
-        return html;
-    }
-
-    _renderScoreBars(candidates, thresholds) {
-        const xThresh = thresholds.X || 0.72;
-        const yThresh = thresholds.Y || 0.55;
-
-        let html = '<div class="match-candidates">';
-        candidates.forEach(c => {
-            const score = c.fused_score || 0;
-            const pct = (score * 100).toFixed(0);
-            const barColor = score >= xThresh ? '#00ff88' :
-                             score >= yThresh ? '#ffa500' : '#6b7280';
-
-            html += `
-                <div class="match-candidate">
-                    <span class="candidate-name" title="${c.person_id}">${c.person_id || '?'}</span>
-                    <div class="candidate-bar-container">
-                        <div class="candidate-bar" style="width: ${pct}%; background: ${barColor};"></div>
-                        <div class="threshold-line x-line" style="left: ${xThresh * 100}%;"></div>
-                        <div class="threshold-line y-line" style="left: ${yThresh * 100}%;"></div>
-                    </div>
-                    <span class="candidate-score" style="color: ${barColor}">${score.toFixed(2)}</span>
-                </div>`;
-        });
-        html += '</div>';
-        return html;
-    }
-
-    _renderIdentityDetails(data) {
-        const details = data.details || {};
-        let html = '';
-        if (details.confirmed !== undefined) {
-            html += `<div class="detail-line">✅ Confirmed: ${details.confirmed}</div>`;
-        }
-        if (details.identifying !== undefined) {
-            html += `<div class="detail-line">⏳ Identifying: ${details.identifying}</div>`;
-        }
-        if (details.vlm_pending !== undefined && details.vlm_pending > 0) {
-            html += `<div class="detail-line">🧠 VLM Pending: ${details.vlm_pending}</div>`;
-        }
         return html;
     }
 }

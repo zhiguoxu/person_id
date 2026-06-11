@@ -360,13 +360,13 @@ h1, h2, h3 {
 }
 
 #pipeline-panel {
-    flex: 1;
-    min-height: 0;
+    flex: 0 0 auto;
 }
 
 #controls-panel {
-    flex: 0 0 auto;
-    max-height: 45%;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
 }
 
 #pipeline-stages {
@@ -449,6 +449,10 @@ h1, h2, h3 {
     font-variant-numeric: tabular-nums;
     min-width: 40px;
     text-align: right;
+}
+
+.stage-time.stale {
+    opacity: 0.4;
 }
 
 .pipeline-connector {

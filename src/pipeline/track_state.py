@@ -18,7 +18,7 @@ import numpy as np
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.gallery.data_models import PersonProfile
+from src.gallery.data_models import PersonProfile, PoseBucket
 from src.pipeline.data_models import (
     IdentityResult,
     IdentityStatus,
@@ -26,7 +26,9 @@ from src.pipeline.data_models import (
     TrackedPerson,
 )
 from src.pipeline.frame_buffer import BufferEntry, QualityCache, RecentBuffer
-from src.pipeline.quality_utils import compute_quality_hint
+from src.pipeline.quality_utils import compute_blur_score, compute_quality_hint
+from src.tier1.face_detector_light import get_face_detector_light
+from src.tier2.features.edifiqa import get_edifiqa
 from src.pipeline.scheduler import Tier2Action, should_trigger_tier2, should_trigger_vlm
 from src.tier2.processor import Tier2Processor
 from src.tier3.processor import Tier3VLMProcessor
@@ -48,7 +50,8 @@ class TrackState(BaseModel):
     # --- 跨帧持久状态 ---
     identity_result: IdentityResult = Field(default_factory=IdentityResult)
     is_current_target: bool = False  # 是否为当前注意力目标
-    last_tier2_time: float = 0.0  # 上次 Tier 2 处理时间
+    # 上次 Tier 2 处理时间，如果要提高响应实时性，需减少 last_tier2_time 的初始时间
+    last_tier2_time: float = Field(default_factory=time.monotonic)
     last_vlm_time: float = 0.0  # 上次 VLM 处理时间
     tier2_count: int = 0  # Tier2 累计执行次数
     force_probe: bool = False  # 强制触发 Tier2 (如身份冲突后)
@@ -96,7 +99,7 @@ class TrackState(BaseModel):
 
     def process_frame(
             self, frame: np.ndarray, gallery: dict[str, PersonProfile],
-    ) -> tuple[MatchResult | None, bool]:
+    ) -> tuple[MatchResult | None, bool, float, float]:
         """单帧步进: 注入图像 + 执行调度。
 
         Args:
@@ -104,20 +107,25 @@ class TrackState(BaseModel):
             gallery: 底库。
 
         Returns:
-            (MatchResult | None, is_enrich)
+            (MatchResult | None, is_enrich, face_detect_ms, face_assess_ms)
         """
-        self.feed_frame(frame)
-        return self.resolve(gallery)
+        face_detect_ms, face_assess_ms = self.feed_frame(frame)
+        match_result, is_enrich = self.resolve(gallery)
+        return match_result, is_enrich, face_detect_ms, face_assess_ms
 
     # ==================================================================
     # 帧缓存管理
     # ==================================================================
 
-    def feed_frame(self, frame: np.ndarray) -> bool:
-        """将 Tier1 检测结果裁剪并推入 per-track RecentBuffer。"""
+    def feed_frame(self, frame: np.ndarray) -> tuple[float, float]:
+        """将 Tier1 检测结果裁剪并推入 per-track RecentBuffer。
+
+        Returns:
+            (face_detect_ms, face_assess_ms) 人脸检测和质量评估各自耗时。
+        """
         det = self.person.detection
         if det is None or det.bbox is None:
-            return False
+            return 0.0, 0.0
 
         h_f, w_f = frame.shape[:2]
         x1 = max(0, int(det.bbox[0]))
@@ -127,7 +135,7 @@ class TrackState(BaseModel):
         crop = frame[y1:y2, x1:x2].copy()
 
         if crop.size == 0:
-            return False
+            return 0.0, 0.0
 
         q_hint = compute_quality_hint(det.bbox, det.keypoints, (h_f, w_f))
 
@@ -136,6 +144,25 @@ class TrackState(BaseModel):
             local_kps[:, 0] -= x1
             local_kps[:, 1] -= y1
 
+        # 轻量人脸检测 + eDifFIQA + blur 补充 (非 BACK 姿态)
+        face_quality = 0.0
+        aligned_face = None
+        face_bbox = None
+        face_kps = None
+        face_detect_ms = 0.0
+        face_assess_ms = 0.0
+        if det.pose_bucket != PoseBucket.BACK:
+            t_det = time.perf_counter()
+            result = get_face_detector_light().get_aligned_face(crop)
+            face_detect_ms = (time.perf_counter() - t_det) * 1000
+            if result is not None:
+                aligned_face, face_bbox, face_kps = result
+                t_assess = time.perf_counter()
+                edifiqa_score = get_edifiqa().predict(aligned_face)
+                blur = compute_blur_score(aligned_face)
+                face_assess_ms = (time.perf_counter() - t_assess) * 1000
+                face_quality = 0.8 * edifiqa_score + 0.2 * blur
+
         entry = BufferEntry(
             timestamp=time.time(),
             crop=crop,
@@ -143,8 +170,13 @@ class TrackState(BaseModel):
             keypoints=local_kps,
             pose_bucket=det.pose_bucket,
             quality_hint=q_hint,
+            face_quality=face_quality,
+            aligned_face=aligned_face,
+            face_bbox=face_bbox,
+            face_kps=face_kps,
         )
-        return self.buffer.push(entry)
+        self.buffer.push(entry)
+        return face_detect_ms, face_assess_ms
 
     def resolve(self, gallery: dict[str, PersonProfile],
                 ) -> tuple[MatchResult | None, bool]:

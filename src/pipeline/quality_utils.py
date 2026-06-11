@@ -106,3 +106,22 @@ def compute_sharpness(crop: np.ndarray) -> float:
     # 归一化: 典型范围 [0, 300], 映射到 [0, 1]
     sharpness = min(lap_var / 300.0, 1.0)
     return float(sharpness)
+
+
+def compute_blur_score(face_crop: np.ndarray) -> float:
+    """人脸模糊度评分 — 基于 Laplacian 方差
+
+    Laplacian 方差越高, 图像越清晰。
+    用于补充 eDifFIQA 对模糊的短板。
+
+    Args:
+        face_crop: 人脸裁剪图, BGR 格式。
+
+    Returns:
+        清晰度分数 [0, 1]。
+    """
+    gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY) if len(face_crop.shape) == 3 else face_crop
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    # Normalize: saturate at 500
+    score = min(1.0, laplacian_var / 500.0)
+    return float(score)

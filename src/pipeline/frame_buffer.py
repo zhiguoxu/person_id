@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import get_config
 from src.gallery.data_models import PoseBucket
-from src.pipeline.data_models import FaceResult
+
 
 
 # ==============================================================================
@@ -32,6 +32,17 @@ class BufferEntry(BaseModel):
     keypoints: np.ndarray  # (17, 3) COCO keypoints
     pose_bucket: PoseBucket  # 从 keypoints 快速分类
     quality_hint: float  # 轻量质量预估 (0-1), 窗口内竞争用
+    face_quality: float = 0.0  # eDifFIQA 人脸质量 (0 when no face)
+    aligned_face: np.ndarray | None = None  # 112×112 对齐人脸
+    face_bbox: np.ndarray | None = None  # 轻量检测人脸框 (crop 坐标系)
+    face_kps: np.ndarray | None = None  # 5 点关键点 (crop 坐标系)
+
+    @property
+    def combined_quality(self) -> float:
+        """加权综合质量 — RecentBuffer 窗口竞争用"""
+        if self.aligned_face is not None:
+            return 0.7 * self.face_quality + 0.3 * self.quality_hint
+        return self.quality_hint
 
 
 class RecentBuffer(BaseModel):
@@ -75,7 +86,7 @@ class RecentBuffer(BaseModel):
             return True
         else:
             # 同窗口 → 质量竞争: 高质量替换低质量
-            if entry.quality_hint > last.quality_hint:
+            if entry.combined_quality > last.combined_quality:
                 self.frames[-1] = entry
                 return True
             return False
@@ -97,15 +108,14 @@ class RecentBuffer(BaseModel):
 class CachedFrame(BaseModel):
     """质量缓存条目 — 由 Tier2 质量评估后填充
 
-    face_pool 和 body_pool 共用同一结构,
-    body 条目的 face_result 为 None。
+    face_pool 和 body_pool 共用同一结构。
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     entry: BufferEntry  # 原始帧数据
     quality: float = 0.0  # 质量评分
     embedding: np.ndarray | None = None  # 特征向量
-    face_result: FaceResult | None = None  # SCRFD 检测 + ArcFace 嵌入结果 (仅 face)
+
     enrolled: bool = False  # 是否已入库 (防止重复入库)
 
 
