@@ -92,7 +92,7 @@ class Tier2Processor:
 
         # 两阶段控制: 无新 embedding → query 数据没变, 匹配结果不会变
         if n_new == 0:
-            return None, debug
+            return MatchResult(stale=True), debug
 
         # --- 4. Multi-frame aggregation ---
         aggregated = MultiFrameAggregator.aggregate_from_cache(quality_cache)

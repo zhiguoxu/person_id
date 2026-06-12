@@ -22,11 +22,6 @@ JsonValue = Any
 # Frame Processing
 # ==============================================================================
 
-class ProcessFrameRequest(BaseModel):
-    """帧处理请求 (REST, 仅调试用; 正式走 WebSocket)。"""
-    image_b64: str = Field(..., description="Base64 encoded JPEG image")
-    debug: bool = Field(False, description="Include debug info")
-
 
 class TrackedPersonResponse(BaseModel):
     """单个被追踪人物的响应。直接复用服务器的内部数据结构以减少组装开销。"""
@@ -42,16 +37,6 @@ class CurrentTargetResponse(BaseModel):
     person_id: str | None = None
     display_name: str | None = None
 
-
-class ProcessFrameResponse(BaseModel):
-    """帧处理响应。"""
-    frame_id: int = 0
-    tracked_persons: list[TrackedPersonResponse] = Field(default_factory=list)
-    current_target: CurrentTargetResponse | None = None
-    pending_vlm: list[int] = Field(default_factory=list)
-    gallery_size: int = 0
-    processing_ms: float = 0.0
-    debug: bool = False
 
 
 # ==============================================================================
@@ -107,6 +92,7 @@ class TunableParam(BaseModel):
 class ConfigResponse(BaseModel):
     """配置响应。"""
     params: dict[str, TunableParam] = Field(default_factory=dict)
+    flags: dict[str, JsonValue] = Field(default_factory=dict)  # 开关/阈值状态
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -180,11 +166,6 @@ class PersonDetailResponse(BaseModel):
 # WebSocket Messages
 # ==============================================================================
 
-class WSMessage(BaseModel):
-    """WebSocket 消息基类。"""
-    type: str
-    data: dict[str, JsonValue] = Field(default_factory=dict)
-
 
 class WSFrameResult(BaseModel):
     """WebSocket 帧处理结果。"""
@@ -196,12 +177,6 @@ class WSFrameResult(BaseModel):
     gallery_size: int = 0
     pending_vlm: list[int] = Field(default_factory=list)
     pipeline_debug: dict[str, JsonValue] | None = None
-
-
-class WSConfigUpdate(BaseModel):
-    """WebSocket 配置更新消息。"""
-    type: str = "config_update"
-    updates: dict[str, float] = Field(default_factory=dict)
 
 
 class WSIdentityConfirm(BaseModel):

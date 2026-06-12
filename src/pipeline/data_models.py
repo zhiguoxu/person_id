@@ -38,7 +38,6 @@ class IdentityStatus(str, Enum):
     STRANGER = "stranger"  # 陌生: 所有人 < Y
     DEFINITE = "definite"  # 笃定: 多次高置信确认, 终态
     IDENTIFYING = "identifying"  # 识别中 (Tier 2 异步处理)
-    SPATIAL_INFERRED = "spatial_inferred"  # 时空约束推断
 
 
 class EventType(str, Enum):
@@ -55,6 +54,7 @@ class EventType(str, Enum):
     OUTFIT_UPDATED = "outfit_updated"
     HUMAN_CONFIRMED = "human_confirmed"
     GALLERY_UPDATED = "gallery_updated"
+    DATA_STALE = "data_stale"  # 无新 embedding, quality cache 数据未变
 
 
 
@@ -102,6 +102,8 @@ class MatchCandidate(BaseModel):
     fused_score: float = 0.0  # 融合匹配分
     face_match_quality: float = 0.0  # 产生人脸最高分的 query 桶质量
     body_match_quality: float = 0.0  # 产生人体最高分的 query 桶质量
+    face_weight: float = 0.0  # 融合后归一化人脸权重
+    body_weight: float = 0.0  # 融合后归一化人体权重
 
 
 class IdentityResult(MatchCandidate):
@@ -133,6 +135,7 @@ class MatchResult(BaseModel):
     candidates: list[MatchCandidate] = Field(default_factory=list)  # 候选人列表 (按 fused_score 降序)
     best_match: MatchCandidate | None = None
     status: IdentityStatus = IdentityStatus.STRANGER
+    stale: bool = False  # True = 无新 embedding, query 数据未变
 
     @computed_field
     @property

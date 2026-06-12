@@ -11,11 +11,10 @@ class EventsTimeline {
         this.container = document.getElementById('events-timeline');
         this.events = [];
         this.maxEvents = 50;
-        this._lastCard = null;        // 上一个 event card DOM
-        this._lastEventKey = null;    // 上一个事件的合并 key
-        this._activePopover = null;   // 当前打开的 popover
-        this._filterMode = 'all';     // 'all' | 'active'
-        this._activeTrackIds = new Set(); // 当前帧活跃的 track IDs
+        this._trackCards = new Map();   // trackId → DOM card
+        this._activePopover = null;     // 当前打开的 popover
+        this._filterMode = 'all';       // 'all' | 'active'
+        this._activeTrackIds = new Set();
 
         this._bindFilterTabs();
     }
@@ -39,7 +38,6 @@ class EventsTimeline {
      */
     updateActiveTracks(trackIds) {
         const newSet = new Set(trackIds);
-        // 只在集合真正变化时才重新渲染，避免每帧 DOM 重建导致闪烁
         if (this._sameTrackSet(this._activeTrackIds, newSet)) return;
         this._activeTrackIds = newSet;
         if (this._filterMode === 'active') {
@@ -64,21 +62,20 @@ class EventsTimeline {
             this.events = this.events.slice(0, this.maxEvents);
         }
 
-        // 如果在 active 模式且 event 不属于当前 track，跳过渲染
         if (this._filterMode === 'active' && !this._isEventVisible(event)) {
             return;
         }
 
-        // 合并 key: 同一 track + 同一 status (message 字段存 status 值)
-        const eventKey = `${event.track_id}:${event.message || event.event_type}`;
+        const trackKey = `${event.track_id}`;
+        const existingCard = this._trackCards.get(trackKey);
 
-        if (this._lastCard && this._lastEventKey === eventKey) {
-            // 合并: 追加 score badge 到已有卡片
-            this._appendScore(this._lastCard, event);
+        if (existingCard && existingCard.parentNode === this.container) {
+            // 合并到已有卡片，并置顶
+            this._appendScore(existingCard, event);
+            this.container.insertBefore(existingCard, this.container.firstChild);
         } else {
             // 新建卡片
             this._renderEvent(event);
-            this._lastEventKey = eventKey;
         }
     }
 
@@ -87,7 +84,6 @@ class EventsTimeline {
      */
     _isEventVisible(event) {
         if (this._filterMode === 'all') return true;
-        // active 模式: 只显示当前活跃 track 的事件
         return event.track_id != null && this._activeTrackIds.has(event.track_id);
     }
 
@@ -95,12 +91,9 @@ class EventsTimeline {
      * 完整重渲染 (切换过滤器或活跃 tracks 变化时调用)
      */
     _fullRender() {
-        // 清空容器
         this.container.innerHTML = '';
-        this._lastCard = null;
-        this._lastEventKey = null;
+        this._trackCards.clear();
 
-        // 按过滤条件筛选事件
         const filtered = this.events.filter(e => this._isEventVisible(e));
 
         if (filtered.length === 0) {
@@ -114,23 +107,60 @@ class EventsTimeline {
         // 倒序遍历 (events[0] 是最新的，需要最后渲染才能在顶部)
         for (let i = filtered.length - 1; i >= 0; i--) {
             const event = filtered[i];
-            const eventKey = `${event.track_id}:${event.message || event.event_type}`;
+            const trackKey = `${event.track_id}`;
+            const existingCard = this._trackCards.get(trackKey);
 
-            if (this._lastCard && this._lastEventKey === eventKey) {
-                this._appendScore(this._lastCard, event);
+            if (existingCard) {
+                this._appendScore(existingCard, event);
             } else {
                 this._renderEvent(event);
-                this._lastEventKey = eventKey;
             }
         }
     }
 
     /**
-     * 向已有卡片追加一个 fused score badge
+     * 向已有卡片追加 score (如果状态变了，先追加状态标签)
      */
     _appendScore(card, event) {
         const scoresContainer = card.querySelector('.event-scores');
         if (!scoresContainer) return;
+
+        // data_stale → 追加暂停标记，不追加分数
+        if (event.event_type === 'data_stale') {
+            // 避免连续追加多个 stale 标记
+            const lastChild = scoresContainer.lastElementChild;
+            if (lastChild && lastChild.classList.contains('event-stale-marker')) return;
+            const marker = document.createElement('span');
+            marker.className = 'event-stale-marker';
+            marker.textContent = '⏸';
+            marker.title = 'No new data';
+            scoresContainer.appendChild(marker);
+            scoresContainer.scrollLeft = scoresContainer.scrollWidth;
+            return;
+        }
+
+        const currentStatus = event.message || event.event_type;
+        const prevStatus = card.dataset.lastStatus;
+
+        // 状态变化 → 追加新状态标签
+        if (currentStatus !== prevStatus) {
+            const statusTag = document.createElement('span');
+            statusTag.className = `event-status-inline event-status--${this._statusClass(currentStatus)}`;
+            statusTag.textContent = this._statusShort(currentStatus);
+            scoresContainer.appendChild(statusTag);
+            card.dataset.lastStatus = currentStatus;
+
+            // 更新卡片头部状态标签
+            const headerStatus = card.querySelector('.event-status');
+            if (headerStatus) {
+                headerStatus.className = `event-status event-status--${this._statusClass(currentStatus)}`;
+                headerStatus.textContent = this._statusShort(currentStatus);
+            }
+            // 更新名称
+            const nameSpan = card.querySelector('.event-name');
+            const name = event.display_name || event.person_id || '';
+            if (nameSpan && name) nameSpan.textContent = name;
+        }
 
         const badge = this._createScoreBadge(event);
         scoresContainer.appendChild(badge);
@@ -148,6 +178,7 @@ class EventsTimeline {
         card.className = 'event-card';
         card.dataset.type = event.event_type;
         card.dataset.trackId = event.track_id != null ? event.track_id : '';
+        card.dataset.lastStatus = event.message || event.event_type;
 
         // 状态圆点
         const dot = document.createElement('span');
@@ -178,8 +209,16 @@ class EventsTimeline {
         const scoresContainer = document.createElement('span');
         scoresContainer.className = 'event-scores';
 
-        const badge = this._createScoreBadge(event);
-        scoresContainer.appendChild(badge);
+        if (event.event_type === 'data_stale') {
+            const marker = document.createElement('span');
+            marker.className = 'event-stale-marker';
+            marker.textContent = '⏸';
+            marker.title = 'No new data';
+            scoresContainer.appendChild(marker);
+        } else {
+            const badge = this._createScoreBadge(event);
+            scoresContainer.appendChild(badge);
+        }
 
         card.appendChild(dot);
         card.appendChild(time);
@@ -188,15 +227,55 @@ class EventsTimeline {
         card.appendChild(nameSpan);
         card.appendChild(scoresContainer);
 
+        // 清理缓存按钮 (所有有 track_id 的卡片)
+        if (event.track_id != null) {
+            const clearBtn = document.createElement('button');
+            clearBtn.className = 'btn-clear-cache';
+            clearBtn.textContent = '🗑';
+            clearBtn.title = 'Clear quality cache';
+            clearBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                clearBtn.disabled = true;
+                clearBtn.textContent = '⏳';
+                try {
+                    const cameraId = window.BACKEND_CONFIG?.cameraId || 'default';
+                    const resp = await fetch(
+                        `${window.BACKEND_CONFIG.apiUrl}/${cameraId}/track/${event.track_id}/quality_cache`,
+                        { method: 'DELETE' }
+                    );
+                    if (resp.ok) {
+                        // 清空这一行的所有 score 数据
+                        const scores = card.querySelector('.event-scores');
+                        if (scores) scores.innerHTML = '';
+                    }
+                } catch { /* ignore */ }
+                setTimeout(() => {
+                    clearBtn.textContent = '🗑';
+                    clearBtn.disabled = false;
+                }, 800);
+            });
+            card.appendChild(clearBtn);
+        }
+
         // 插入到最前面
         this.container.insertBefore(card, this.container.firstChild);
 
+        // 注册到 track → card 映射
+        const trackKey = `${event.track_id}`;
+        this._trackCards.set(trackKey, card);
+
         // 限制 DOM 节点数
         while (this.container.children.length > this.maxEvents) {
-            this.container.removeChild(this.container.lastChild);
+            const removed = this.container.lastChild;
+            // 同步清理 map
+            if (removed.dataset?.trackId) {
+                const key = removed.dataset.trackId;
+                if (this._trackCards.get(key) === removed) {
+                    this._trackCards.delete(key);
+                }
+            }
+            this.container.removeChild(removed);
         }
-
-        this._lastCard = card;
     }
 
     /**
@@ -258,6 +337,8 @@ class EventsTimeline {
                     <th>Prop</th>
                     <th>FQ</th>
                     <th>BQ</th>
+                    <th>FW</th>
+                    <th>BW</th>
                 </tr>
             </thead>
         `;
@@ -271,6 +352,8 @@ class EventsTimeline {
             const prop = c.proportion_score != null ? c.proportion_score.toFixed(3) : '—';
             const fq = c.face_match_quality != null ? c.face_match_quality.toFixed(2) : '—';
             const bq = c.body_match_quality != null ? c.body_match_quality.toFixed(2) : '—';
+            const fw = c.face_weight != null ? c.face_weight.toFixed(2) : '—';
+            const bw = c.body_weight != null ? c.body_weight.toFixed(2) : '—';
 
             tr.innerHTML = `
                 <td class="pop-name">${c.display_name || c.person_id || '?'}</td>
@@ -280,6 +363,8 @@ class EventsTimeline {
                 <td>${prop}</td>
                 <td>${fq}</td>
                 <td>${bq}</td>
+                <td>${fw}</td>
+                <td>${bw}</td>
             `;
             tbody.appendChild(tr);
         }
@@ -351,10 +436,10 @@ class EventsTimeline {
             }
 
             if (facePool.length > 0) {
-                container.appendChild(this._renderCachePool('👤 Face Pool', facePool));
+                container.appendChild(this._renderCachePool('👤 Face Pool', facePool, 'face'));
             }
             if (bodyPool.length > 0) {
-                container.appendChild(this._renderCachePool('🏃 Body Pool', bodyPool));
+                container.appendChild(this._renderCachePool('🏃 Body Pool', bodyPool, 'body'));
             }
 
             // 重新定位 popover (内容变化后可能溢出)
@@ -377,7 +462,7 @@ class EventsTimeline {
     /**
      * 渲染单个 cache pool (face 或 body)
      */
-    _renderCachePool(title, pool) {
+    _renderCachePool(title, pool, poolType = 'face') {
         const section = document.createElement('div');
         section.className = 'pop-cache-pool';
 
@@ -388,6 +473,10 @@ class EventsTimeline {
 
         const grid = document.createElement('div');
         grid.className = 'pop-cache-grid';
+
+        // 从服务端配置获取阈值
+        const thresholds = window.QUALITY_THRESHOLDS || { face: 0.3, body: 0.2 };
+        const minQ = poolType === 'body' ? thresholds.body : thresholds.face;
 
         for (const item of pool) {
             const card = document.createElement('div');
@@ -402,7 +491,7 @@ class EventsTimeline {
             const info = document.createElement('div');
             info.className = 'pop-cache-info';
 
-            const qClass = item.quality >= 0.7 ? 'high' : item.quality >= 0.4 ? 'mid' : 'low';
+            const qClass = item.quality < minQ ? 'low' : 'high';
             info.innerHTML = `
                 <span class="pop-cache-quality pop-cache-q-${qClass}">Q: ${item.quality.toFixed(2)}</span>
                 <span class="pop-cache-pose">${item.pose_bucket}</span>
@@ -451,6 +540,10 @@ class EventsTimeline {
             'identity_conflict': 'CNFL',
             'human_confirmed': 'HUMAN',
             'vlm_result': 'VLM',
+            'vlm_invoked': 'VLM',
+            'track_lost': 'LOST',
+            'track_recovered': 'RECV',
+            'data_stale': 'STALE',
         };
         return map[status] || status?.toUpperCase()?.slice(0, 4) || '?';
     }
@@ -471,6 +564,10 @@ class EventsTimeline {
             'identity_conflict': 'conflict',
             'human_confirmed': 'definite',
             'vlm_result': 'confident',
+            'vlm_invoked': 'confident',
+            'track_lost': 'stranger',
+            'track_recovered': 'suspected',
+            'data_stale': 'stale',
         };
         return map[status] || 'default';
     }

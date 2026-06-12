@@ -36,6 +36,48 @@ from src.pipeline.frame_buffer import CachedFrame
 router = APIRouter(prefix="/api", tags=["api"])
 
 
+# ==============================================================================
+# ISS Stream refresh (stop + start → FLV URL)
+# ==============================================================================
+
+@router.post("/refresh_stream")
+async def refresh_stream() -> dict:
+    """重启 ISS 直播流并返回 FLV URL。
+
+    1. POST /iss/stop_stream
+    2. POST /iss/start_stream
+    3. 返回 data.Flv
+    """
+    import httpx
+
+    cfg = _get_config().server
+    base = cfg.iss_api_url.rstrip("/")
+    headers = {"device-sn": cfg.iss_device_sn}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # stop
+        try:
+            await client.post(f"{base}/iss/stop_stream", headers=headers)
+        except Exception as e:
+            logger.warning("ISS stop_stream failed (ignored): {}", e)
+
+        # start
+        resp = await client.post(f"{base}/iss/start_stream", headers=headers)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"ISS start_stream failed: {resp.status_code}")
+
+        data = resp.json()
+        if data.get("code") != 0:
+            raise HTTPException(status_code=502, detail=f"ISS error: {data.get('msg', 'unknown')}")
+
+        flv_url = data.get("data", {}).get("Flv", "")
+        if not flv_url:
+            raise HTTPException(status_code=502, detail="ISS returned no FLV URL")
+
+    logger.info("ISS stream refreshed: {}", flv_url)
+    return {"flv_url": flv_url}
+
+
 def _get_camera_orchestrator(camera_id: str):
     """获取指定摄像头的编排器。"""
     orch = get_camera_orchestrator(camera_id)
@@ -54,11 +96,16 @@ def _get_camera_orchestrator(camera_id: str):
 @router.get("/config", response_model=ConfigResponse)
 async def get_config_endpoint() -> ConfigResponse:
     """获取所有可调参数及其当前值、范围。"""
-    tunable = _get_config().get_tunable_params()
+    config = _get_config()
+    tunable = config.get_tunable_params()
     params = {
         key: TunableParam(**info) for key, info in tunable.items()
     }
-    return ConfigResponse(params=params)
+    flags = {  # 前端不可调参数
+        "AGG_MIN_FACE_QUALITY": config.multiframe.agg_min_face_quality,
+        "AGG_MIN_BODY_QUALITY": config.multiframe.agg_min_body_quality,
+    }
+    return ConfigResponse(params=params, flags=flags)
 
 
 @router.put("/config", response_model=ConfigUpdateResponse)
@@ -277,6 +324,20 @@ async def get_quality_cache(camera_id: str, track_id: int) -> QualityCacheRespon
 # ==============================================================================
 # Vision control endpoints (per-camera)
 # ==============================================================================
+
+@router.delete("/{camera_id}/track/{track_id}/quality_cache")
+async def clear_quality_cache(camera_id: str, track_id: int) -> dict:
+    """清空指定 track 的 quality cache, 使新数据能重新进入。"""
+    orch = _get_camera_orchestrator(camera_id)
+    state = orch.tracks.get(track_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Track {track_id} not found")
+
+    state.quality_cache.clear()
+    state.force_probe = True
+    logger.info("Quality cache cleared for track_id={} (camera={})", track_id, camera_id)
+    return {"status": "cleared", "track_id": track_id}
+
 
 @router.post("/{camera_id}/vision/confirm_identity")
 async def confirm_identity(

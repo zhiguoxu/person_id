@@ -90,10 +90,17 @@ class WebSocketManager {
             } else if (msg.type === 'event') {
                 // 事件字段直接在 msg 顶层 (event_type, track_id, ...)
                 if (this.onEvent) this.onEvent(msg);
-            } else if (msg.type === 'config_updated' || msg.type === 'config_ack') {
-                console.log('[WS] Config updated:', msg.updated_keys || msg.message);
+            } else if (msg.type === 'identity_confirmed') {
+                alert(`身份已确认: ${msg.name}`);
             } else if (msg.type === 'connected') {
                 console.log('[WS] Server acknowledged connection');
+            } else if (msg.type === 'error') {
+                // 服务端错误反馈
+                if (msg.code === 'confirm_error') {
+                    alert(`确认身份失败: ${msg.message}`);
+                } else {
+                    console.warn('[WS] Server error:', msg.code, msg.message);
+                }
             }
         } catch (e) {
             console.error('[WS] Failed to parse message:', e);
@@ -118,13 +125,22 @@ class WebSocketManager {
     }
 
     /**
-     * 发送配置更新
+     * 发送配置更新 (REST PUT)
      */
-    sendConfigUpdate(params) {
-        this._sendJSON({
-            type: 'config_update',
-            updates: params
-        });
+    async sendConfigUpdate(params) {
+        try {
+            const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/config`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates: params }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                console.error('[Config] Update failed:', err.detail || resp.statusText);
+            }
+        } catch (e) {
+            console.error('[Config] Update failed:', e.message);
+        }
     }
 
     /**

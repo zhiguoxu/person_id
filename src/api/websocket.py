@@ -18,7 +18,6 @@ from loguru import logger
 
 from src.api.schemas import (
     JsonValue,
-    WSConfigUpdate,
     WSError,
     WSEvent,
     WSFrameResult,
@@ -115,6 +114,14 @@ async def _handle_binary(
         )
         return
 
+    # 镜头畸变矫正 (可通过前端开关控制)
+    if config.server.image_correction_enabled:
+        try:
+            from src.utils.image_correction import correct_image_bytes
+            data = correct_image_bytes(data)
+        except Exception:
+            logger.warning("Image correction failed, using original frame")
+
     # 解码 JPEG
     try:
         nparr = np.frombuffer(data, np.uint8)
@@ -184,22 +191,7 @@ async def _handle_text(
 
     msg_type = msg.get("type", "")
 
-    if msg_type == "config_update":
-        try:
-            update = WSConfigUpdate(**msg)
-            updated_keys = config.update_from_dict(update.updates)
-            await _send_json(
-                websocket,
-                {"type": "config_updated", "updated_keys": updated_keys},
-            )
-            logger.info("Config updated via WS: {}", updated_keys)
-        except Exception:
-            logger.exception("Config update failed")
-            await _send_error(
-                websocket, "config_error", "Config update failed"
-            )
-
-    elif msg_type == "confirm_identity":
+    if msg_type == "confirm_identity":
         try:
             confirm = WSIdentityConfirm(**msg)
             await orchestrator.confirm_identity(
@@ -216,10 +208,10 @@ async def _handle_text(
                     "name": confirm.name,
                 },
             )
-        except Exception:
+        except Exception as e:
             logger.exception("Identity confirmation failed")
             await _send_error(
-                websocket, "confirm_error", "Identity confirmation failed"
+                websocket, "confirm_error", str(e) or "Identity confirmation failed"
             )
 
     elif msg_type == "ping":

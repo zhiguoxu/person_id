@@ -232,6 +232,10 @@ class TrackState(BaseModel):
         if result is None:
             return None, False
 
+        # 无新 embedding: 数据未变, 不更新身份, 直接传给 orchestrator 发事件
+        if result.stale:
+            return result, False
+
         if action == Tier2Action.TRIGGER_ENRICH:
             # ENRICH 不更新身份, 也不触发 VLM
             if result.best_match.person_id != self.identity_result.person_id:

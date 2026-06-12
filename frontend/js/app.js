@@ -12,10 +12,7 @@
     async function init() {
         console.log('[App] Initializing Vision ID Dashboard...');
 
-        // 1. 枚举摄像头
-        await window.videoCapture.enumerateDevices();
-
-        // 2. 初始化控制面板 (使用默认值，等连接后从服务端加载)
+        // 1. 初始化控制面板 (使用默认值，等连接后从服务端加载)
         window.controlsPanel.initialize();
 
         // 3. 设置 WebSocket 回调
@@ -112,7 +109,15 @@
         // 摄像头开关
         const cameraBtn = document.getElementById('btn-toggle-camera');
         const cameraSelect = document.getElementById('camera-select');
+        const streamUrlInput = document.getElementById('stream-url-input');
 
+        // 恢复上次的 stream URL
+        if (streamUrlInput) {
+            const savedUrl = localStorage.getItem('vision_stream_url');
+            if (savedUrl) streamUrlInput.value = savedUrl;
+        }
+
+        // --- Camera Start/Stop ---
         if (cameraBtn) {
             cameraBtn.addEventListener('click', async () => {
                 if (window.videoCapture.capturing) {
@@ -120,11 +125,76 @@
                     cameraBtn.innerHTML = '<span class="btn-icon">▶</span> Start Camera';
                     cameraBtn.classList.remove('active');
                 } else {
-                    const deviceId = cameraSelect?.value || null;
-                    await window.videoCapture.start(deviceId);
+                    const url = streamUrlInput?.value?.trim();
+                    if (url) {
+                        // 有 URL → 网络流, 保存到 localStorage
+                        localStorage.setItem('vision_stream_url', url);
+                        window.videoCapture.setSourceType('network');
+                        window.videoCapture.setStreamUrl(url);
+                        await window.videoCapture.start();
+                    } else {
+                        // 无 URL → 本地摄像头 (首次使用时枚举设备并请求权限)
+                        localStorage.removeItem('vision_stream_url');
+                        window.videoCapture.setSourceType('local');
+                        if (!window.videoCapture._devicesEnumerated) {
+                            await window.videoCapture.enumerateDevices();
+                            window.videoCapture._devicesEnumerated = true;
+                        }
+                        const deviceId = cameraSelect?.value || null;
+                        await window.videoCapture.start(deviceId);
+                    }
                     cameraBtn.innerHTML = '<span class="btn-icon">⏹</span> Stop Camera';
                     cameraBtn.classList.add('active');
                 }
+            });
+        }
+
+        // --- URL 输入框回车启动 ---
+        if (streamUrlInput) {
+            streamUrlInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    cameraBtn?.click();
+                }
+            });
+        }
+
+        // --- 刷新 ISS 直播流 ---
+        const refreshBtn = document.getElementById('btn-refresh-stream');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', async () => {
+                refreshBtn.disabled = true;
+                refreshBtn.classList.add('spinning');
+                try {
+                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/refresh_stream`, {
+                        method: 'POST',
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({}));
+                        alert(`刷新失败: ${err.detail || resp.statusText}`);
+                        return;
+                    }
+                    const data = await resp.json();
+                    if (data.flv_url) {
+                        streamUrlInput.value = data.flv_url;
+                        localStorage.setItem('vision_stream_url', data.flv_url);
+                    }
+                } catch (e) {
+                    alert(`刷新失败: ${e.message}`);
+                } finally {
+                    refreshBtn.disabled = false;
+                    refreshBtn.classList.remove('spinning');
+                }
+            });
+        }
+
+        // --- 镜头畸变矫正开关 ---
+        const correctionToggle = document.getElementById('toggle-correction');
+        if (correctionToggle) {
+            correctionToggle.addEventListener('change', () => {
+                window.wsManager.sendConfigUpdate({
+                    IMAGE_CORRECTION_ENABLED: correctionToggle.checked,
+                });
             });
         }
 
@@ -169,16 +239,11 @@
                 console.log('[App] Could not load gallery persons for candidates');
             }
 
-            // 如果 gallery 为空则隐藏候选区
-            if (galleryPersons.length === 0) {
-                candidatesSection.classList.add('empty');
-                return;
-            }
             candidatesSection.classList.remove('empty');
 
-            // 添加 "+ New Person" 卡片
+            // 添加 "+ New Person" 卡片 (默认选中)
             const newCard = document.createElement('div');
-            newCard.className = 'candidate-card new-person';
+            newCard.className = 'candidate-card new-person selected';
             newCard.dataset.personId = '';
             newCard.dataset.displayName = '';
             newCard.innerHTML = `
@@ -189,6 +254,11 @@
                 </div>
             `;
             candidatesList.appendChild(newCard);
+
+            // 默认选中 New Person: 清空 personId, 让用户输入新名字
+            inputPersonId.value = '';
+            inputName.value = '';
+            inputName.focus();
 
             // 添加 gallery 人物卡片
             for (const person of galleryPersons) {
@@ -284,6 +354,18 @@
                 const data = await response.json();
                 if (data.params) {
                     window.controlsPanel.initialize(data.params);
+                    // 同步开关状态
+                    const correctionToggle = document.getElementById('toggle-correction');
+                    if (correctionToggle && data.params.IMAGE_CORRECTION_ENABLED) {
+                        correctionToggle.checked = !!data.params.IMAGE_CORRECTION_ENABLED.value;
+                    }
+                }
+                // 质量阈值 (供 quality cache 颜色判断使用)
+                if (data.flags) {
+                    window.QUALITY_THRESHOLDS = {
+                        face: data.flags.AGG_MIN_FACE_QUALITY ?? 0.3,
+                        body: data.flags.AGG_MIN_BODY_QUALITY ?? 0.2,
+                    };
                 }
                 console.log('[App] Config loaded from server:', window.BACKEND_CONFIG.baseUrl);
             }

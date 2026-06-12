@@ -3,7 +3,7 @@ Multi-Modal Fusion — 自适应多模态融合
 
 将人脸、全身 ReID、体型比例三种模态的匹配分数自适应融合:
     1. 根据各模态是否可用动态调整权重
-    2. sigmoid 门控根据 body_quality 动态调整 face/body 权重
+    2. 各模态独立 sigmoid 门控, 根据 quality 选择合适的翻转点参数 q0
     3. 合并各模态候选人的分数, 按融合分排序
 """
 from __future__ import annotations
@@ -14,10 +14,6 @@ from loguru import logger
 
 from src.config import get_config
 from src.pipeline.data_models import MatchCandidate
-
-# sigmoid 门控参数
-_SIGMOID_K = 10.0  # 斜率
-_SIGMOID_Q0 = 0.5  # 翻转点
 
 
 def fuse(
@@ -30,11 +26,13 @@ def fuse(
     每个候选人的 face_match_quality / body_match_quality
     来自 matcher, 反映实际产生该分数的 query 桶质量.
 
+    各模态使用独立的 sigmoid 门控参数 (q0, k),
+    校准到各自的质量分布:
+      face quality 普遍 一般 x → q0=x
+      body quality 普遍 一般 y → q0=y
+
     sigmoid 门控:
       gate(q) = 1 / (1 + exp(-k × (q - q0)))
-      q=0.0 → gate≈0.007 (几乎关闭)
-      q=0.5 → gate=0.50  (半开)
-      q=0.7 → gate≈0.88  (基本开启)
 
     Args:
         face_candidates: 人脸匹配结果
@@ -72,12 +70,16 @@ def fuse(
         f_quality = c.face_match_quality if c.face_match_quality else 0.0
         b_quality = c.body_match_quality if c.body_match_quality else 0.0
 
-        face_gate = _sigmoid_gate(f_quality)
-        body_gate = _sigmoid_gate(b_quality)
+        face_gate = _sigmoid(f_quality, cfg.face_gate_k, cfg.face_gate_q0)
+        body_gate = _sigmoid(b_quality, cfg.body_gate_k, cfg.body_gate_q0)
 
         w_face_raw = cfg.face_base_weight * face_gate if c.face_score is not None else 0.0
         w_body_raw = cfg.body_base_weight * body_gate if c.body_score is not None else 0.0
         w_prop_raw = cfg.proportion_base_weight if c.proportion_score is not None else 0.0
+
+        # 暂时不动态计算权重，而是固定 face 的权重，因为 face 非常重要，无论质量如何，face 都应该占主导
+        w_face_raw = cfg.face_base_weight
+        w_body_raw = cfg.body_base_weight
 
         w_total = w_face_raw + w_body_raw + w_prop_raw
         if w_total < 1e-8:
@@ -88,6 +90,9 @@ def fuse(
         w_body = w_body_raw / w_total
         w_prop = w_prop_raw / w_total
 
+        c.face_weight = w_face
+        c.body_weight = w_body
+
         score = 0.0
         if c.face_score is not None:
             score += w_face * c.face_score
@@ -95,6 +100,7 @@ def fuse(
             score += w_body * c.body_score
         if c.proportion_score is not None:
             score += w_prop * c.proportion_score
+
         c.fused_score = score
 
     result = sorted(candidate_map.values(),
@@ -110,6 +116,6 @@ def fuse(
     return result
 
 
-def _sigmoid_gate(quality: float) -> float:
+def _sigmoid(quality: float, k: float, q0: float) -> float:
     """quality → gate value (0~1)"""
-    return 1.0 / (1.0 + math.exp(-_SIGMOID_K * (quality - _SIGMOID_Q0)))
+    return 1.0 / (1.0 + math.exp(-k * (quality - q0)))

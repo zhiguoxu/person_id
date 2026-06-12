@@ -55,6 +55,11 @@
                     <select id="camera-select" class="select-input">
                         <option value="">Select Camera...</option>
                     </select>
+                    <div id="stream-url-group" class="stream-url-group">
+                        <input type="text" id="stream-url-input" class="text-input stream-url-input"
+                               placeholder="Stream URL (leave empty for local camera)">
+                        <button id="btn-refresh-stream" class="btn btn-icon-only" title="Refresh stream URL from ISS">🔄</button>
+                    </div>
                     <div class="toggle-group">
                         <label class="toggle" title="Bounding Boxes">
                             <input type="checkbox" id="toggle-bbox" checked>
@@ -71,6 +76,11 @@
                         <label class="toggle" title="Labels">
                             <input type="checkbox" id="toggle-labels" checked>
                             <span class="toggle-label">Labels</span>
+                        </label>
+                        <span class="toggle-divider"></span>
+                        <label class="toggle toggle-correction" title="Lens Distortion Correction (镜头畸变矫正)">
+                            <input type="checkbox" id="toggle-correction">
+                            <span class="toggle-label">📐 Correct</span>
                         </label>
                     </div>
                 </div>
@@ -242,6 +252,8 @@
     <!-- ================================================================== -->
     <!-- SCRIPTS -->
     <!-- ================================================================== -->
+    <!-- FLV.js for FLV live stream playback -->
+    <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
     <script src="js/config.js"></script>
     <script src="js/websocket.js"></script>
     <script src="js/video-capture.js"></script>
@@ -250,6 +262,7 @@
     <script src="js/controls-panel.js"></script>
     <script src="js/events-timeline.js"></script>
     <script src="js/person-gallery.js"></script>
+    <script src="js/image-lightbox.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

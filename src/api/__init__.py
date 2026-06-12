@@ -11,15 +11,11 @@ from src.api.schemas import (
     CurrentTargetResponse,
     PersonDetailResponse,
     PersonListResponse,
-    ProcessFrameRequest,
-    ProcessFrameResponse,
     TrackedPersonResponse,
-    WSConfigUpdate,
     WSError,
     WSEvent,
     WSFrameResult,
     WSIdentityConfirm,
-    WSMessage,
 )
 from src.api.server import create_app
 from src.api.websocket import handle_ws_connection
@@ -29,8 +25,6 @@ __all__ = [
     "create_app",
     "handle_ws_connection",
     # Schemas
-    "ProcessFrameRequest",
-    "ProcessFrameResponse",
     "TrackedPersonResponse",
     "CurrentTargetResponse",
     "ConfirmIdentityRequest",
@@ -39,9 +33,7 @@ __all__ = [
     "ConfigUpdateResponse",
     "PersonListResponse",
     "PersonDetailResponse",
-    "WSMessage",
     "WSFrameResult",
-    "WSConfigUpdate",
     "WSIdentityConfirm",
     "WSEvent",
     "WSError",

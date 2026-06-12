@@ -5,6 +5,8 @@
  *   - active: 仅显示当前帧匹配到的人 (实时)
  *   - all:    显示数据库中所有已知用户
  */
+const _HIGH_CONFIDENCE = new Set(['confident', 'definite']);
+
 class PersonGallery {
     constructor() {
         this.container = document.getElementById('person-gallery');
@@ -79,7 +81,8 @@ class PersonGallery {
 
         if (persons.length > 0) {
             persons.forEach(p => {
-                if (p.person_id && !this._deletedIds.has(p.person_id)) {
+                if (p.person_id && !this._deletedIds.has(p.person_id)
+                    && _HIGH_CONFIDENCE.has(p.identity_status)) {
                     activePersonIds.add(p.person_id);
                     this.activeTracks.set(p.person_id, p.track_id);
 
@@ -455,7 +458,9 @@ class PersonGallery {
         info.className = 'gd-feature-info';
 
         const q = entry.quality_score;
-        const qClass = q >= 0.7 ? 'gd-quality-high' : q >= 0.4 ? 'gd-quality-mid' : 'gd-quality-low';
+        const thresholds = window.QUALITY_THRESHOLDS || { face: 0.3, body: 0.2 };
+        const minQ = featureType === 'body' ? thresholds.body : thresholds.face;
+        const qClass = q < minQ ? 'gd-quality-low' : 'gd-quality-high';
 
         info.innerHTML = `
             <div class="gd-feature-quality ${qClass}">Q: ${q.toFixed(2)}</div>
@@ -672,7 +677,6 @@ class PersonGallery {
                 const trackId = this.activeTracks.get(person.person_id);
                 if (trackId !== undefined) {
                     window.wsManager.sendConfirmIdentity(trackId, person.person_id, person.display_name);
-                    alert(`Identity confirmed: ${person.display_name}`);
                 }
             });
             div.appendChild(confirmBtn);

@@ -10,7 +10,6 @@ class ControlsPanel {
         this.params = {};
         this.presets = {
             conservative: {
-                YOLO_CONFIDENCE: 0.6,
                 A_THRESHOLD: 0.85,
                 B_THRESHOLD: 0.75,
                 C_THRESHOLD: 0.60,
@@ -18,7 +17,6 @@ class ControlsPanel {
                 OUTFIT_MATCH_THRESHOLD: 0.90,
             },
             balanced: {
-                YOLO_CONFIDENCE: 0.5,
                 A_THRESHOLD: 0.78,
                 B_THRESHOLD: 0.68,
                 C_THRESHOLD: 0.50,
@@ -26,7 +24,6 @@ class ControlsPanel {
                 OUTFIT_MATCH_THRESHOLD: 0.85,
             },
             aggressive: {
-                YOLO_CONFIDENCE: 0.35,
                 A_THRESHOLD: 0.70,
                 B_THRESHOLD: 0.60,
                 C_THRESHOLD: 0.40,
@@ -48,7 +45,6 @@ class ControlsPanel {
 
     _defaultParams() {
         return {
-            YOLO_CONFIDENCE: { value: 0.5, min: 0, max: 1, step: 0.05, group: 'detection', label: 'Detection Confidence' },
             A_THRESHOLD: { value: 0.78, min: 0, max: 1, step: 0.01, group: 'reid', label: 'A Threshold (笃定)' },
             B_THRESHOLD: { value: 0.68, min: 0, max: 1, step: 0.01, group: 'reid', label: 'B Threshold (确定)' },
             C_THRESHOLD: { value: 0.50, min: 0, max: 1, step: 0.01, group: 'reid', label: 'C Threshold (怀疑)' },
@@ -70,18 +66,17 @@ class ControlsPanel {
         });
 
         const groupLabels = {
-            detection: '🎯 Detection',
             reid: '🔍 ReID',
             quality: '📊 Quality',
             matching: '🔗 Matching',
+            system: '⚙️ System',
         };
 
         const groupColors = {
-            detection: 'group-detection',
             reid: 'group-reid',
-            vlm: 'group-vlm',
             quality: 'group-quality',
-            matching: 'group-detection',
+            matching: 'group-matching',
+            system: 'group-system',
         };
 
         Object.entries(groups).forEach(([group, items]) => {

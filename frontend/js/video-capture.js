@@ -2,7 +2,8 @@
  * Video Capture — 摄像头采集管理
  * 
  * 功能:
- * - 枚举可用摄像头
+ * - 枚举可用本地摄像头
+ * - 支持网络摄像头 (FLV / HLS / MJPEG)
  * - 开始/停止采集
  * - 定时抓帧并通过 WebSocket 发送
  */
@@ -18,10 +19,34 @@ class VideoCapture {
         this.maxCaptureWidth = 640;  // 限制最大发送宽度
         this.frameTimer = null;
         this._adjustTimer = null;  // 动态帧率调整定时器
+
+        // --- 摄像头源类型: 'local' | 'network' ---
+        this.sourceType = 'local';
+        this.streamUrl = '';
+
+        // --- 网络流播放器实例 ---
+        this._flvPlayer = null;
+        this._hlsPlayer = null;
     }
 
     /**
-     * 枚举可用摄像头设备
+     * 设置摄像头源类型
+     * @param {'local'|'network'} type
+     */
+    setSourceType(type) {
+        this.sourceType = type;
+    }
+
+    /**
+     * 设置网络流地址
+     * @param {string} url
+     */
+    setStreamUrl(url) {
+        this.streamUrl = url;
+    }
+
+    /**
+     * 枚举可用本地摄像头设备
      */
     async enumerateDevices() {
         try {
@@ -54,11 +79,22 @@ class VideoCapture {
     }
 
     /**
-     * 开始摄像头采集
+     * 开始采集 (根据 sourceType 决定本地或网络)
      */
     async start(deviceId = null) {
         if (this.capturing) return;
 
+        if (this.sourceType === 'network') {
+            await this._startNetworkStream();
+        } else {
+            await this._startLocalCamera(deviceId);
+        }
+    }
+
+    /**
+     * 开始本地摄像头采集
+     */
+    async _startLocalCamera(deviceId = null) {
         const constraints = {
             video: {
                 width: { ideal: 1280 },
@@ -83,15 +119,139 @@ class VideoCapture {
             // 开始帧发送循环
             this._startFrameLoop();
 
-            console.log('[Camera] Started');
+            console.log('[Camera] Local camera started');
         } catch (e) {
-            console.error('[Camera] Failed to start:', e);
+            console.error('[Camera] Failed to start local camera:', e);
             alert('Camera access failed: ' + e.message);
         }
     }
 
     /**
-     * 停止摄像头采集
+     * 开始网络摄像头流播放
+     */
+    async _startNetworkStream() {
+        const url = this.streamUrl.trim();
+        if (!url) {
+            alert('请输入网络摄像头的直播地址');
+            return;
+        }
+
+        // 检测流类型
+        const streamType = this._detectStreamType(url);
+        console.log(`[Camera] Starting network stream: type=${streamType}, url=${url}`);
+
+        try {
+            if (streamType === 'flv') {
+                await this._startFlvStream(url);
+            } else if (streamType === 'hls') {
+                await this._startHlsStream(url);
+            } else {
+                // 尝试直接作为视频源播放 (适用于 MJPEG 或其他浏览器原生支持的格式)
+                await this._startDirectStream(url);
+            }
+
+            this.capturing = true;
+            document.getElementById('no-camera-message').classList.add('hidden');
+
+            // 开始帧发送循环
+            this._startFrameLoop();
+
+            console.log('[Camera] Network stream started');
+        } catch (e) {
+            console.error('[Camera] Failed to start network stream:', e);
+            alert('网络流连接失败: ' + e.message);
+        }
+    }
+
+    /**
+     * 检测网络流类型
+     */
+    _detectStreamType(url) {
+        const lowerUrl = url.toLowerCase().split('?')[0];
+        if (lowerUrl.endsWith('.flv') || url.includes('.flv?') || url.includes('.live.flv')) {
+            return 'flv';
+        }
+        if (lowerUrl.endsWith('.m3u8')) {
+            return 'hls';
+        }
+        return 'direct';
+    }
+
+    /**
+     * FLV 流播放 (使用 flv.js)
+     */
+    async _startFlvStream(url) {
+        if (typeof flvjs === 'undefined') {
+            throw new Error('flv.js library not loaded. Cannot play FLV streams.');
+        }
+        if (!flvjs.isSupported()) {
+            throw new Error('Your browser does not support FLV playback.');
+        }
+
+        this._flvPlayer = flvjs.createPlayer({
+            type: 'flv',
+            url: url,
+            isLive: true,
+            hasAudio: false,
+            hasVideo: true,
+        }, {
+            enableWorker: false,
+            enableStashBuffer: false,
+            stashInitialSize: 128,
+            lazyLoad: false,
+            autoCleanupSourceBuffer: true,
+            autoCleanupMaxBackwardDuration: 5,
+            autoCleanupMinBackwardDuration: 3,
+        });
+
+        this._flvPlayer.attachMediaElement(this.videoEl);
+        this._flvPlayer.load();
+
+        // 监听错误
+        this._flvPlayer.on(flvjs.Events.ERROR, (errType, errDetail) => {
+            console.error('[FLV] Error:', errType, errDetail);
+        });
+
+        await this.videoEl.play();
+    }
+
+    /**
+     * HLS 流播放 (原生支持或 hls.js)
+     */
+    async _startHlsStream(url) {
+        // Safari 原生支持 HLS
+        if (this.videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+            this.videoEl.src = url;
+            await this.videoEl.play();
+            return;
+        }
+
+        // 非 Safari: 尝试 hls.js (需额外加载)
+        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+            this._hlsPlayer = new Hls();
+            this._hlsPlayer.loadSource(url);
+            this._hlsPlayer.attachMedia(this.videoEl);
+            this._hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+                this.videoEl.play();
+            });
+            return;
+        }
+
+        // Fallback: 直接设置 src
+        this.videoEl.src = url;
+        await this.videoEl.play();
+    }
+
+    /**
+     * 直接视频源播放 (MJPEG 等浏览器原生支持的格式)
+     */
+    async _startDirectStream(url) {
+        this.videoEl.src = url;
+        await this.videoEl.play();
+    }
+
+    /**
+     * 停止采集
      */
     stop() {
         this.capturing = false;
@@ -105,12 +265,38 @@ class VideoCapture {
             this._adjustTimer = null;
         }
 
+        // 停止本地摄像头流
         if (this.stream) {
             this.stream.getTracks().forEach(t => t.stop());
             this.stream = null;
         }
 
+        // 销毁 FLV 播放器
+        if (this._flvPlayer) {
+            try {
+                this._flvPlayer.pause();
+                this._flvPlayer.unload();
+                this._flvPlayer.detachMediaElement();
+                this._flvPlayer.destroy();
+            } catch (e) {
+                console.warn('[Camera] FLV player cleanup error:', e);
+            }
+            this._flvPlayer = null;
+        }
+
+        // 销毁 HLS 播放器
+        if (this._hlsPlayer) {
+            try {
+                this._hlsPlayer.destroy();
+            } catch (e) {
+                console.warn('[Camera] HLS player cleanup error:', e);
+            }
+            this._hlsPlayer = null;
+        }
+
         this.videoEl.srcObject = null;
+        this.videoEl.removeAttribute('src');
+        this.videoEl.load(); // 重置 video 元素
         document.getElementById('no-camera-message').classList.remove('hidden');
         console.log('[Camera] Stopped');
     }
@@ -143,7 +329,7 @@ class VideoCapture {
     _captureAndSend() {
         if (this.videoEl.readyState < 2) return; // HAVE_CURRENT_DATA
 
-        // 动态检测摄像头的原始宽高比并适配 (防止图像形变)
+        // 动态检测视频的原始宽高比并适配 (防止图像形变)
         const vw = this.videoEl.videoWidth;
         const vh = this.videoEl.videoHeight;
         
@@ -191,12 +377,12 @@ class VideoCapture {
         const offsetX = (containerW - displayW) / 2;
         const offsetY = (containerH - displayH) / 2;
 
-        // 2. 导出 capture 尺寸 (640x480) 供 overlay_renderer 用作坐标基准
+        // 2. 导出 capture 尺寸 供 overlay_renderer 用作坐标基准
         return {
             offsetX, offsetY, 
             displayW, displayH, scale,
-            videoW: this.captureCanvas.width,   // 640
-            videoH: this.captureCanvas.height,  // 480
+            videoW: this.captureCanvas.width,
+            videoH: this.captureCanvas.height,
         };
     }
 }

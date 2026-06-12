@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.config import get_config
 from src.gallery.data_models import (
     FeatureEntry,
-    FeatureOperation,
     GalleryUpdateResult,
     PersonProfile, PoseBucket,
 )
@@ -151,6 +150,20 @@ class VisionOrchestrator(BaseModel):
             if result is None:
                 continue
 
+            # 无新 embedding → 发 DATA_STALE 事件 (前端可清缓存, 节流)
+            if result.stale:
+                now = time.time()
+                stale_key = f"stale_{state.person.track_id}"
+                if now - self.last_event_time.get(stale_key, 0) > self.event_cooldown_sec:
+                    self.last_event_time[stale_key] = now
+                    self._emit_event(
+                        EventType.DATA_STALE,
+                        track_id=state.person.track_id,
+                        source="reid",
+                        message="No new embeddings, quality cache unchanged",
+                    )
+                continue
+
             self._emit_match_event(state.person.track_id, result)
 
             if result.status == IdentityStatus.DEFINITE:
@@ -229,6 +242,13 @@ class VisionOrchestrator(BaseModel):
         state = self.tracks.get(track_id)
         if state is None:
             raise ValueError(f"Track {track_id} not found, cannot confirm")
+
+        # 检查是否有人脸数据 (必须有至少一个带 embedding 的人脸帧)
+        has_face = any(
+            cf.embedding is not None for cf in state.quality_cache.face_pool
+        )
+        if not has_face:
+            raise ValueError("入库失败：没有人脸数据。请等待目标正面朝向摄像头后重试。")
 
         if not person_id:
             # 传空表示创建新用户
@@ -412,6 +432,8 @@ class VisionOrchestrator(BaseModel):
                 "proportion_score": round(c.proportion_score, 3) if c.proportion_score is not None else None,
                 "face_match_quality": round(c.face_match_quality, 2),
                 "body_match_quality": round(c.body_match_quality, 2),
+                "face_weight": round(c.face_weight, 2),
+                "body_weight": round(c.body_weight, 2),
             })
 
         # 映射 status → event_type
