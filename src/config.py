@@ -19,12 +19,22 @@ DATA_DIR = PROJECT_ROOT / "data"
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 
+class HardwareConfig(BaseModel):
+    """硬件与计算设备配置"""
+    device: str = "cuda:2"  # 统一计算设备，替代原有的 yolo_device, reid_device 等
+
+    @property
+    def insightface_ctx_id(self) -> int:
+        if self.device == "cpu":
+            return -1
+        return int(self.device.split(":")[-1]) if ":" in self.device else 0
+
+
 class DetectionConfig(BaseModel):
     """检测模块配置"""
     # YOLO 模型
     yolo_fast_model: str = "yolo11n-pose.pt"  # Tier 1 轻量模型
     yolo_heavy_model: str = "yolo11x-pose.pt"  # Tier 2 精确模型
-    yolo_device: str = "cuda:0"  # CUDA 设备
     yolo_confidence: float = 0.5  # 检测置信度阈值
     yolo_iou_threshold: float = 0.7  # NMS IoU 阈值
     yolo_max_det: int = 10  # 最大检测数
@@ -37,7 +47,6 @@ class DetectionConfig(BaseModel):
 class FaceConfig(BaseModel):
     """人脸识别配置"""
     insightface_model: str = "buffalo_l"  # InsightFace 模型包
-    insightface_ctx_id: int = 0  # CUDA 设备 ID
     det_size: tuple[int, int] = (640, 640)  # 人脸检测输入尺寸
 
     min_face_size: int = 40  # 最小人脸像素尺寸
@@ -48,7 +57,6 @@ class ReIDConfig(BaseModel):
     # SOLIDER 模型 (暂用 OSNet 占位, SOLIDER 需从源码集成)
     reid_model_name: str = "osnet_ain_x1_0"  # ReID 模型名
     reid_model_weights: str = ""  # 模型权重路径 (空=自动从缓存查找)
-    reid_device: str = "cuda:0"  # CUDA 设备
     reid_input_size: tuple[int, int] = (256, 128)  # 输入尺寸 (H, W)
     use_flip_test: bool = False  # 水平翻转测试增强
 
@@ -176,6 +184,7 @@ class Config(BaseModel):
     所有模块的配置参数集中管理。
     阈值参数支持通过 WebSocket 实时更新。
     """
+    hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     face: FaceConfig = Field(default_factory=FaceConfig)
     reid: ReIDConfig = Field(default_factory=ReIDConfig)
@@ -263,9 +272,7 @@ def load_config() -> Config:
     if base_url := os.environ.get("VLM_BASE_URL"):
         config.vlm.base_url = base_url
     if device := os.environ.get("CUDA_DEVICE"):
-        config.detection.yolo_device = device
-        config.face.insightface_ctx_id = int(device.split(":")[-1]) if ":" in device else 0
-        config.reid.reid_device = device
+        config.hardware.device = device
     if db_path := os.environ.get("GALLERY_DB_PATH"):
         config.server.gallery_db_path = db_path
 

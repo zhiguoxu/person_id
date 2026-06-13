@@ -39,7 +39,9 @@ class FaceDetectorLight:
                 "Run: bash download_models.sh"
             )
 
-        ctx_id = get_config().face.insightface_ctx_id
+        config = get_config().face
+        hw_config = get_config().hardware
+        ctx_id = hw_config.insightface_ctx_id
         providers = (
             [("CUDAExecutionProvider", {"device_id": ctx_id}), "CPUExecutionProvider"]
             if ctx_id >= 0
@@ -49,8 +51,8 @@ class FaceDetectorLight:
         self._detector = insightface.model_zoo.get_model(
             str(model_path), providers=providers,
         )
-        self._detector.prepare(ctx_id=ctx_id, input_size=(640, 640))
-        logger.info("FaceDetectorLight loaded: model=det_10g (SCRFD_10G), ctx_id={}", ctx_id)
+        self._detector.prepare(ctx_id=ctx_id, input_size=config.det_size)
+        logger.info("FaceDetectorLight loaded: model=det_10g (SCRFD_10G), ctx_id={}, det_size={}", ctx_id, config.det_size)
 
     def detect(self, crop: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
         """检测最大人脸。

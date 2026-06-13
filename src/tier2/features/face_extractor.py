@@ -43,7 +43,7 @@ class FaceExtractor:
                     "Run: bash download_models.sh"
                 )
 
-            ctx_id = config.insightface_ctx_id
+            ctx_id = get_config().hardware.insightface_ctx_id
             providers = self._get_providers(ctx_id)
 
             self._rec_model = insightface.model_zoo.get_model(

@@ -44,7 +44,8 @@ class BodyExtractor:
         加载 torchreid OSNet-AIN 模型。
         """
         config = get_config().reid
-        self.device = torch.device(config.reid_device)
+        hw_config = get_config().hardware
+        self.device = torch.device(hw_config.device)
         self._model = None
 
         self._load_model()
@@ -69,7 +70,7 @@ class BodyExtractor:
         logger.info(
             "BodyExtractor loaded: model={}, device={}, dim={}",
             config.reid_model_name,
-            config.reid_device,
+            get_config().hardware.device,
             self.EMBEDDING_DIM,
         )
 

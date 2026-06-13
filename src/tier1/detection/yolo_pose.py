@@ -10,7 +10,6 @@ YOLO11 Pose 检测器封装
 """
 from __future__ import annotations
 
-
 import numpy as np
 from loguru import logger
 
@@ -33,8 +32,8 @@ class YoloPoseDetector:
     """
 
     def __init__(
-        self,
-        model_path: str,
+            self,
+            model_path: str,
     ) -> None:
         """初始化 YOLO Pose 检测器。
 
@@ -42,16 +41,21 @@ class YoloPoseDetector:
             model_path: YOLO 模型权重文件路径 (e.g. 'yolo11n-pose.pt')。
         """
 
-
         try:
             from ultralytics import YOLO
             self.model = YOLO(model_path)
             # Warm up the model on the target device
             cfg = get_config().detection
-            self.model(np.zeros((128, 128, 3), dtype=np.uint8), device=cfg.yolo_device, verbose=False)
+            hw_cfg = get_config().hardware
+
+            # 必须传入 torch.device 对象以防止 Ultralytics 内部偷偷修改 CUDA_VISIBLE_DEVICES
+            import torch
+            device_obj = torch.device(hw_cfg.device)
+
+            self.model(np.zeros((128, 128, 3), dtype=np.uint8), device=device_obj, verbose=False)
             logger.info(
                 "YoloPoseDetector loaded: model={}, device={}, conf={}",
-                model_path, cfg.yolo_device, cfg.yolo_confidence,
+                model_path, hw_cfg.device, cfg.yolo_confidence,
             )
         except Exception as e:
             logger.error("Failed to load YOLO model '{}': {}", model_path, e)
@@ -68,10 +72,15 @@ class YoloPoseDetector:
             过滤掉高度小于 min_person_height 的检测。
         """
         cfg = get_config().detection
+        hw_cfg = get_config().hardware
+
+        import torch
+        device_obj = torch.device(hw_cfg.device)
+
         try:
             results = self.model(
                 frame,
-                device=cfg.yolo_device,
+                device=device_obj,
                 conf=cfg.yolo_confidence,
                 iou=cfg.yolo_iou_threshold,
                 max_det=cfg.yolo_max_det,
@@ -83,10 +92,9 @@ class YoloPoseDetector:
 
         return self._parse_results(results)
 
-
     @staticmethod
     def _parse_results(
-        results: list,
+            results: list,
     ) -> list[Detection]:
         """解析 YOLO 推理结果为 Detection 列表。
 

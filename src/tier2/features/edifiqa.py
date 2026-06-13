@@ -37,7 +37,7 @@ class EDifFIQA:
                 "face_image_quality_assessment_ediffiqa"
             )
 
-        ctx_id = get_config().face.insightface_ctx_id
+        ctx_id = get_config().hardware.insightface_ctx_id
         providers = (
             [("CUDAExecutionProvider", {"device_id": ctx_id}), "CPUExecutionProvider"]
             if ctx_id >= 0
