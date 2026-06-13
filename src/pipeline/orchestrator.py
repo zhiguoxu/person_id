@@ -376,23 +376,35 @@ class VisionOrchestrator(BaseModel):
                         best_frames[pose] = cf
 
             for pose, cf in best_frames.items():
-                crop = cf.entry.crop
-                face_bbox = None
-                if with_face and cf.entry.face_bbox is not None:
-                    x1, y1, x2, y2 = cf.entry.face_bbox[:4].tolist()
-                    h, w = crop.shape[:2]
-                    face_bbox = [
-                        max(0.0, x1), max(0.0, y1),
-                        min(float(w), x2), min(float(h), y2),
+                overlay_bbox = None
+                if with_face:
+                    # 人脸特征: source_image = crop, overlay_bbox = face_bbox (crop 坐标系)
+                    if cf.entry.face_bbox is not None:
+                        x1, y1, x2, y2 = cf.entry.face_bbox[:4].tolist()
+                        h, w = cf.entry.crop.shape[:2]
+                        overlay_bbox = [
+                            max(0.0, x1), max(0.0, y1),
+                            min(float(w), x2), min(float(h), y2),
+                        ]
+                    _, buf = cv2.imencode('.png', cf.entry.crop)
+                    source_image = buf.tobytes()
+                else:
+                    # 人体特征: source_image = 全帧原图, overlay_bbox = body bbox (全帧坐标系)
+                    source_image = cf.entry.frame_snapshot
+                    # bbox 是原始帧坐标, 直接使用
+                    bx = cf.entry.bbox
+                    overlay_bbox = [
+                        float(bx[0]), float(bx[1]),
+                        float(bx[2]), float(bx[3]),
                     ]
-                _, buf = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
+
                 entry = FeatureEntry(
                     embedding=cf.embedding,
                     pose_bucket=pose,
                     quality_score=cf.quality,
                     timestamp=cf.entry.timestamp,
-                    source_image=buf.tobytes(),
-                    face_bbox=face_bbox,
+                    source_image=source_image,
+                    overlay_bbox=overlay_bbox,
                 )
                 if op := enroll_fn(entry):
                     changes.feature_ops.append(op)

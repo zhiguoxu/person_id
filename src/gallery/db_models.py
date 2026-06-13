@@ -68,7 +68,7 @@ class FeatureRowBase(SQLModel):
     quality_score: float
     timestamp: float
     source_image: bytes | None = Field(default=None)
-    face_bbox: str | None = Field(default=None)  # JSON: [x1,y1,x2,y2]
+    overlay_bbox: str | None = Field(default=None)  # JSON: [x1,y1,x2,y2] 人脸框或人体框
 
 
 # ==============================================================================

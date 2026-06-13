@@ -36,6 +36,7 @@ class BufferEntry(BaseModel):
     aligned_face: np.ndarray | None = None  # 112×112 对齐人脸
     face_bbox: np.ndarray | None = None  # 轻量检测人脸框 (crop 坐标系)
     face_kps: np.ndarray | None = None  # 5 点关键点 (crop 坐标系)
+    frame_snapshot: bytes  # 全帧 PNG 快照 (body 入库时用于展示原图)
 
     @property
     def combined_quality(self) -> float:
@@ -115,7 +116,6 @@ class CachedFrame(BaseModel):
     entry: BufferEntry  # 原始帧数据
     quality: float = 0.0  # 质量评分
     embedding: np.ndarray | None = None  # 特征向量
-
     enrolled: bool = False  # 是否已入库 (防止重复入库)
 
 

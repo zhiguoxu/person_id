@@ -3,7 +3,7 @@
  *
  * 使用事件委托自动拦截所有 <img> 点击,
  * 弹出大图预览遮罩层, 支持下载按钮。
- * 如果图片有 data-face-bbox 属性, 在预览时叠加人脸框线。
+ * 如果图片有 data-overlay-bbox 属性, 在预览时叠加框线。
  * 下载始终为原图 (不含框线)。
  */
 (function () {
@@ -39,7 +39,7 @@
     // =========================================================================
     // 打开 / 关闭
     // =========================================================================
-    function open(src, faceBbox) {
+    function open(src, overlayBbox, boxColor) {
         lightboxImg.src = src;
         downloadBtn.href = src;
 
@@ -52,10 +52,10 @@
         lightboxCanvas.height = 0;
         lightboxCanvas.style.display = 'none';
 
-        // 如果有 face_bbox, 图片加载后画框
-        if (faceBbox) {
+        // 如果有 overlay_bbox, 图片加载后画框
+        if (overlayBbox) {
             lightboxImg.onload = () => {
-                _drawFaceBbox(faceBbox);
+                _drawOverlayBbox(overlayBbox, boxColor || '#00e5ff');
                 lightboxImg.onload = null;
             };
         }
@@ -63,7 +63,7 @@
         overlay.classList.remove('hidden');
     }
 
-    function _drawFaceBbox(bbox) {
+    function _drawOverlayBbox(bbox, color) {
         const imgW = lightboxImg.naturalWidth;
         const imgH = lightboxImg.naturalHeight;
         const displayW = lightboxImg.offsetWidth;
@@ -86,9 +86,9 @@
 
         const ctx = lightboxCanvas.getContext('2d');
         ctx.clearRect(0, 0, displayW, displayH);
-        ctx.strokeStyle = '#00e5ff';
+        ctx.strokeStyle = color;
         ctx.lineWidth = 2;
-        ctx.shadowColor = 'rgba(0, 229, 255, 0.5)';
+        ctx.shadowColor = color.replace(')', ', 0.5)').replace('rgb', 'rgba');
         ctx.shadowBlur = 6;
         ctx.strokeRect(
             x1 * scale + offsetX, y1 * scale + offsetY,
@@ -130,15 +130,17 @@
 
         e.stopPropagation();
 
-        // 检查是否有 face_bbox 数据
-        let faceBbox = null;
-        if (img.dataset.faceBbox) {
+        // 检查是否有 overlay_bbox 数据
+        let overlayBbox = null;
+        let boxColor = null;
+        if (img.dataset.overlayBbox) {
             try {
-                faceBbox = JSON.parse(img.dataset.faceBbox);
+                overlayBbox = JSON.parse(img.dataset.overlayBbox);
+                boxColor = img.dataset.boxColor || '#00e5ff';
             } catch { /* ignore */ }
         }
 
-        open(img.src, faceBbox);
+        open(img.src, overlayBbox, boxColor);
     });
 
     // 暴露全局 API (供其他模块主动调用)

@@ -189,7 +189,7 @@ async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
                 quality_score=round(entry.quality_score, 3),
                 timestamp=entry.timestamp,
                 source_image_b64=base64.b64encode(entry.source_image).decode('ascii') if entry.source_image else None,
-                face_bbox=entry.face_bbox,
+                overlay_bbox=entry.overlay_bbox,
             )
             for entry in entries
         ]
@@ -204,6 +204,7 @@ async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
                 quality_score=round(entry.quality_score, 3),
                 timestamp=entry.timestamp,
                 source_image_b64=base64.b64encode(entry.source_image).decode('ascii') if entry.source_image else None,
+                overlay_bbox=entry.overlay_bbox,
             )
             for entry in entries
         ]

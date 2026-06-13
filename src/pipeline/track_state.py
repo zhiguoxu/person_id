@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import cv2
 import numpy as np
 
 from loguru import logger
@@ -163,6 +164,10 @@ class TrackState(BaseModel):
                 face_assess_ms = (time.perf_counter() - t_assess) * 1000
                 face_quality = 0.8 * edifiqa_score + 0.2 * blur
 
+        # 编码全帧 PNG 快照 (body 入库时作为 source_image 展示原图, 无损)
+        _, frame_buf = cv2.imencode('.png', frame)
+        frame_snapshot = frame_buf.tobytes()
+
         entry = BufferEntry(
             timestamp=time.time(),
             crop=crop,
@@ -174,6 +179,7 @@ class TrackState(BaseModel):
             aligned_face=aligned_face,
             face_bbox=face_bbox,
             face_kps=face_kps,
+            frame_snapshot=frame_snapshot,
         )
         self.buffer.push(entry)
         return face_detect_ms, face_assess_ms

@@ -394,19 +394,28 @@ class PersonGallery {
 
         // Image or placeholder
         if (entry.source_image_b64) {
-            if (featureType === 'face' && entry.face_bbox) {
-                // 用 canvas 叠加人脸框线
+            if (entry.overlay_bbox) {
+                // 用 canvas 叠加框线 (face: 青色, body: 亮绿色)
                 const wrapper = document.createElement('div');
                 wrapper.className = 'gd-feature-img-wrapper';
 
                 const img = document.createElement('img');
                 img.className = 'gd-feature-img';
-                img.src = `data:image/jpeg;base64,${entry.source_image_b64}`;
+                // body 全帧图用 contain 确保框线位置正确
+                if (featureType === 'body') {
+                    img.style.objectFit = 'contain';
+                    img.style.backgroundColor = '#1a1a2e';
+                }
+                img.src = `data:image/png;base64,${entry.source_image_b64}`;
                 img.alt = entry.pose_bucket;
-                img.dataset.faceBbox = JSON.stringify(entry.face_bbox);
+                img.dataset.overlayBbox = JSON.stringify(entry.overlay_bbox);
+                img.dataset.boxColor = featureType === 'body' ? '#76ff03' : '#00e5ff';
 
                 const canvas = document.createElement('canvas');
                 canvas.className = 'gd-feature-canvas';
+
+                const boxColor = featureType === 'body' ? '#76ff03' : '#00e5ff';
+                const lineWidth = featureType === 'body' ? 2.5 : 2;
 
                 img.onload = () => {
                     const naturalW = img.naturalWidth;
@@ -417,20 +426,25 @@ class PersonGallery {
                     canvas.width = displayW;
                     canvas.height = displayH;
 
-                    // object-fit: cover 缩放计算
-                    // cover 模式取较大缩放比, 图像居中裁切
-                    const scale = Math.max(displayW / naturalW, displayH / naturalH);
+                    // 根据 object-fit 模式计算缩放
+                    let scale, offsetX, offsetY;
+                    if (featureType === 'body') {
+                        // contain: 取较小缩放比, 图像完整显示
+                        scale = Math.min(displayW / naturalW, displayH / naturalH);
+                    } else {
+                        // cover: 取较大缩放比, 图像居中裁切
+                        scale = Math.max(displayW / naturalW, displayH / naturalH);
+                    }
                     const renderedW = naturalW * scale;
                     const renderedH = naturalH * scale;
-                    // 居中偏移 (被裁切的部分)
-                    const offsetX = (displayW - renderedW) / 2;
-                    const offsetY = (displayH - renderedH) / 2;
+                    offsetX = (displayW - renderedW) / 2;
+                    offsetY = (displayH - renderedH) / 2;
 
-                    const [x1, y1, x2, y2] = entry.face_bbox;
+                    const [x1, y1, x2, y2] = entry.overlay_bbox;
 
                     const ctx = canvas.getContext('2d');
-                    ctx.strokeStyle = '#00e5ff';
-                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = boxColor;
+                    ctx.lineWidth = lineWidth;
                     ctx.strokeRect(
                         x1 * scale + offsetX, y1 * scale + offsetY,
                         (x2 - x1) * scale, (y2 - y1) * scale
@@ -443,7 +457,7 @@ class PersonGallery {
             } else {
                 const img = document.createElement('img');
                 img.className = 'gd-feature-img';
-                img.src = `data:image/jpeg;base64,${entry.source_image_b64}`;
+                img.src = `data:image/png;base64,${entry.source_image_b64}`;
                 img.alt = entry.pose_bucket;
                 card.appendChild(img);
             }

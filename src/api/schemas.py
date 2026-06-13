@@ -133,7 +133,7 @@ class FeatureEntryInfo(BaseModel):
     quality_score: float
     timestamp: float
     source_image_b64: str | None = None
-    face_bbox: list[float] | None = None  # [x1,y1,x2,y2] 相对于 source_image
+    overlay_bbox: list[float] | None = None  # [x1,y1,x2,y2] 叠加框 (人脸框或人体框)
 
 
 class OutfitInfo(BaseModel):

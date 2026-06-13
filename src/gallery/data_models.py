@@ -57,7 +57,7 @@ class FeatureEntry(BaseModel):
     quality_score: float  # 综合质量分 [0, 1]
     timestamp: float  # 提取时间 (Unix timestamp)
     source_image: bytes | None = None  # JPEG 缩略图, 供 VLM 使用
-    face_bbox: list[float] | None = None  # 人脸框 [x1,y1,x2,y2] 相对于 source_image
+    overlay_bbox: list[float] | None = None  # 叠加框 [x1,y1,x2,y2] 相对于 source_image (人脸框或人体框)
 
     def time_decay_weight(self, now: float, half_life_days: float) -> float:
         """计算时间衰减权重 (指数衰减)"""

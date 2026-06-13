@@ -45,16 +45,16 @@ def entry_to_feature_row(
         quality_score=entry.quality_score,
         timestamp=entry.timestamp,
         source_image=entry.source_image,
-        face_bbox=json.dumps(entry.face_bbox) if entry.face_bbox else None,
+        overlay_bbox=json.dumps(entry.overlay_bbox) if entry.overlay_bbox else None,
     )
 
 
 def feature_row_to_entry(row: FeatureRowBase) -> FeatureEntry:
     """FeatureRow → FeatureEntry 转换。"""
-    face_bbox = None
-    if row.face_bbox:
+    overlay_bbox = None
+    if row.overlay_bbox:
         try:
-            face_bbox = json.loads(row.face_bbox)
+            overlay_bbox = json.loads(row.overlay_bbox)
         except (json.JSONDecodeError, TypeError):
             pass
     return FeatureEntry(
@@ -63,7 +63,7 @@ def feature_row_to_entry(row: FeatureRowBase) -> FeatureEntry:
         quality_score=row.quality_score,
         timestamp=row.timestamp,
         source_image=row.source_image,
-        face_bbox=face_bbox,
+        overlay_bbox=overlay_bbox,
     )
 
 
