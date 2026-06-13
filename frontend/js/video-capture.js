@@ -46,13 +46,16 @@ class VideoCapture {
     }
 
     /**
-     * 枚举可用本地摄像头设备
+     * 枚举可用本地摄像头设备 (保留 stream 供 start 复用，避免二次弹窗)
      */
     async enumerateDevices() {
         try {
-            // 先请求权限
-            const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-            tempStream.getTracks().forEach(t => t.stop());
+            // 请求权限并保留 stream (使用正式采集的分辨率)
+            // this._pendingStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            this._pendingStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+                audio: false,
+            });
 
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoDevices = devices.filter(d => d.kind === 'videoinput');
@@ -95,28 +98,36 @@ class VideoCapture {
      * 开始本地摄像头采集
      */
     async _startLocalCamera(deviceId = null) {
-        const constraints = {
-            video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                frameRate: { ideal: 30 },
-            },
-            audio: false,
-        };
-
-        if (deviceId) {
-            constraints.video.deviceId = { exact: deviceId };
-        }
-
         try {
-            this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+            // 复用 enumerateDevices 保留的 stream (避免二次权限弹窗)
+            if (this._pendingStream && !deviceId) {
+                this.stream = this._pendingStream;
+                this._pendingStream = null;
+            } else {
+                // 释放之前的 pending stream
+                if (this._pendingStream) {
+                    this._pendingStream.getTracks().forEach(t => t.stop());
+                    this._pendingStream = null;
+                }
+                const constraints = {
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 30 },
+                    },
+                    audio: false,
+                };
+                if (deviceId) {
+                    constraints.video.deviceId = { exact: deviceId };
+                }
+                this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+            }
+
             this.videoEl.srcObject = this.stream;
             await this.videoEl.play();
 
             this.capturing = true;
             document.getElementById('no-camera-message').classList.add('hidden');
-
-            // 开始帧发送循环
             this._startFrameLoop();
 
             console.log('[Camera] Local camera started');
@@ -302,56 +313,87 @@ class VideoCapture {
     }
 
     /**
-     * 帧发送循环 (受背压控制)
+     * 帧发送循环 (事件驱动 + 预编码，最大化吞吐)
+     *
+     * 策略: 在等待后端响应期间预先编码下一帧 (toBlob),
+     * 响应到达后立即发送预编码好的 blob, 消除 idle 等待。
      */
     _startFrameLoop() {
         if (this.frameTimer) clearInterval(this.frameTimer);
+        if (this._adjustTimer) clearInterval(this._adjustTimer);
+        this._pendingBlob = null;  // 预编码好的下一帧
 
+        // 定时预编码: 持续捕获最新帧备用
         this.frameTimer = setInterval(() => {
             if (!this.capturing || !window.wsManager.connected) return;
-
-            this._captureAndSend();
+            this._preEncode();
         }, window.wsManager.frameInterval);
 
-        // 动态调整发送频率 (每 2s 检查一次 frameInterval 是否变化)
-        if (this._adjustTimer) clearInterval(this._adjustTimer);
+        // 动态调整预编码频率
         this._adjustTimer = setInterval(() => {
             if (this.frameTimer && this.capturing) {
                 clearInterval(this.frameTimer);
                 this.frameTimer = setInterval(() => {
                     if (!this.capturing || !window.wsManager.connected) return;
-                    this._captureAndSend();
+                    this._preEncode();
                 }, window.wsManager.frameInterval);
             }
         }, 2000);
     }
 
-    _captureAndSend() {
-        if (this.videoEl.readyState < 2) return; // HAVE_CURRENT_DATA
+    /**
+     * 预编码当前帧 (不发送, 仅保存 blob)
+     */
+    _preEncode() {
+        if (this.videoEl.readyState < 2) return;
 
-        // 动态检测视频的原始宽高比并适配 (防止图像形变)
         const vw = this.videoEl.videoWidth;
         const vh = this.videoEl.videoHeight;
-        
+
         if (vw > 0 && vh > 0) {
             const targetW = Math.min(this.maxCaptureWidth, vw);
             const targetH = Math.round(targetW * (vh / vw));
-            
-            // 只有尺寸变化时才重新设置 canvas
+
             if (this.captureCanvas.width !== targetW || this.captureCanvas.height !== targetH) {
                 this.captureCanvas.width = targetW;
                 this.captureCanvas.height = targetH;
             }
         }
 
-        // 绘制当前画面
         this.captureCtx.drawImage(this.videoEl, 0, 0, this.captureCanvas.width, this.captureCanvas.height);
 
         this.captureCanvas.toBlob((blob) => {
             if (blob) {
-                window.wsManager.sendFrame(blob);
+                this._pendingBlob = blob;
+                // 如果没有帧在飞行中, 立即发送
+                this._trySendPending();
             }
         }, 'image/jpeg', 0.7);
+    }
+
+    /**
+     * 尝试发送预编码好的帧 (由预编码回调和 onResult 触发)
+     */
+    _trySendPending() {
+        if (this._pendingBlob && !window.wsManager.pendingFrame && window.wsManager.connected) {
+            const blob = this._pendingBlob;
+            this._pendingBlob = null;
+            window.wsManager.sendFrame(blob);
+            // 发送后立即开始编码下一帧 (与后端处理并行)
+            this._preEncode();
+        }
+    }
+
+    /**
+     * 后端结果到达时调用 (由 app.js 在 onResult 中调用)
+     */
+    onResultReceived() {
+        if (this._pendingBlob) {
+            this._trySendPending();
+        } else {
+            // 没有预编码好的帧, 立即开始编码
+            this._preEncode();
+        }
     }
 
     /**

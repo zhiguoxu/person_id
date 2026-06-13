@@ -354,18 +354,18 @@
                 const data = await response.json();
                 if (data.params) {
                     window.controlsPanel.initialize(data.params);
-                    // 同步开关状态
-                    const correctionToggle = document.getElementById('toggle-correction');
-                    if (correctionToggle && data.params.IMAGE_CORRECTION_ENABLED) {
-                        correctionToggle.checked = !!data.params.IMAGE_CORRECTION_ENABLED.value;
-                    }
                 }
-                // 质量阈值 (供 quality cache 颜色判断使用)
+                // flags: 非滑块控制的配置项
                 if (data.flags) {
                     window.QUALITY_THRESHOLDS = {
                         face: data.flags.AGG_MIN_FACE_QUALITY ?? 0.3,
                         body: data.flags.AGG_MIN_BODY_QUALITY ?? 0.2,
                     };
+                    // 同步畸变矫正开关状态
+                    const correctionToggle = document.getElementById('toggle-correction');
+                    if (correctionToggle && data.flags.IMAGE_CORRECTION_ENABLED != null) {
+                        correctionToggle.checked = !!data.flags.IMAGE_CORRECTION_ENABLED;
+                    }
                 }
                 console.log('[App] Config loaded from server:', window.BACKEND_CONFIG.baseUrl);
             }

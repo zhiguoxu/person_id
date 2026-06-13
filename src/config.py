@@ -158,7 +158,7 @@ class ServerConfig(BaseModel):
     gallery_db_path: str = str(DATA_DIR / "gallery.db")
 
     # 图像矫正
-    image_correction_enabled: bool = True  # 是否启用镜头畸变矫正
+    image_correction_enabled: bool = False  # 是否启用镜头畸变矫正
 
     # ISS 直播流 API
     iss_api_url: str = "http://42.192.205.141:8999"  # ISS 服务地址
@@ -222,7 +222,6 @@ class Config(BaseModel):
         "C_THRESHOLD": ("matching", "C_threshold", 0, 1, 0.01, "reid", "C Threshold (怀疑)"),
         "QUALITY_ENROLL_THRESHOLD": ("gallery", "quality_enroll_threshold", 0, 1, 0.05, "quality", "入库质量门槛"),
         "OUTFIT_MATCH_THRESHOLD": ("gallery", "outfit_match_threshold", 0, 1, 0.01, "matching", "衣橱匹配阈值"),
-        "IMAGE_CORRECTION_ENABLED": ("server", "image_correction_enabled", 0, 1, 1, "system", "镜头畸变矫正"),
     }
 
     def get_tunable_params(self) -> dict:
@@ -242,6 +241,8 @@ class Config(BaseModel):
         mapping: dict[str, tuple[BaseModel, str]] = {}
         for key, (section, attr, *_) in self._TUNABLE_DEFS.items():
             mapping[key] = (getattr(self, section), attr)
+        # 仅通过顶部按钮控制, 不在 Controls 面板显示
+        mapping["IMAGE_CORRECTION_ENABLED"] = (self.server, "image_correction_enabled")
         return mapping
 
 

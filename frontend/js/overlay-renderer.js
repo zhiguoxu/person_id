@@ -270,9 +270,21 @@ class OverlayRenderer {
         const metrics = ctx.measureText(text);
         const textW = metrics.width + 12;
         const textH = 20;
+        const gap = 4;
 
-        const x = bbox[0];
-        const y = bbox[1] - textH - 4;
+        let x = bbox[0];
+        let y = bbox[1] - textH - gap;
+
+        // 边界保护: 上方放不下 → 放到框内顶部
+        if (y < 0) {
+            y = bbox[1] + gap;
+        }
+        // 右侧超出 → 左移
+        if (x + textW > this.canvas.width) {
+            x = this.canvas.width - textW;
+        }
+        // 左侧超出
+        if (x < 0) x = 0;
 
         // 背景
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -301,12 +313,26 @@ class OverlayRenderer {
         };
 
         const emoji = badgeMap[poseBucket] || '?';
-        const x = bbox[2] + 4;
-        const y = bbox[1] + 4;
+        const badgeW = 22;
+        const badgeH = 16;
+
+        let x = bbox[2] + 4;
+        let y = bbox[1] + 4;
+
+        // 右侧超出 → 放到框内右上角
+        if (x + badgeW > this.canvas.width) {
+            x = bbox[2] - badgeW - 4;
+        }
+        // 上方超出
+        if (y < 0) y = 0;
+        // 下方超出
+        if (y + badgeH > this.canvas.height) {
+            y = this.canvas.height - badgeH;
+        }
 
         ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
         ctx.beginPath();
-        ctx.roundRect(x, y, 22, 16, 3);
+        ctx.roundRect(x, y, badgeW, badgeH, 3);
         ctx.fill();
 
         ctx.fillStyle = '#ffffff';

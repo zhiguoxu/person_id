@@ -800,6 +800,15 @@ h1, h2, h3 {
     to { transform: translateX(0); opacity: 1; }
 }
 
+.event-card--moving {
+    animation: card-settle 0.25s ease-out;
+}
+
+@keyframes card-settle {
+    0%   { opacity: 0.5; transform: translateY(-4px); }
+    100% { opacity: 1;   transform: translateY(0); }
+}
+
 .event-dot {
     width: 7px;
     height: 7px;
@@ -1606,12 +1615,29 @@ h1, h2, h3 {
     max-height: 90vh;
 }
 
+.lightbox-img-container {
+    position: relative;
+    display: inline-flex;
+    max-width: 90vw;
+    max-height: 82vh;
+}
+
 .lightbox-img {
     max-width: 90vw;
     max-height: 82vh;
     object-fit: contain;
     border-radius: 6px;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+
+.lightbox-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    border-radius: 6px;
 }
 
 .lightbox-toolbar {

@@ -403,6 +403,7 @@ class PersonGallery {
                 img.className = 'gd-feature-img';
                 img.src = `data:image/jpeg;base64,${entry.source_image_b64}`;
                 img.alt = entry.pose_bucket;
+                img.dataset.faceBbox = JSON.stringify(entry.face_bbox);
 
                 const canvas = document.createElement('canvas');
                 canvas.className = 'gd-feature-canvas';

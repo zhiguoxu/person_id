@@ -85,6 +85,8 @@ class WebSocketManager {
 
             if (msg.type === 'frame_result') {
                 this.pendingFrame = false; // 允许发送下一帧
+                // 立即触发下一帧发送 (在 UI 更新之前, 避免被 DOM 操作阻塞)
+                window.videoCapture?.onResultReceived();
                 this._updateStats(msg);
                 if (this.onResult) this.onResult(msg);
             } else if (msg.type === 'event') {
@@ -173,14 +175,14 @@ class WebSocketManager {
         }
         this.lastResultTime = now;
 
-        if (result.processing_time_ms) {
-            this.latencyHistory.push(result.processing_time_ms);
+        if (result.processing_ms) {
+            this.latencyHistory.push(result.processing_ms);
             if (this.latencyHistory.length > 30) this.latencyHistory.shift();
 
             // 自适应帧率
-            if (result.processing_time_ms < 50) {
+            if (result.processing_ms < 50) {
                 this.frameInterval = Math.max(this.frameInterval - 5, this.minInterval);
-            } else if (result.processing_time_ms > 100) {
+            } else if (result.processing_ms > 100) {
                 this.frameInterval = Math.min(this.frameInterval + 10, this.maxInterval);
             }
         }

@@ -70,9 +70,17 @@ class EventsTimeline {
         const existingCard = this._trackCards.get(trackKey);
 
         if (existingCard && existingCard.parentNode === this.container) {
-            // 合并到已有卡片，并置顶
+            // 合并到已有卡片
             this._appendScore(existingCard, event);
-            this.container.insertBefore(existingCard, this.container.firstChild);
+            // 只在不是第一个时才置顶
+            if (existingCard !== this.container.firstElementChild) {
+                existingCard.classList.add('event-card--moving');
+                this.container.insertBefore(existingCard, this.container.firstChild);
+                // 动画结束后移除 class
+                existingCard.addEventListener('animationend', () => {
+                    existingCard.classList.remove('event-card--moving');
+                }, { once: true });
+            }
         } else {
             // 新建卡片
             this._renderEvent(event);

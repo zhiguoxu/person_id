@@ -3,7 +3,8 @@
  *
  * 使用事件委托自动拦截所有 <img> 点击,
  * 弹出大图预览遮罩层, 支持下载按钮。
- * 排除 video, canvas, overlay 等非图片元素。
+ * 如果图片有 data-face-bbox 属性, 在预览时叠加人脸框线。
+ * 下载始终为原图 (不含框线)。
  */
 (function () {
     'use strict';
@@ -17,7 +18,10 @@
     overlay.innerHTML = `
         <div class="lightbox-backdrop"></div>
         <div class="lightbox-body">
-            <img class="lightbox-img" alt="Preview" />
+            <div class="lightbox-img-container">
+                <img class="lightbox-img" alt="Preview" />
+                <canvas class="lightbox-canvas"></canvas>
+            </div>
             <div class="lightbox-toolbar">
                 <a class="lightbox-btn lightbox-download" title="Download" download="image.jpg">
                     ⬇ Download
@@ -29,12 +33,13 @@
     document.body.appendChild(overlay);
 
     const lightboxImg = overlay.querySelector('.lightbox-img');
+    const lightboxCanvas = overlay.querySelector('.lightbox-canvas');
     const downloadBtn = overlay.querySelector('.lightbox-download');
 
     // =========================================================================
     // 打开 / 关闭
     // =========================================================================
-    function open(src) {
+    function open(src, faceBbox) {
         lightboxImg.src = src;
         downloadBtn.href = src;
 
@@ -42,12 +47,60 @@
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         downloadBtn.download = `vision-id-${ts}.jpg`;
 
+        // 清除旧的 canvas
+        lightboxCanvas.width = 0;
+        lightboxCanvas.height = 0;
+        lightboxCanvas.style.display = 'none';
+
+        // 如果有 face_bbox, 图片加载后画框
+        if (faceBbox) {
+            lightboxImg.onload = () => {
+                _drawFaceBbox(faceBbox);
+                lightboxImg.onload = null;
+            };
+        }
+
         overlay.classList.remove('hidden');
+    }
+
+    function _drawFaceBbox(bbox) {
+        const imgW = lightboxImg.naturalWidth;
+        const imgH = lightboxImg.naturalHeight;
+        const displayW = lightboxImg.offsetWidth;
+        const displayH = lightboxImg.offsetHeight;
+
+        if (!displayW || !displayH) return;
+
+        lightboxCanvas.width = displayW;
+        lightboxCanvas.height = displayH;
+        lightboxCanvas.style.display = 'block';
+
+        // object-fit: contain 缩放计算
+        const scale = Math.min(displayW / imgW, displayH / imgH);
+        const renderedW = imgW * scale;
+        const renderedH = imgH * scale;
+        const offsetX = (displayW - renderedW) / 2;
+        const offsetY = (displayH - renderedH) / 2;
+
+        const [x1, y1, x2, y2] = bbox;
+
+        const ctx = lightboxCanvas.getContext('2d');
+        ctx.clearRect(0, 0, displayW, displayH);
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = 'rgba(0, 229, 255, 0.5)';
+        ctx.shadowBlur = 6;
+        ctx.strokeRect(
+            x1 * scale + offsetX, y1 * scale + offsetY,
+            (x2 - x1) * scale, (y2 - y1) * scale
+        );
     }
 
     function close() {
         overlay.classList.add('hidden');
         lightboxImg.src = '';
+        lightboxImg.onload = null;
+        lightboxCanvas.style.display = 'none';
     }
 
     // 点击遮罩关闭
@@ -76,7 +129,16 @@
         if (img.closest('.candidate-card')) return;
 
         e.stopPropagation();
-        open(img.src);
+
+        // 检查是否有 face_bbox 数据
+        let faceBbox = null;
+        if (img.dataset.faceBbox) {
+            try {
+                faceBbox = JSON.parse(img.dataset.faceBbox);
+            } catch { /* ignore */ }
+        }
+
+        open(img.src, faceBbox);
     });
 
     // 暴露全局 API (供其他模块主动调用)
