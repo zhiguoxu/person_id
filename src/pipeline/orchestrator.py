@@ -390,8 +390,8 @@ class VisionOrchestrator(BaseModel):
                     source_image = buf.tobytes()
                 else:
                     # 人体特征: source_image = 全帧原图, overlay_bbox = body bbox (全帧坐标系)
-                    source_image = cf.entry.frame_snapshot
-                    # bbox 是原始帧坐标, 直接使用
+                    _, buf = cv2.imencode('.png', cf.entry.frame_snapshot)
+                    source_image = buf.tobytes()
                     bx = cf.entry.bbox
                     overlay_bbox = [
                         float(bx[0]), float(bx[1]),

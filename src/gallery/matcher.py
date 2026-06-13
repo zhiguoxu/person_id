@@ -43,7 +43,7 @@ def match_face(query_faces: dict[PoseBucket, tuple[np.ndarray, float]],
         if not centroids:
             continue
 
-        best_score = -1.0
+        best_score = -1000.0
         best_quality = 0.0
 
         for g_bucket, centroid in centroids.items():
@@ -53,7 +53,7 @@ def match_face(query_faces: dict[PoseBucket, tuple[np.ndarray, float]],
                     best_score = cos_sim
                     best_quality = q_quality
 
-        if best_score > 0.0:
+        if best_score > -1000:  # 允许分数是负的
             candidates.append(MatchCandidate(
                 person_id=person_id,
                 display_name=profile.display_name,

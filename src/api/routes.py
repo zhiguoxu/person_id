@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import base64
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from loguru import logger
 from src.api.registry import get_camera_orchestrator
 from src.config import get_config as _get_config
 
 from src.api.schemas import (
+    BodyQualityTestResponse,
     CachedFrameInfo,
     ConfigResponse,
     ConfigUpdateRequest,
@@ -32,6 +33,10 @@ from src.api.schemas import (
     TunableParam,
 )
 from src.pipeline.frame_buffer import CachedFrame
+from src.tier1.detection import get_fast_detector
+from src.pipeline.quality_utils import compute_quality_hint, compute_sharpness
+import cv2
+import numpy as np
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -166,6 +171,62 @@ async def list_persons(camera_id: str) -> PersonListResponse:
 
     persons.sort(key=lambda p: p.last_updated, reverse=True)
     return PersonListResponse(persons=persons, total=len(persons))
+
+
+# ==============================================================================
+# Debug / Testing API
+# ==============================================================================
+
+@router.post("/test_body_quality", response_model=BodyQualityTestResponse)
+async def test_body_quality(file: UploadFile = File(...)) -> BodyQualityTestResponse:
+    """测试单张图片的 body quality 计算细节 (包含 hint 和 sharpness)。"""
+    try:
+        image_bytes = await file.read()
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            return BodyQualityTestResponse(has_person=False, error="Failed to decode image")
+
+        detector = get_fast_detector()
+        detections = detector.detect(frame)
+
+        if not detections:
+            return BodyQualityTestResponse(has_person=False)
+
+        # 取置信度最高的检测结果
+        det = detections[0]
+        if det.bbox is None:
+            return BodyQualityTestResponse(has_person=False)
+
+        h_f, w_f = frame.shape[:2]
+
+        # 1. 计算 quality_hint
+        q_hint = compute_quality_hint(det.bbox, det.keypoints, (h_f, w_f))
+
+        # 2. 提取 crop
+        x1 = max(0, int(det.bbox[0]))
+        y1 = max(0, int(det.bbox[1]))
+        x2 = min(w_f, int(det.bbox[2]))
+        y2 = min(h_f, int(det.bbox[3]))
+        crop = frame[y1:y2, x1:x2].copy()
+
+        # 3. 计算 sharpness
+        sharpness = compute_sharpness(crop) if crop.size > 0 else 0.0
+
+        # 4. 计算最终 quality (和 tier2/batch_extractor.py 逻辑一致)
+        final_quality = 0.75 * q_hint + 0.25 * sharpness
+
+        return BodyQualityTestResponse(
+            has_person=True,
+            quality=final_quality,
+            quality_hint=q_hint,
+            sharpness=sharpness,
+            bbox=det.bbox.tolist()
+        )
+    except Exception as e:
+        logger.exception("Error testing body quality")
+        return BodyQualityTestResponse(has_person=False, error=str(e))
 
 
 @router.get("/{camera_id}/gallery/person/{person_id}", response_model=PersonDetailResponse)

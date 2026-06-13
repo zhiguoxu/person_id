@@ -164,9 +164,8 @@ class TrackState(BaseModel):
                 face_assess_ms = (time.perf_counter() - t_assess) * 1000
                 face_quality = 0.8 * edifiqa_score + 0.2 * blur
 
-        # 编码全帧 PNG 快照 (body 入库时作为 source_image 展示原图, 无损)
-        _, frame_buf = cv2.imencode('.png', frame)
-        frame_snapshot = frame_buf.tobytes()
+        # 保存全帧引用，入库时再进行 PNG 编码以节省性能
+        frame_snapshot = frame.copy()
 
         entry = BufferEntry(
             timestamp=time.time(),

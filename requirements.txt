@@ -26,6 +26,7 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.6.0
 websockets>=12.0
+python-multipart>=0.0.9
 
 # --- VLM 仲裁 ---
 openai>=1.14.0

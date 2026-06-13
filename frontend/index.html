@@ -36,6 +36,7 @@
                     <span class="latency-value">0</span>
                     <span class="latency-label">ms</span>
                 </div>
+                <button id="btn-open-test-quality" class="btn btn-xs" title="Test Body Quality">🧪 Test</button>
             </div>
         </div>
     </header>
@@ -250,6 +251,37 @@
     </div>
 
     <!-- ================================================================== -->
+    <!-- MODAL: Test Body Quality -->
+    <!-- ================================================================== -->
+    <div id="test-quality-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3>Test Body Quality</h3>
+                <button class="modal-close" id="test-quality-modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="test-quality-modal-body">
+                <div class="form-group">
+                    <label for="test-quality-file" class="btn btn-primary" style="display: inline-block; cursor: pointer;">
+                        📸 Choose Image
+                    </label>
+                    <input type="file" id="test-quality-file" accept="image/*" style="display: none;">
+                    <span id="test-quality-filename" style="margin-left: 10px; font-size: 13px; color: var(--text-muted);">No file selected</span>
+                </div>
+                
+                <div id="test-quality-preview-container" class="hidden" style="margin-top: 15px; position: relative; text-align: center; background: var(--bg-surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border-color);">
+                    <img id="test-quality-preview-img" style="max-width: 100%; max-height: 400px; border-radius: 4px;">
+                    <canvas id="test-quality-preview-canvas" style="position: absolute; top: 10px; left: 50%; transform: translateX(-50%); pointer-events: none;"></canvas>
+                </div>
+
+                <div id="test-quality-result" class="hidden" style="margin-top: 15px; padding: 15px; background: var(--bg-panel); border-radius: 8px; border: 1px solid var(--border-color);">
+                    <!-- Results populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
     <!-- SCRIPTS -->
     <!-- ================================================================== -->
     <!-- FLV.js for FLV live stream playback -->
@@ -263,6 +295,7 @@
     <script src="js/events-timeline.js"></script>
     <script src="js/person-gallery.js"></script>
     <script src="js/image-lightbox.js"></script>
+    <script src="js/test-body-quality.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

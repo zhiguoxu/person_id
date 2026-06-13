@@ -206,3 +206,12 @@ class WSError(BaseModel):
     type: str = "error"
     message: str
     code: str = "unknown"
+
+class BodyQualityTestResponse(BaseModel):
+    """测试 body quality 的返回结果"""
+    has_person: bool
+    quality: float | None = None
+    quality_hint: float | None = None
+    sharpness: float | None = None
+    bbox: list[float] | None = None
+    error: str | None = None

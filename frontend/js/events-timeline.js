@@ -343,10 +343,6 @@ class EventsTimeline {
                     <th>Face</th>
                     <th>Body</th>
                     <th>Prop</th>
-                    <th>FQ</th>
-                    <th>BQ</th>
-                    <th>FW</th>
-                    <th>BW</th>
                 </tr>
             </thead>
         `;
@@ -358,10 +354,6 @@ class EventsTimeline {
             const face = c.face_score != null ? c.face_score.toFixed(3) : '—';
             const body = c.body_score != null ? c.body_score.toFixed(3) : '—';
             const prop = c.proportion_score != null ? c.proportion_score.toFixed(3) : '—';
-            const fq = c.face_match_quality != null ? c.face_match_quality.toFixed(2) : '—';
-            const bq = c.body_match_quality != null ? c.body_match_quality.toFixed(2) : '—';
-            const fw = c.face_weight != null ? c.face_weight.toFixed(2) : '—';
-            const bw = c.body_weight != null ? c.body_weight.toFixed(2) : '—';
 
             tr.innerHTML = `
                 <td class="pop-name">${c.display_name || c.person_id || '?'}</td>
@@ -369,10 +361,6 @@ class EventsTimeline {
                 <td>${face}</td>
                 <td>${body}</td>
                 <td>${prop}</td>
-                <td>${fq}</td>
-                <td>${bq}</td>
-                <td>${fw}</td>
-                <td>${bw}</td>
             `;
             tbody.appendChild(tr);
         }
