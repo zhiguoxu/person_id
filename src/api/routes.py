@@ -23,6 +23,8 @@ from src.api.schemas import (
     ConfigUpdateRequest,
     ConfigUpdateResponse,
     ConfirmIdentityRequest,
+    FaceSimilarityFaceInfo,
+    FaceSimilarityTestResponse,
     FeatureEntryInfo,
     OutfitInfo,
     PersonDetailResponse,
@@ -33,7 +35,10 @@ from src.api.schemas import (
     TunableParam,
 )
 from src.pipeline.frame_buffer import CachedFrame
+from src.tier1.attention import select_best_detection
 from src.tier1.detection import get_fast_detector
+from src.tier1.face_detector_light import get_face_detector_light
+from src.tier2.features import get_face_extractor, get_edifiqa
 from src.pipeline.quality_utils import compute_quality_hint, compute_sharpness
 import cv2
 import numpy as np
@@ -194,8 +199,9 @@ async def test_body_quality(file: UploadFile = File(...)) -> BodyQualityTestResp
         if not detections:
             return BodyQualityTestResponse(has_person=False)
 
-        # 取置信度最高的检测结果
-        det = detections[0]
+        # 注意力选人: 1 人直接取, 多人按注意力评分选
+        best_idx = select_best_detection(detections, frame.shape)
+        det = detections[best_idx]
         if det.bbox is None:
             return BodyQualityTestResponse(has_person=False)
 
@@ -227,6 +233,118 @@ async def test_body_quality(file: UploadFile = File(...)) -> BodyQualityTestResp
     except Exception as e:
         logger.exception("Error testing body quality")
         return BodyQualityTestResponse(has_person=False, error=str(e))
+
+
+@router.post("/test_face_similarity", response_model=FaceSimilarityTestResponse)
+async def test_face_similarity(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+) -> FaceSimilarityTestResponse:
+    """测试两张图片的人脸相似度 (使用与底库匹配相同的 ArcFace/AdaFace + cosine similarity)。"""
+    try:
+        detector = get_fast_detector()
+        face_det = get_face_detector_light()
+        face_ext = get_face_extractor()
+        edifiqa = get_edifiqa()
+
+        def _process_image(image_bytes: bytes) -> tuple[FaceSimilarityFaceInfo, np.ndarray | None]:
+            """处理单张图片: 检测人体 → 检测人脸 → 对齐 → 提取嵌入。"""
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if frame is None:
+                return FaceSimilarityFaceInfo(has_face=False), None
+
+            h_f, w_f = frame.shape[:2]
+
+            # Step 1: 人体检测 (YOLO)
+            detections = detector.detect(frame)
+            if not detections or detections[0].bbox is None:
+                # 没检测到人体, 直接在全图检测人脸
+                face_result = face_det.get_aligned_face(frame)
+                if face_result is None:
+                    return FaceSimilarityFaceInfo(has_face=False), None
+                aligned, face_bbox_raw, kps = face_result
+                face_bbox = [float(face_bbox_raw[0]), float(face_bbox_raw[1]),
+                             float(face_bbox_raw[2]), float(face_bbox_raw[3])]
+                quality = edifiqa.predict(aligned)
+                _, buf = cv2.imencode('.jpg', aligned, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                aligned_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+                embedding = face_ext.extract_embedding(aligned)
+                return FaceSimilarityFaceInfo(
+                    has_face=True,
+                    person_bbox=None,
+                    face_bbox=face_bbox,
+                    face_quality=round(quality, 4),
+                    aligned_face_b64=aligned_b64,
+                ), embedding
+
+            # 注意力选人: 1 人直接取, 多人按注意力评分选
+            best_idx = select_best_detection(detections, frame.shape)
+            det = detections[best_idx]
+            x1 = max(0, int(det.bbox[0]))
+            y1 = max(0, int(det.bbox[1]))
+            x2 = min(w_f, int(det.bbox[2]))
+            y2 = min(h_f, int(det.bbox[3]))
+            person_bbox = [float(x1), float(y1), float(x2), float(y2)]
+            crop = frame[y1:y2, x1:x2].copy()
+
+            # Step 2: 在人体裁剪上检测人脸 (SCRFD)
+            face_result = face_det.get_aligned_face(crop)
+            if face_result is None:
+                return FaceSimilarityFaceInfo(has_face=False, person_bbox=person_bbox), None
+
+            aligned, face_bbox_raw, kps = face_result
+            # 人脸框从 crop 坐标转到原图坐标
+            face_bbox = [
+                float(face_bbox_raw[0]) + x1,
+                float(face_bbox_raw[1]) + y1,
+                float(face_bbox_raw[2]) + x1,
+                float(face_bbox_raw[3]) + y1,
+            ]
+
+            # Step 3: 人脸质量 (eDifFIQA)
+            quality = edifiqa.predict(aligned)
+
+            # 编码对齐人脸供前端显示
+            _, buf = cv2.imencode('.jpg', aligned, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            aligned_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+
+            # Step 4: 人脸嵌入 (ArcFace/AdaFace)
+            embedding = face_ext.extract_embedding(aligned)
+
+            return FaceSimilarityFaceInfo(
+                has_face=True,
+                person_bbox=person_bbox,
+                face_bbox=face_bbox,
+                face_quality=round(quality, 4),
+                aligned_face_b64=aligned_b64,
+            ), embedding
+
+        # 处理两张图片
+        bytes1 = await file1.read()
+        bytes2 = await file2.read()
+
+        info1, emb1 = _process_image(bytes1)
+        info2, emb2 = _process_image(bytes2)
+
+        # 计算相似度 (与 gallery matcher 一致的 cosine similarity)
+        similarity = None
+        if emb1 is not None and emb2 is not None:
+            similarity = round(float(np.dot(emb1, emb2)), 4)
+
+        return FaceSimilarityTestResponse(
+            face1=info1,
+            face2=info2,
+            similarity=similarity,
+        )
+
+    except Exception as e:
+        logger.exception("Error testing face similarity")
+        return FaceSimilarityTestResponse(
+            face1=FaceSimilarityFaceInfo(has_face=False),
+            face2=FaceSimilarityFaceInfo(has_face=False),
+            error=str(e),
+        )
 
 
 @router.get("/{camera_id}/gallery/person/{person_id}", response_model=PersonDetailResponse)

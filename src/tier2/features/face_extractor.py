@@ -1,64 +1,79 @@
 """
-人脸特征提取器
+人脸特征提取器 — ArcFace / AdaFace 可切换
 
-直接加载 ArcFace ONNX 模型 (w600k_r50.onnx from buffalo_l),
+通过配置 ``recognition_backend`` 在 ArcFace 和 AdaFace 之间切换。
+两者均使用 ONNX Runtime 直接推理, 不依赖 insightface.model_zoo。
+
 从预对齐的 112×112 人脸提取 512 维 L2 归一化嵌入向量。
 
 Tier1 SCRFD 已完成人脸检测 + 对齐 (aligned_face 112×112),
-本模块只负责 ArcFace embedding 提取, 不再重复检测。
+本模块只负责 embedding 提取, 不再重复检测。
+
+支持的后端:
+- arcface: InsightFace w600k_r50 (BGR→RGB, normalize [-1,1])
+- adaface: AdaFace IR-101 (BGR 直接输入, normalize [-1,1])
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import numpy as np
 from loguru import logger
 
-from src.config import get_config
+from src.config import get_config, MODELS_DIR
 
 
 class FaceExtractor:
-    """ArcFace 人脸嵌入提取器。
+    """人脸嵌入提取器 — 支持 ArcFace / AdaFace 后端切换。
 
-    直接加载 ArcFace ONNX 模型, 从预对齐的 112×112 人脸
+    通过 ONNX Runtime 直接加载模型, 从预对齐的 112×112 人脸
     提取 512 维 L2 归一化特征向量。
 
-    绕过 FaceAnalysis (它强制要求 detection 模块),
-    直接通过 insightface.model_zoo 加载 recognition 模型。
+    两种后端的预处理差异:
+    - ArcFace: BGR → RGB → normalize to [-1, 1]
+    - AdaFace: BGR → normalize to [-1, 1] (不做通道翻转)
     """
 
     def __init__(self) -> None:
-        """初始化 ArcFace 嵌入提取器。"""
+        """初始化人脸嵌入提取器。"""
         config = get_config().face
+        self._backend = config.recognition_backend
+
+        # 选择模型文件
+        if self._backend == "arcface":
+            model_file = config.arcface_model
+        elif self._backend == "adaface":
+            model_file = config.adaface_model
+        else:
+            raise ValueError(
+                f"Unknown recognition_backend: '{self._backend}'. "
+                "Supported: 'arcface', 'adaface'"
+            )
+
+        model_path = MODELS_DIR / model_file
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Face recognition model not found: {model_path}. "
+                "Run: bash download_models.sh"
+            )
 
         try:
-            import insightface
-
-            # 直接加载 ArcFace 模型, 绕过 FaceAnalysis
-            model_dir = Path.home() / ".insightface" / "models" / config.insightface_model
-            rec_path = model_dir / "w600k_r50.onnx"
-            if not rec_path.exists():
-                raise FileNotFoundError(
-                    f"ArcFace model not found: {rec_path}. "
-                    "Run: bash download_models.sh"
-                )
+            import onnxruntime as ort
 
             ctx_id = get_config().hardware.insightface_ctx_id
             providers = self._get_providers(ctx_id)
 
-            self._rec_model = insightface.model_zoo.get_model(
-                str(rec_path), providers=providers,
+            self._session = ort.InferenceSession(
+                str(model_path), providers=providers,
             )
-            self._rec_model.prepare(ctx_id=ctx_id)
+            self._input_name = self._session.get_inputs()[0].name
 
             logger.info(
-                "FaceExtractor loaded: model=w600k_r50 (ArcFace only), ctx_id={}",
-                ctx_id,
+                "FaceExtractor loaded: backend={}, model={}, ctx_id={}",
+                self._backend, model_file, ctx_id,
             )
         except ImportError:
             logger.error(
-                "insightface is not installed. "
-                "Install with: pip install insightface onnxruntime-gpu"
+                "onnxruntime is not installed. "
+                "Install with: pip install onnxruntime-gpu"
             )
             raise
         except Exception as e:
@@ -82,8 +97,32 @@ class FaceExtractor:
             ]
         return ["CPUExecutionProvider"]
 
+    def _preprocess(self, aligned_face: np.ndarray) -> np.ndarray:
+        """预处理对齐人脸 → ONNX 输入 tensor。
+
+        Args:
+            aligned_face: 112×112 BGR 对齐人脸。
+
+        Returns:
+            (1, 3, 112, 112) float32 tensor, 值域 [-1, 1]。
+        """
+        img = aligned_face.astype(np.float32)
+
+        if self._backend == "arcface":
+            # ArcFace: BGR → RGB
+            img = img[:, :, ::-1].copy()
+
+        # AdaFace: 保持 BGR 不变
+
+        # 统一归一化到 [-1, 1]
+        img = (img - 127.5) / 127.5
+        # HWC → CHW
+        img = np.transpose(img, (2, 0, 1))
+        # 添加 batch 维度
+        return np.expand_dims(img, 0)
+
     def extract_embedding(self, aligned_face: np.ndarray) -> np.ndarray | None:
-        """从预对齐的 112×112 人脸提取 ArcFace 嵌入。
+        """从预对齐的 112×112 人脸提取嵌入。
 
         Args:
             aligned_face: 112×112 BGR 对齐人脸 (来自 Tier1 norm_crop)。
@@ -91,19 +130,15 @@ class FaceExtractor:
         Returns:
             512 维 L2 归一化嵌入向量, 或 None (提取失败时)。
         """
-        if self._rec_model is None:
-            logger.warning("FaceExtractor recognition model not initialized")
+        if self._session is None:
+            logger.warning("FaceExtractor session not initialized")
             return None
 
         try:
-            # ArcFace 直接从对齐人脸提取特征 — 不需要重新检测
-            embedding = self._rec_model.get_feat(aligned_face)
+            blob = self._preprocess(aligned_face)
+            output = self._session.run(None, {self._input_name: blob})
+            embedding = output[0].flatten().astype(np.float32)
 
-            if embedding is None:
-                logger.debug("No embedding extracted for aligned face")
-                return None
-
-            embedding = embedding.flatten().astype(np.float32)
             norm = float(np.linalg.norm(embedding))
             if norm < 1e-6:
                 logger.debug("Face embedding has near-zero norm")

@@ -11,7 +11,6 @@ eDifFIQA(T) 人脸质量评估
 from __future__ import annotations
 
 from functools import cache
-from pathlib import Path
 
 import cv2
 import numpy as np

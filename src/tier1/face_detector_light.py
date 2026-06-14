@@ -1,12 +1,12 @@
 """
 Tier1 人脸检测器
 
-使用 SCRFD_10G (detection-only, 不加载 ArcFace) 获取人脸 bbox + 5 点关键点,
+使用 SCRFD_10G (detection-only, 不加载 recognition 模型) 获取人脸 bbox + 5 点关键点,
 用于 norm_crop 对齐 → eDifFIQA 质量评估。
 
 与 Tier2 的 FaceExtractor 区分:
 - 本模块: 只做检测 + 对齐, 不做 embedding 提取
-- FaceExtractor: 只做 ArcFace embedding 提取 (不再包含 SCRFD)
+- FaceExtractor: 只做人脸 embedding 提取 (ArcFace/AdaFace 可切换, 不再包含 SCRFD)
 """
 from __future__ import annotations
 

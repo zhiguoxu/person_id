@@ -163,7 +163,7 @@ download_huggingface() {
 # ==========================================================================
 # 1. YOLO Pose
 # ==========================================================================
-echo "=== [1/5] YOLO11-Pose ==="
+echo "=== [1/7] YOLO11-Pose ==="
 download_github \
     "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n-pose.pt" \
     "yolo11n-pose.pt"
@@ -173,10 +173,10 @@ download_github \
     "yolo11x-pose.pt"
 
 # ==========================================================================
-# 2. InsightFace buffalo_l
+# 2. InsightFace buffalo_l (SCRFD 检测 + ArcFace 识别)
 # ==========================================================================
 echo ""
-echo "=== [2/5] InsightFace (buffalo_l) ==="
+echo "=== [2/7] InsightFace (buffalo_l) ==="
 INSIGHTFACE_DIR="$HOME/.insightface/models"
 BUFFALO_DIR="$INSIGHTFACE_DIR/buffalo_l"
 
@@ -197,11 +197,45 @@ else
     fi
 fi
 
+# 复制 ArcFace 模型到 PROJECT_ROOT/models/
+ARCFACE_DST="$SCRIPT_DIR/models/w600k_r50.onnx"
+if [ -f "$ARCFACE_DST" ]; then
+    echo "[SKIP] ArcFace model already in models/"
+elif [ -f "$BUFFALO_DIR/w600k_r50.onnx" ]; then
+    mkdir -p "$SCRIPT_DIR/models"
+    cp "$BUFFALO_DIR/w600k_r50.onnx" "$ARCFACE_DST"
+    echo "  ✅ Copied ArcFace (w600k_r50.onnx) to models/"
+fi
+
 # ==========================================================================
-# 3. torchreid OSNet-AIN x1.0
+# 3. AdaFace IR-101 (人脸识别 — 自动下载 + ONNX 转换)
 # ==========================================================================
 echo ""
-echo "=== [3/5] torchreid (osnet_ain_x1_0) ==="
+echo "=== [3/7] AdaFace IR-101 (face recognition) ==="
+ADAFACE_DST="$SCRIPT_DIR/models/adaface_ir101.onnx"
+if [ -f "$ADAFACE_DST" ]; then
+    echo "[SKIP] AdaFace model already exists"
+else
+    # 自动调用 Python 脚本: 下载权重 + 转换为 ONNX
+    CONVERT_SCRIPT="$SCRIPT_DIR/scripts/convert_adaface_to_onnx.py"
+    if [ -f "$CONVERT_SCRIPT" ]; then
+        echo "  Running: python $CONVERT_SCRIPT --cleanup"
+        if python "$CONVERT_SCRIPT" --cleanup; then
+            echo "  ✅ AdaFace ONNX conversion complete"
+        else
+            echo "  ⚠️ Auto-conversion failed. Manual steps:"
+            echo "     pip install torch onnxruntime"
+            echo "     python scripts/convert_adaface_to_onnx.py"
+        fi
+    else
+        echo "  ❌ Conversion script not found: $CONVERT_SCRIPT"
+    fi
+fi
+# ==========================================================================
+# 4. torchreid OSNet-AIN x1.0
+# ==========================================================================
+echo ""
+echo "=== [4/7] torchreid (osnet_ain_x1_0) ==="
 
 # torchreid 缓存路径
 TORCH_CACHE="${TORCH_HOME:-$HOME/.cache/torch}/checkpoints"
@@ -213,17 +247,17 @@ OSNET_GDRIVE_ID="1-CaioD9NaqbHK_kzSMW8VE4_3KcsRjEo"
 download_gdrive "$OSNET_GDRIVE_ID" "$OSNET_FILE"
 
 # ==========================================================================
-# 4. BoT-SORT (boxmot 自动下载, 此处预下载加速)
+# 5. BoT-SORT (boxmot 自动下载, 此处预下载加速)
 # ==========================================================================
 echo ""
-echo "=== [4/5] BoT-SORT ReID weights (optional) ==="
+echo "=== [5/7] BoT-SORT ReID weights (optional) ==="
 echo "[SKIP] boxmot runs without ReID weights (with_reid=False)"
 
 # ==========================================================================
-# 5. eDifFIQA Tiny (人脸质量评估)
+# 6. eDifFIQA Tiny (人脸质量评估)
 # ==========================================================================
 echo ""
-echo "=== [5/5] eDifFIQA Tiny (face quality) ==="
+echo "=== [6/7] eDifFIQA Tiny (face quality) ==="
 download_huggingface \
     "opencv/face_image_quality_assessment_ediffiqa" \
     "ediffiqa_tiny_jun2024.onnx" \
@@ -237,8 +271,14 @@ echo ""
 echo "YOLO Pose:"
 ls -lh "$SCRIPT_DIR"/yolo11*-pose.pt 2>/dev/null || echo "  ❌ not found"
 echo ""
-echo "InsightFace (buffalo_l, 含 SCRFD_10G + ArcFace):"
-ls -lh "$BUFFALO_DIR"/*.onnx 2>/dev/null || echo "  ❌ not found"
+echo "InsightFace (buffalo_l, SCRFD_10G 检测):"
+ls -lh "$BUFFALO_DIR"/det_10g.onnx 2>/dev/null || echo "  ❌ not found"
+echo ""
+echo "Face Recognition (models/):"
+echo "  ArcFace (w600k_r50):"
+ls -lh "$SCRIPT_DIR"/models/w600k_r50.onnx 2>/dev/null || echo "    ❌ not found"
+echo "  AdaFace (IR-101):"
+ls -lh "$SCRIPT_DIR"/models/adaface_ir101.onnx 2>/dev/null || echo "    ❌ not found (run: python scripts/convert_adaface_to_onnx.py)"
 echo ""
 echo "torchreid:"
 if [ -f "$OSNET_FILE" ]; then
@@ -251,4 +291,3 @@ fi
 echo ""
 echo "eDifFIQA:"
 ls -lh "$SCRIPT_DIR"/models/edifiqa_tiny.onnx 2>/dev/null || echo "  ❌ not found"
-

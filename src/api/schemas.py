@@ -215,3 +215,20 @@ class BodyQualityTestResponse(BaseModel):
     sharpness: float | None = None
     bbox: list[float] | None = None
     error: str | None = None
+
+
+class FaceSimilarityFaceInfo(BaseModel):
+    """单张图片的人脸检测结果"""
+    has_face: bool
+    person_bbox: list[float] | None = None
+    face_bbox: list[float] | None = None
+    face_quality: float | None = None
+    aligned_face_b64: str | None = None
+
+
+class FaceSimilarityTestResponse(BaseModel):
+    """人脸相似度测试结果"""
+    face1: FaceSimilarityFaceInfo
+    face2: FaceSimilarityFaceInfo
+    similarity: float | None = None
+    error: str | None = None

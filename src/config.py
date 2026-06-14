@@ -46,10 +46,15 @@ class DetectionConfig(BaseModel):
 
 class FaceConfig(BaseModel):
     """人脸识别配置"""
-    insightface_model: str = "buffalo_l"  # InsightFace 模型包
+    insightface_model: str = "buffalo_l"  # InsightFace 模型包 (仅用于 SCRFD 检测)
     det_size: tuple[int, int] = (640, 640)  # 人脸检测输入尺寸
 
     min_face_size: int = 40  # 最小人脸像素尺寸
+
+    # 人脸识别模型 — ArcFace / AdaFace 可切换
+    recognition_backend: str = "adaface"  # "arcface" 或 "adaface"
+    arcface_model: str = "w600k_r50.onnx"  # ArcFace ONNX 模型文件名 (在 MODELS_DIR 下)
+    adaface_model: str = "adaface_ir101.onnx"  # AdaFace ONNX 模型文件名 (在 MODELS_DIR 下)
 
 
 class ReIDConfig(BaseModel):

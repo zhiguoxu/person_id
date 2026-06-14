@@ -37,6 +37,7 @@
                     <span class="latency-label">ms</span>
                 </div>
                 <button id="btn-open-test-quality" class="btn btn-xs" title="Test Body Quality">🧪 Test</button>
+                <button id="btn-open-face-sim" class="btn btn-xs" title="Test Face Similarity">🔍 Face Sim</button>
             </div>
         </div>
     </header>
@@ -282,6 +283,53 @@
     </div>
 
     <!-- ================================================================== -->
+    <!-- MODAL: Test Face Similarity -->
+    <!-- ================================================================== -->
+    <div id="face-sim-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content" style="max-width: 820px;">
+            <div class="modal-header">
+                <h3>🔍 Face Similarity Test</h3>
+                <button class="modal-close" id="face-sim-modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="face-sim-modal-body">
+                <div class="face-sim-upload-row">
+                    <!-- Image 1 -->
+                    <div class="face-sim-upload-col">
+                        <div class="face-sim-col-header">Image 1</div>
+                        <div class="form-group">
+                            <label for="face-sim-file1" class="btn btn-primary btn-xs" style="cursor: pointer;">📸 Choose</label>
+                            <input type="file" id="face-sim-file1" accept="image/*" style="display: none;">
+                            <span id="face-sim-filename1" class="face-sim-filename">No file selected</span>
+                        </div>
+                        <div id="face-sim-preview1-container" class="face-sim-preview-container hidden">
+                            <img id="face-sim-preview1-img" class="face-sim-preview-img">
+                            <canvas id="face-sim-preview1-canvas" class="face-sim-preview-canvas"></canvas>
+                        </div>
+                        <div id="face-sim-info1" class="face-sim-info hidden"></div>
+                    </div>
+                    <!-- Image 2 -->
+                    <div class="face-sim-upload-col">
+                        <div class="face-sim-col-header">Image 2</div>
+                        <div class="form-group">
+                            <label for="face-sim-file2" class="btn btn-primary btn-xs" style="cursor: pointer;">📸 Choose</label>
+                            <input type="file" id="face-sim-file2" accept="image/*" style="display: none;">
+                            <span id="face-sim-filename2" class="face-sim-filename">No file selected</span>
+                        </div>
+                        <div id="face-sim-preview2-container" class="face-sim-preview-container hidden">
+                            <img id="face-sim-preview2-img" class="face-sim-preview-img">
+                            <canvas id="face-sim-preview2-canvas" class="face-sim-preview-canvas"></canvas>
+                        </div>
+                        <div id="face-sim-info2" class="face-sim-info hidden"></div>
+                    </div>
+                </div>
+
+                <div id="face-sim-result" class="hidden" style="margin-top: 15px; padding: 15px; background: var(--bg-panel); border-radius: 8px; border: 1px solid var(--border-glass);"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
     <!-- SCRIPTS -->
     <!-- ================================================================== -->
     <!-- FLV.js for FLV live stream playback -->
@@ -296,6 +344,7 @@
     <script src="js/person-gallery.js"></script>
     <script src="js/image-lightbox.js"></script>
     <script src="js/test-body-quality.js"></script>
+    <script src="js/test-face-similarity.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

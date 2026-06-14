@@ -3,7 +3,7 @@ Tier2 批量质量评估与增量特征提取
 
 两步走:
 1. _batch_quality_assess(): 质量评估 (人脸检测+质量已在 Tier1 完成)
-2. _extract_new_embeddings(): 对 embedding=None 的帧提取 ArcFace/SOLIDER
+2. _extract_new_embeddings(): 对 embedding=None 的帧提取人脸(ArcFace/AdaFace)/SOLIDER
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ class BatchExtractor:
             for cf, emb in zip(body_pending, body_embs):
                 cf.embedding = emb
 
-        # Face embedding: 用 ArcFace 从 Tier1 对齐人脸直接提取 (无需重跑 SCRFD)
+        # Face embedding: 从 Tier1 对齐人脸直接提取 (ArcFace/AdaFace, 无需重跑 SCRFD)
         face_pending = [cf for cf in cache.face_pool if cf.embedding is None]
         if face_pending:
             face_extractor = get_face_extractor()

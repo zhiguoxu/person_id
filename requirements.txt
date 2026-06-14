@@ -13,8 +13,9 @@ ultralytics>=8.3.0          # YOLO11-pose
 boxmot>=11.0.0              # BoT-SORT 追踪器
 
 # --- 人脸识别 ---
-insightface>=0.7.3          # SCRFD + ArcFace-R100
-onnxruntime-gpu>=1.18.0     # InsightFace GPU 推理
+insightface>=0.7.3          # SCRFD 人脸检测 (det_10g.onnx)
+onnxruntime-gpu>=1.18.0     # ONNX 推理 (ArcFace/AdaFace + eDifFIQA)
+onnxscript>=0.1.0           # torch.onnx.export 依赖 (AdaFace ONNX 转换)
 
 # --- 深度学习基础 (torch/torchvision 需先单独安装, 见 install.sh) ---
 opencv-python>=4.9.0
@@ -30,6 +31,8 @@ python-multipart>=0.0.9
 
 # --- VLM 仲裁 ---
 openai>=1.14.0
+
+
 
 # --- 持久化 ---
 aiosqlite>=0.20.0

@@ -2014,3 +2014,184 @@ h1, h2, h3 {
     animation: spin 0.8s linear infinite;
     margin-right: 10px;
 }
+
+
+/* ================================================================== */
+/* Face Similarity Test Modal                                         */
+/* ================================================================== */
+
+.face-sim-upload-row {
+    display: flex;
+    gap: 16px;
+}
+
+.face-sim-upload-col {
+    flex: 1;
+    min-width: 0;
+}
+
+.face-sim-col-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.face-sim-filename {
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.face-sim-preview-container {
+    margin-top: 10px;
+    position: relative;
+    text-align: center;
+    background: var(--bg-secondary);
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border-glass);
+}
+
+.face-sim-preview-img {
+    max-width: 100%;
+    max-height: 280px;
+    border-radius: 4px;
+    display: block;
+    margin: 0 auto;
+}
+
+.face-sim-preview-canvas {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+}
+
+.face-sim-info {
+    margin-top: 8px;
+    padding: 8px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    border: 1px solid var(--border-glass);
+}
+
+.face-sim-face-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.face-sim-aligned-thumb {
+    width: 56px;
+    height: 56px;
+    border-radius: 6px;
+    border: 1px solid var(--accent-cyan);
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.face-sim-quality {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* Score panel */
+.face-sim-score-panel {
+    text-align: center;
+    padding: 10px 0;
+}
+
+.face-sim-score-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.face-sim-score-value {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 12px;
+}
+
+/* Gauge bar */
+.face-sim-gauge-track {
+    position: relative;
+    height: 10px;
+    background: var(--bg-secondary);
+    border-radius: 5px;
+    overflow: visible;
+    margin: 0 20px;
+}
+
+.face-sim-gauge-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    border-radius: 5px;
+    transition: width 0.6s ease, background 0.4s ease;
+}
+
+.face-sim-gauge-marker {
+    position: absolute;
+    top: -3px;
+    width: 4px;
+    height: 16px;
+    background: #fff;
+    border-radius: 2px;
+    transform: translateX(-50%);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+    transition: left 0.6s ease;
+}
+
+.face-sim-gauge-labels {
+    display: flex;
+    justify-content: space-between;
+    margin: 4px 20px 0;
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+.face-sim-interp {
+    margin-top: 12px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.face-sim-thresholds {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+/* Loading spinner */
+.face-sim-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--text-dim);
+    border-top-color: var(--accent-cyan);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+@media (max-width: 600px) {
+    .face-sim-upload-row {
+        flex-direction: column;
+    }
+}
