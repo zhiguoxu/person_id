@@ -123,11 +123,34 @@ class TrackedPerson(BaseModel):
     纯帧级瞬态数据, 不持有任何跨帧状态。
     身份信息由 Orchestrator 通过 TrackState.identity_result 管理。
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     track_id: int  # 追踪器分配的 ID
     detection: Detection  # 当前帧检测结果
     attention_score: float = 0.0  # 注意力评分
     trail: list[tuple[float, float]] = Field(default_factory=list)  # 中心轨迹
+
+    # --- Tier1 裁剪 + 人脸检测产出 (exclude: 不参与 JSON 序列化) ---
+    crop: np.ndarray | None = Field(default=None, exclude=True)
+    crop_offset: tuple[int, int] = (0, 0)  # (x1, y1) crop 在原帧中的偏移
+    quality_hint: float = 0.0  # 轻量质量预估 (0-1)
+    local_keypoints: np.ndarray | None = Field(default=None, exclude=True)
+    aligned_face: np.ndarray | None = Field(default=None, exclude=True)
+    face_bbox: np.ndarray | None = Field(default=None, exclude=True)
+    face_quality: float = 0.0  # eDifFIQA + blur 综合分
+    face_detect_ms: float = 0.0  # 人脸检测耗时
+    face_assess_ms: float = 0.0  # 质量评估耗时
+
+    # --- 帧缓冲字段 (feed_frame 时填充) ---
+    timestamp: float = 0.0  # time.time() — Unix timestamp
+    frame_snapshot: np.ndarray | None = Field(default=None, exclude=True)
+
+    @property
+    def combined_quality(self) -> float:
+        """加权综合质量 — RecentBuffer 窗口竞争用"""
+        if self.aligned_face is not None:
+            return 0.7 * self.face_quality + 0.3 * self.quality_hint
+        return self.quality_hint
 
 
 class MatchResult(BaseModel):

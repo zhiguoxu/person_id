@@ -490,7 +490,7 @@ async def get_quality_cache(camera_id: str, track_id: int) -> QualityCacheRespon
                 image_b64=img_b64,
                 quality=round(cf.quality, 3),
                 timestamp=cf.entry.timestamp,
-                pose_bucket=cf.entry.pose_bucket.value,
+                pose_bucket=cf.entry.detection.pose_bucket.value,
                 enrolled=cf.enrolled,
             ))
         return items

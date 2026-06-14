@@ -132,21 +132,21 @@ class VisionOrchestrator(BaseModel):
         self.frame_count += 1
         t0 = time.perf_counter()
 
-        # --- Tier 1: 检测 + 追踪 + 注意力 ---
+        # --- Tier 1: 检测 + 追踪 + 注意力 + 人脸 ---
         persons = self.tier1.process(frame)
         tier1_ms = (time.perf_counter() - t0) * 1000
+
+        # --- 人脸耗时直接从 persons 汇总 ---
+        total_face_detect_ms = sum(p.face_detect_ms for p in persons)
+        total_face_assess_ms = sum(p.face_assess_ms for p in persons)
 
         # --- 刷新 TrackState ---
         self._refresh_track_states(persons)
 
         # --- track 逐个进处理 ---
         gallery_dirty = False
-        total_face_detect_ms = 0.0
-        total_face_assess_ms = 0.0
         for state in self.tracks.values():
-            result, is_enrich, face_detect_ms, face_assess_ms = state.process_frame(frame, self.gallery)
-            total_face_detect_ms += face_detect_ms
-            total_face_assess_ms += face_assess_ms
+            result, is_enrich = state.process_frame(frame, self.gallery)
             if result is None:
                 continue
 
@@ -371,7 +371,7 @@ class VisionOrchestrator(BaseModel):
             best_frames: dict[PoseBucket, CachedFrame] = {}
             for cf in pool:
                 if not cf.enrolled and cf.quality >= gallery_cfg.quality_enroll_threshold:
-                    pose = cf.entry.pose_bucket
+                    pose = cf.entry.detection.pose_bucket
                     if pose not in best_frames or cf.quality > best_frames[pose].quality:
                         best_frames[pose] = cf
 
@@ -392,7 +392,7 @@ class VisionOrchestrator(BaseModel):
                     # 人体特征: source_image = 全帧原图, overlay_bbox = body bbox (全帧坐标系)
                     _, buf = cv2.imencode('.png', cf.entry.frame_snapshot)
                     source_image = buf.tobytes()
-                    bx = cf.entry.bbox
+                    bx = cf.entry.detection.bbox
                     overlay_bbox = [
                         float(bx[0]), float(bx[1]),
                         float(bx[2]), float(bx[3]),
@@ -548,12 +548,21 @@ class VisionOrchestrator(BaseModel):
             face_detect_ms: float = 0.0,
             face_assess_ms: float = 0.0,
     ) -> dict[str, object]:
-        """构建 pipeline_debug 字典。"""
+        """构建 pipeline_debug 字典。
+
+        tier1_ms 已包含 face_detect + face_assess, 这里做拆分展示:
+        - detection: 纯检测+追踪+注意力 (= tier1_ms - face)
+        - face_detect: 人脸检测耗时 (Tier1 子阶段)
+        - face_assess: 质量评估耗时 (Tier1 子阶段)
+        - reid: Tier2 耗时 (= total - tier1)
+        """
         active_states = self.tracks.values()
         n_states = len(active_states)
         n_vlm_pending = sum(1 for s in active_states if s.vlm_task is not None)
-        face_total_ms = face_detect_ms + face_assess_ms
-        reid_ms = total_ms - tier1_ms - face_total_ms
+
+        # tier1_ms 已包含 face, 拆出纯检测时间
+        detect_ms = tier1_ms - face_detect_ms - face_assess_ms
+        reid_ms = total_ms - tier1_ms
 
         # 人脸检测统计
         n_face_detected = sum(
@@ -565,7 +574,7 @@ class VisionOrchestrator(BaseModel):
 
         if reid_ms > 1.0:  # 有显著 ReID 耗时
             return {
-                "detection": {"status": "done", "time_ms": round(tier1_ms, 1), "details": {"count": n_states}},
+                "detection": {"status": "done", "time_ms": round(detect_ms, 1), "details": {"count": n_states}},
                 "face_detect": {"status": face_detect_status, "time_ms": round(face_detect_ms, 1),
                                 "details": {"detected": n_face_detected, "total": n_states}},
                 "face_assess": {"status": face_assess_status, "time_ms": round(face_assess_ms, 1),
@@ -582,7 +591,7 @@ class VisionOrchestrator(BaseModel):
 
         pending_status = "running" if n_vlm_pending > 0 else "pending"
         return {
-            "detection": {"status": "done", "time_ms": round(tier1_ms, 1), "details": {"count": n_states}},
+            "detection": {"status": "done", "time_ms": round(detect_ms, 1), "details": {"count": n_states}},
             "face_detect": {"status": face_detect_status, "time_ms": round(face_detect_ms, 1),
                             "details": {"detected": n_face_detected, "total": n_states}},
             "face_assess": {"status": face_assess_status, "time_ms": round(face_assess_ms, 1), "details": {}},

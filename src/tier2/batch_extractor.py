@@ -12,7 +12,8 @@ import numpy as np
 from loguru import logger
 
 
-from src.pipeline.frame_buffer import BufferEntry, CachedFrame, QualityCache
+from src.pipeline.frame_buffer import CachedFrame, QualityCache
+from src.pipeline.data_models import TrackedPerson
 from src.pipeline.quality_utils import compute_sharpness
 from src.tier2.features import get_face_extractor, get_body_extractor
 
@@ -21,7 +22,7 @@ class BatchExtractor:
     """Tier2 批量处理器 — 质量评估 + 增量特征提取"""
 
     @staticmethod
-    def batch_quality_assess(new_frames: list[BufferEntry],
+    def batch_quality_assess(new_frames: list[TrackedPerson],
                              quality_cache: QualityCache) -> None:
         """对 RecentBuffer drain 出的新帧逐帧质量评估并竞争入缓存。
 

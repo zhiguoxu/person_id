@@ -67,12 +67,12 @@ class MultiFrameAggregator:
 
         for cf in pool:
             if cf.quality >= min_quality:
-                buckets[cf.entry.pose_bucket].append((cf.embedding, cf.quality))
+                buckets[cf.entry.detection.pose_bucket].append((cf.embedding, cf.quality))
 
         # 降级: 如果所有帧都低于阈值, 使用所有帧
         if not buckets and fallback:
             for cf in pool:
-                buckets[cf.entry.pose_bucket].append(
+                buckets[cf.entry.detection.pose_bucket].append(
                     (cf.embedding, max(cf.quality, 0.01)))
 
         return MultiFrameAggregator._weighted_aggregate(buckets)
@@ -100,7 +100,7 @@ class MultiFrameAggregator:
     def aggregate_proportions(body_pool: list[CachedFrame]
                               ) -> BodyProportions | None:
         """鲁棒中位数聚合体型比例 (抗离群值)"""
-        valid: list[BodyProportions] = [BodyProportions.from_keypoints(cf.entry.keypoints) for cf in body_pool]
+        valid: list[BodyProportions] = [BodyProportions.from_keypoints(cf.entry.local_keypoints) for cf in body_pool]
         valid = [p for p in valid if p is not None]
         if not valid:
             return None
