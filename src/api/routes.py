@@ -38,7 +38,7 @@ from src.pipeline.frame_buffer import CachedFrame
 from src.tier1.attention import select_best_detection
 from src.tier1.detection import get_fast_detector
 from src.tier1.face_detector_light import get_face_detector_light
-from src.tier2.features import get_face_extractor, get_edifiqa
+from src.tier2.features import get_face_extractor, get_ediffiqa
 from src.pipeline.quality_utils import compute_quality_hint, compute_sharpness
 import cv2
 import numpy as np
@@ -245,7 +245,7 @@ async def test_face_similarity(
         detector = get_fast_detector()
         face_det = get_face_detector_light()
         face_ext = get_face_extractor()
-        edifiqa = get_edifiqa()
+        ediffiqa = get_ediffiqa()
 
         def _process_image(image_bytes: bytes) -> tuple[FaceSimilarityFaceInfo, np.ndarray | None]:
             """处理单张图片: 检测人体 → 检测人脸 → 对齐 → 提取嵌入。"""
@@ -266,7 +266,7 @@ async def test_face_similarity(
                 aligned, face_bbox_raw, kps = face_result
                 face_bbox = [float(face_bbox_raw[0]), float(face_bbox_raw[1]),
                              float(face_bbox_raw[2]), float(face_bbox_raw[3])]
-                quality = edifiqa.predict(aligned)
+                quality = ediffiqa.predict(aligned)
                 _, buf = cv2.imencode('.jpg', aligned, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 aligned_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
                 embedding = face_ext.extract_embedding(aligned)
@@ -303,7 +303,7 @@ async def test_face_similarity(
             ]
 
             # Step 3: 人脸质量 (eDifFIQA)
-            quality = edifiqa.predict(aligned)
+            quality = ediffiqa.predict(aligned)
 
             # 编码对齐人脸供前端显示
             _, buf = cv2.imencode('.jpg', aligned, [cv2.IMWRITE_JPEG_QUALITY, 95])

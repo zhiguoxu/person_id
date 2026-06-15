@@ -11,7 +11,7 @@ from functools import cache
 
 
 from src.tier2.features.body_extractor import BodyExtractor
-from src.tier2.features.edifiqa import EDifFIQA, get_edifiqa
+from src.tier1.ediffiqa import EDifFIQA, get_ediffiqa
 from src.tier2.features.face_extractor import FaceExtractor
 
 
@@ -34,5 +34,5 @@ __all__ = [
     "EDifFIQA",
     "get_face_extractor",
     "get_body_extractor",
-    "get_edifiqa",
+    "get_ediffiqa",
 ]

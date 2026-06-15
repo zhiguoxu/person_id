@@ -23,7 +23,7 @@ from src.tier1.face_detector_light import get_face_detector_light
 from src.pipeline.data_models import TrackedPerson
 from src.pipeline.quality_utils import compute_quality_hint, compute_blur_score
 from src.tier1.tracking import TrackingEngine
-from src.tier2.features.edifiqa import get_edifiqa
+from src.tier1.ediffiqa import get_ediffiqa
 
 
 class Tier1Processor:
@@ -126,8 +126,8 @@ class Tier1Processor:
                     person.aligned_face = aligned_face
                     person.face_bbox = face_bbox
                     t_assess = time.perf_counter()
-                    edifiqa_score = get_edifiqa().predict(aligned_face)
+                    ediffiqa_score = get_ediffiqa().predict(aligned_face)
                     blur = compute_blur_score(aligned_face)
                     person.face_assess_ms = (time.perf_counter() - t_assess) * 1000
-                    person.face_quality = 0.8 * edifiqa_score + 0.2 * blur
+                    person.face_quality = 0.8 * ediffiqa_score + 0.2 * blur
 

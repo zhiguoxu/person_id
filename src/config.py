@@ -56,6 +56,13 @@ class FaceConfig(BaseModel):
     arcface_model: str = "w600k_r50.onnx"  # ArcFace ONNX 模型文件名 (在 MODELS_DIR 下)
     adaface_model: str = "adaface_ir101.onnx"  # AdaFace ONNX 模型文件名 (在 MODELS_DIR 下)
 
+    # 人脸质量评估模型 — eDifFIQA 变体可切换
+    # tiny: MobileFaceNet (~1.7M params, ~0.3ms)  — 最快, 精度一般
+    # small: IResNet-18   (~11M params,  ~1ms)    — 平衡
+    # medium: IResNet-50  (~44M params,  ~2ms)    — 较高精度
+    # large: IResNet-100  (~65M params,  ~3ms)    — 最高精度, 跨模型泛化最好
+    ediffiqa_variant: str = "medium"  # "tiny", "small", "medium", "large"
+
 
 class ReIDConfig(BaseModel):
     """人员重识别配置"""

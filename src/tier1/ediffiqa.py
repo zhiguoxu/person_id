@@ -1,12 +1,19 @@
 """
-eDifFIQA(T) 人脸质量评估
+eDifFIQA 人脸质量评估
 
-基于 eDifFIQA Tiny 模型 (MobileFaceNet, ~1.7M params) 的 ONNX 推理封装。
+基于 eDifFIQA 模型的 ONNX 推理封装，支持 Tiny/Small/Medium/Large 四种变体。
 输入 112×112 对齐人脸, 输出 [0, 1] 质量分 (越高越适合人脸识别)。
+
+变体说明:
+  - tiny:   MobileFaceNet backbone (~1.7M params)  — 最快
+  - small:  IResNet-18 backbone    (~11M params)   — 平衡
+  - medium: IResNet-50 backbone    (~44M params)   — 较高精度
+  - large:  IResNet-100 backbone   (~65M params)   — 最高精度, 跨模型泛化最好
 
 参考:
 - 论文: https://arxiv.org/abs/2310.09537
-- 模型: https://huggingface.co/opencv/face_image_quality_assessment_ediffiqa
+- 模型 (Tiny): https://huggingface.co/opencv/face_image_quality_assessment_ediffiqa
+- 模型 (S/M/L): https://github.com/yakhyo/face-image-quality-assessment
 """
 from __future__ import annotations
 
@@ -19,24 +26,45 @@ from loguru import logger
 
 from src.config import get_config, MODELS_DIR
 
+# 变体名 → ONNX 文件名映射
+_VARIANT_TO_FILE = {
+    "tiny": "ediffiqa_tiny.onnx",
+    "small": "ediffiqa_s.onnx",
+    "medium": "ediffiqa_m.onnx",
+    "large": "ediffiqa_l.onnx",
+}
+
 
 class EDifFIQA:
-    """eDifFIQA(T) 人脸质量评估 — ONNX 推理。
+    """eDifFIQA 人脸质量评估 — ONNX 推理。
+
+    支持 tiny/small/medium/large 四种变体, 通过 config.face.ediffiqa_variant 配置。
 
     预处理: BGR → RGB, [0,255] → [-1,1], HWC → NCHW
     后处理: sigmoid(logit) → [0, 1]
     """
 
     def __init__(self) -> None:
-        model_path = MODELS_DIR / "edifiqa_tiny.onnx"
+        cfg = get_config()
+        variant = cfg.face.ediffiqa_variant.lower()
+
+        if variant not in _VARIANT_TO_FILE:
+            raise ValueError(
+                f"Unknown eDifFIQA variant: '{variant}'. "
+                f"Valid options: {list(_VARIANT_TO_FILE.keys())}"
+            )
+
+        model_filename = _VARIANT_TO_FILE[variant]
+        model_path = MODELS_DIR / model_filename
         if not model_path.exists():
             raise FileNotFoundError(
                 f"eDifFIQA model not found: {model_path}. "
-                "Download from: https://huggingface.co/opencv/"
-                "face_image_quality_assessment_ediffiqa"
+                f"Run download_models.sh or manually download the '{variant}' variant.\n"
+                f"  Tiny:        https://huggingface.co/opencv/face_image_quality_assessment_ediffiqa\n"
+                f"  Small/Med/L: https://github.com/yakhyo/face-image-quality-assessment/releases"
             )
 
-        ctx_id = get_config().hardware.insightface_ctx_id
+        ctx_id = cfg.hardware.insightface_ctx_id
         providers = (
             [("CUDAExecutionProvider", {"device_id": ctx_id}), "CPUExecutionProvider"]
             if ctx_id >= 0
@@ -47,7 +75,13 @@ class EDifFIQA:
             str(model_path), providers=providers,
         )
         self._input_name = self._session.get_inputs()[0].name
-        logger.info("EDifFIQA loaded: model=edifiqa_tiny, ctx_id={}", ctx_id)
+        self._variant = variant
+        logger.info("EDifFIQA loaded: variant={}, model={}, ctx_id={}", variant, model_filename, ctx_id)
+
+    @property
+    def variant(self) -> str:
+        """当前使用的变体名。"""
+        return self._variant
 
     def predict(self, aligned_face_112: np.ndarray) -> float:
         """评估对齐人脸的质量。
@@ -75,6 +109,6 @@ class EDifFIQA:
 
 
 @cache
-def get_edifiqa() -> EDifFIQA:
+def get_ediffiqa() -> EDifFIQA:
     """获取 eDifFIQA 质量评估器 (单例缓存)。"""
     return EDifFIQA()

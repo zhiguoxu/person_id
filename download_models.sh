@@ -254,14 +254,25 @@ echo "=== [5/7] BoT-SORT ReID weights (optional) ==="
 echo "[SKIP] boxmot runs without ReID weights (with_reid=False)"
 
 # ==========================================================================
-# 6. eDifFIQA Tiny (人脸质量评估)
+# 6. eDifFIQA (人脸质量评估 — 4 个变体)
 # ==========================================================================
 echo ""
-echo "=== [6/7] eDifFIQA Tiny (face quality) ==="
+echo "=== [6/7] eDifFIQA (face quality, all variants) ==="
+
+# Tiny — from HuggingFace (OpenCV Zoo)
 download_huggingface \
     "opencv/face_image_quality_assessment_ediffiqa" \
     "ediffiqa_tiny_jun2024.onnx" \
-    "models/edifiqa_tiny.onnx"
+    "models/ediffiqa_tiny.onnx"
+
+# Small / Medium / Large — from GitHub releases (yakhyo/face-image-quality-assessment)
+EDIFIQA_RELEASE="https://github.com/yakhyo/face-image-quality-assessment/releases/download/weights"
+# 上游文件名用双 f (ediffiqa), 项目统一用单 f (edifiqa)
+for size in s m l; do
+    download_github \
+        "${EDIFIQA_RELEASE}/ediffiqa_${size}.onnx" \
+        "models/ediffiqa_${size}.onnx"
+done
 
 echo ""
 echo "══════════════════════════════════════════════"
@@ -289,5 +300,13 @@ else
     echo "  $OSNET_FILE"
 fi
 echo ""
-echo "eDifFIQA:"
-ls -lh "$SCRIPT_DIR"/models/edifiqa_tiny.onnx 2>/dev/null || echo "  ❌ not found"
+echo "eDifFIQA (face quality):"
+for f in ediffiqa_tiny.onnx ediffiqa_s.onnx ediffiqa_m.onnx ediffiqa_l.onnx; do
+    if [ -f "$SCRIPT_DIR/models/$f" ]; then
+        printf "  ✅ %-20s " "$f"
+        ls -lh "$SCRIPT_DIR/models/$f" | awk '{print $5}'
+    else
+        echo "  ❌ $f not found"
+    fi
+done
+
