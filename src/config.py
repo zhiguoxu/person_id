@@ -86,6 +86,7 @@ class GalleryConfig(BaseModel):
 
     # 入库质量门槛
     quality_enroll_threshold: float = 0.4  # 入库最低质量分
+    ediffiqa_enroll_variant: str = "large"  # 入库质量评估模型变体 (独立于 Tier1, 默认最大)
 
     # 入库衰减 — 统一量纲: 半衰期 (天)
     face_enroll_half_life_days: float = 100.0  # 人脸入库半衰期 (发型/妆容变化慢)

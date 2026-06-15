@@ -154,7 +154,7 @@ class GalleryPersistence:
                 )
 
                 # 再删主表
-                existing = await self._get_person_row(
+                existing = await self.get_person_row(
                     session, person_id, camera_id,
                 )
                 if existing:
@@ -186,7 +186,7 @@ class GalleryPersistence:
         profile.update_count += 1
 
         async with AsyncSession(self.engine) as session:
-            existing = await self._get_person_row(
+            existing = await self.get_person_row(
                 session, profile.person_id, camera_id,
             )
             if existing:
@@ -399,7 +399,7 @@ class GalleryPersistence:
     # ------------------------------------------------------------------
 
     @staticmethod
-    async def _get_person_row(
+    async def get_person_row(
             session: AsyncSession, person_id: str, camera_id: str,
     ) -> PersonRow | None:
         stmt = select(PersonRow).where(

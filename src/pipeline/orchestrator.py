@@ -33,6 +33,7 @@ from src.pipeline.data_models import (
 )
 from src.gallery.persistence import get_gallery_persistence
 from src.pipeline.frame_buffer import CachedFrame
+from src.tier2.features.ediffiqa import get_ediffiqa_enroll
 from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 
 from src.tier1.processor import Tier1Processor
@@ -362,20 +363,28 @@ class VisionOrchestrator(BaseModel):
         gallery_cfg = get_config().gallery
 
         # --- 人脸 / 人体特征入库 ---
-        body_best: dict[PoseBucket, CachedFrame] = {}
+        body_best: dict[PoseBucket, tuple[CachedFrame, float]] = {}
+        enroll_scorer = get_ediffiqa_enroll()
+
         for pool, enroll_fn, with_face in [
             (cache.face_pool, profile.enroll_face, True),
             (cache.body_pool, profile.enroll_body_feature, False),
         ]:
             # 每个姿态桶选最高质量的未入库帧
-            best_frames: dict[PoseBucket, CachedFrame] = {}
+            best_frames: dict[PoseBucket, tuple[CachedFrame, float]] = {}
             for cf in pool:
-                if not cf.enrolled and cf.quality >= gallery_cfg.quality_enroll_threshold:
+                if cf.enrolled:
+                    continue
+                # 人脸: 用入库专用模型重新评估质量
+                quality = cf.quality
+                if with_face and cf.entry.aligned_face is not None:
+                    quality = enroll_scorer.predict(cf.entry.aligned_face)
+                if quality >= gallery_cfg.quality_enroll_threshold:
                     pose = cf.entry.detection.pose_bucket
-                    if pose not in best_frames or cf.quality > best_frames[pose].quality:
-                        best_frames[pose] = cf
+                    if pose not in best_frames or quality > best_frames[pose][1]:
+                        best_frames[pose] = (cf, quality)
 
-            for pose, cf in best_frames.items():
+            for pose, (cf, quality) in best_frames.items():
                 overlay_bbox = None
                 if with_face:
                     # 人脸特征: source_image = crop, overlay_bbox = face_bbox (crop 坐标系)
@@ -401,7 +410,7 @@ class VisionOrchestrator(BaseModel):
                 entry = FeatureEntry(
                     embedding=cf.embedding,
                     pose_bucket=pose,
-                    quality_score=cf.quality,
+                    quality_score=quality,
                     timestamp=cf.entry.timestamp,
                     source_image=source_image,
                     overlay_bbox=overlay_bbox,
@@ -415,9 +424,9 @@ class VisionOrchestrator(BaseModel):
 
         # 服装: 最高质量 body embedding
         if body_best:
-            best_cf = max(body_best.values(), key=lambda cf: cf.quality)
+            best_cf, best_q = max(body_best.values(), key=lambda t: t[1])
             changes.wardrobe_op = profile.enroll_outfit(
-                best_cf.embedding, best_cf.quality,
+                best_cf.embedding, best_q,
             )
 
         # 体型比例 (存在 PersonRow 中, 由 upsert_person_row 保存)
@@ -669,7 +678,7 @@ class VisionOrchestrator(BaseModel):
 
             async with _AsyncSession(persistence.engine) as session:
                 # 1. persons 表
-                person_row = await persistence._get_person_row(
+                person_row = await persistence.get_person_row(
                     session, profile.person_id, self.camera_id,
                 )
                 persistence.upsert_person_row_in(

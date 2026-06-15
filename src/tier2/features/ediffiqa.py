@@ -38,15 +38,19 @@ _VARIANT_TO_FILE = {
 class EDifFIQA:
     """eDifFIQA 人脸质量评估 — ONNX 推理。
 
-    支持 tiny/small/medium/large 四种变体, 通过 config.face.ediffiqa_variant 配置。
+    支持 tiny/small/medium/large 四种变体。
 
     预处理: BGR → RGB, [0,255] → [-1,1], HWC → NCHW
     后处理: sigmoid(logit) → [0, 1]
     """
 
-    def __init__(self) -> None:
-        cfg = get_config()
-        variant = cfg.face.ediffiqa_variant.lower()
+    def __init__(self, variant: str) -> None:
+        """初始化 eDifFIQA。
+
+        Args:
+            variant: 模型变体名。None 时从 config.face.ediffiqa_variant 读取。
+        """
+        variant = variant.lower()
 
         if variant not in _VARIANT_TO_FILE:
             raise ValueError(
@@ -64,7 +68,7 @@ class EDifFIQA:
                 f"  Small/Med/L: https://github.com/yakhyo/face-image-quality-assessment/releases"
             )
 
-        ctx_id = cfg.hardware.insightface_ctx_id
+        ctx_id = get_config().hardware.insightface_ctx_id
         providers = (
             [("CUDAExecutionProvider", {"device_id": ctx_id}), "CPUExecutionProvider"]
             if ctx_id >= 0
@@ -110,5 +114,20 @@ class EDifFIQA:
 
 @cache
 def get_ediffiqa() -> EDifFIQA:
-    """获取 eDifFIQA 质量评估器 (单例缓存)。"""
-    return EDifFIQA()
+    """获取 eDifFIQA 质量评估器 — Tier1 逐帧评估用 (单例缓存)。
+
+    变体由 config.face.ediffiqa_variant 决定。
+    """
+    variant = get_config().face.ediffiqa_variant
+    return EDifFIQA(variant=variant)
+
+
+@cache
+def get_ediffiqa_enroll() -> EDifFIQA:
+    """获取 eDifFIQA 质量评估器 — 入库质量把关用 (单例缓存)。
+
+    变体由 config.gallery.ediffiqa_enroll_variant 决定, 默认 large。
+    如果与 Tier1 变体相同, 返回的是不同实例但加载相同模型。
+    """
+    variant = get_config().gallery.ediffiqa_enroll_variant
+    return EDifFIQA(variant=variant)
