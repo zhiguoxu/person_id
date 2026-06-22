@@ -83,7 +83,7 @@ class OutfitRecord(BaseModel):
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    body_embedding: np.ndarray  # 2048 维全身特征
+    body_embedding: np.ndarray  # 全身 ReID 特征 (SOLIDER Swin-Small: 768 维)
     quality_score: float  # 提取时的质量分
     first_seen: float  # 首次穿着时间
     last_seen: float  # 最后穿着时间

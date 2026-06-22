@@ -2195,3 +2195,24 @@ h1, h2, h3 {
         flex-direction: column;
     }
 }
+
+/* ── Body Similarity Test ─────────────────────────────────────────────── */
+.body-sim-body-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+}
+
+.body-sim-crop-thumb {
+    width: 48px;
+    height: 144px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid var(--border-glass);
+}
+
+.body-sim-label {
+    font-size: 13px;
+    color: var(--accent-green);
+}

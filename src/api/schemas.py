@@ -231,4 +231,37 @@ class FaceSimilarityTestResponse(BaseModel):
     face1: FaceSimilarityFaceInfo
     face2: FaceSimilarityFaceInfo
     similarity: float | None = None
+    corrected_image1_b64: str | None = None  # 畸变矫正后的原图 base64
+    corrected_image2_b64: str | None = None
+    error: str | None = None
+
+
+class BodySimilarityBodyInfo(BaseModel):
+    """单张图片的人体检测结果"""
+    has_body: bool
+    person_bbox: list[float] | None = None
+    body_crop_b64: str | None = None  # 裁剪后的人体图 base64
+
+
+class BodySimilarityTestResponse(BaseModel):
+    """全身 ReID 相似度测试结果"""
+    body1: BodySimilarityBodyInfo
+    body2: BodySimilarityBodyInfo
+    similarity: float | None = None
+    embedding_dim: int | None = None
+    corrected_image1_b64: str | None = None  # 畸变矫正后的原图 base64
+    corrected_image2_b64: str | None = None
+    error: str | None = None
+
+
+class ReIDCompareResponse(BaseModel):
+    """两种 ReID 模型对比结果"""
+    body1: BodySimilarityBodyInfo
+    body2: BodySimilarityBodyInfo
+    solider_similarity: float | None = None
+    solider_dim: int | None = None
+    osnet_similarity: float | None = None
+    osnet_dim: int | None = None
+    corrected_image1_b64: str | None = None  # 畸变矫正后的原图 base64
+    corrected_image2_b64: str | None = None
     error: str | None = None

@@ -3,7 +3,7 @@ Tier2 批量质量评估与增量特征提取
 
 两步走:
 1. _batch_quality_assess(): 质量评估 (人脸检测+质量已在 Tier1 完成)
-2. _extract_new_embeddings(): 对 embedding=None 的帧提取人脸(ArcFace/AdaFace)/SOLIDER
+2. _extract_new_embeddings(): 对 embedding=None 的帧提取人脸(ArcFace/AdaFace)/SOLIDER 全身特征
 """
 from __future__ import annotations
 

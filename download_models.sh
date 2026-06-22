@@ -232,19 +232,60 @@ else
     fi
 fi
 # ==========================================================================
-# 4. torchreid OSNet-AIN x1.0
+# 4. SOLIDER Swin-Small ReID (全身重识别)
 # ==========================================================================
 echo ""
-echo "=== [4/7] torchreid (osnet_ain_x1_0) ==="
+echo "=== [4/7] SOLIDER Swin-Small (ReID) ==="
 
-# torchreid 缓存路径
-TORCH_CACHE="${TORCH_HOME:-$HOME/.cache/torch}/checkpoints"
-OSNET_FILE="$TORCH_CACHE/osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_b64.pth.tar"
+SOLIDER_DST="$SCRIPT_DIR/models/solider_swin_small_reid.pth"
 
-# Google Drive file ID
-OSNET_GDRIVE_ID="1-CaioD9NaqbHK_kzSMW8VE4_3KcsRjEo"
+# SOLIDER-REID finetuned on Market-1501 (Swin-Small)
+# Source: https://github.com/tinyvision/SOLIDER-REID Performance table, row 2 (Swin-Small), Market-1501
+SOLIDER_REID_GDRIVE_ID="1C-aIZdFyjFsZX4W4feG-Ex39RU2Qvu3b"
 
-download_gdrive "$OSNET_GDRIVE_ID" "$OSNET_FILE"
+# SOLIDER pretrained backbone (Swin-Small, fallback)
+# Source: https://github.com/tinyvision/SOLIDER Models table
+SOLIDER_PRETRAINED_GDRIVE_ID="1oyEgASqDHc7YUPsQUMxuo2kBZyi2Tzfv"
+
+if [ -f "$SOLIDER_DST" ]; then
+    echo "[SKIP] SOLIDER Swin-Small already exists"
+else
+    echo "[DOWN] SOLIDER Swin-Small ReID (Market-1501 finetuned)"
+    # 优先下载 SOLIDER-REID 微调版 (精度更高)
+    download_gdrive "$SOLIDER_REID_GDRIVE_ID" "$SOLIDER_DST"
+
+    if [ ! -f "$SOLIDER_DST" ] || [ ! -s "$SOLIDER_DST" ]; then
+        echo "  ⚠️ SOLIDER-REID finetuned download failed, trying SOLIDER pretrained..."
+        rm -f "$SOLIDER_DST"
+        # 下载 SOLIDER 原始预训练权重 (需要提取 teacher 键)
+        SOLIDER_RAW="$SCRIPT_DIR/models/_solider_swin_small_raw.pth"
+        download_gdrive "$SOLIDER_PRETRAINED_GDRIVE_ID" "$SOLIDER_RAW"
+        if [ -f "$SOLIDER_RAW" ] && [ -s "$SOLIDER_RAW" ]; then
+            echo "  Converting SOLIDER pretrained → ReID format..."
+            python -c "
+import torch
+ckpt = torch.load('$SOLIDER_RAW', map_location='cpu')
+if 'teacher' in ckpt:
+    torch.save(ckpt['teacher'], '$SOLIDER_DST')
+else:
+    torch.save(ckpt, '$SOLIDER_DST')
+print('  ✅ Converted')
+"
+            rm -f "$SOLIDER_RAW"
+        fi
+    fi
+
+    if [ -f "$SOLIDER_DST" ] && [ -s "$SOLIDER_DST" ]; then
+        echo "  ✅ SOLIDER weights ready"
+    else
+        echo "  ❌ All downloads failed."
+        echo "  Manual download options:"
+        echo "    1. SOLIDER-REID finetuned (推荐): https://drive.google.com/file/d/$SOLIDER_REID_GDRIVE_ID/view"
+        echo "    2. SOLIDER pretrained (备选):     https://drive.google.com/file/d/$SOLIDER_PRETRAINED_GDRIVE_ID/view"
+        echo "  Place at: $SOLIDER_DST"
+    fi
+fi
+
 
 # ==========================================================================
 # 5. BoT-SORT (boxmot 自动下载, 此处预下载加速)
@@ -291,13 +332,13 @@ ls -lh "$SCRIPT_DIR"/models/w600k_r50.onnx 2>/dev/null || echo "    ❌ not foun
 echo "  AdaFace (IR-101):"
 ls -lh "$SCRIPT_DIR"/models/adaface_ir101.onnx 2>/dev/null || echo "    ❌ not found (run: python scripts/convert_adaface_to_onnx.py)"
 echo ""
-echo "torchreid:"
-if [ -f "$OSNET_FILE" ]; then
-    ls -lh "$OSNET_FILE"
+echo "SOLIDER ReID:"
+if [ -f "$SOLIDER_DST" ]; then
+    ls -lh "$SOLIDER_DST"
 else
     echo "  ❌ not found"
-    echo "  Manual: download from Google Drive and place at:"
-    echo "  $OSNET_FILE"
+    echo "  Manual: download from https://github.com/tinyvision/SOLIDER-REID"
+    echo "  Then place at: $SOLIDER_DST"
 fi
 echo ""
 echo "eDifFIQA (face quality):"

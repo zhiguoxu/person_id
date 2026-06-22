@@ -66,10 +66,12 @@ class FaceConfig(BaseModel):
 
 class ReIDConfig(BaseModel):
     """人员重识别配置"""
-    # SOLIDER 模型 (暂用 OSNet 占位, SOLIDER 需从源码集成)
-    reid_model_name: str = "osnet_ain_x1_0"  # ReID 模型名
-    reid_model_weights: str = ""  # 模型权重路径 (空=自动从缓存查找)
-    reid_input_size: tuple[int, int] = (256, 128)  # 输入尺寸 (H, W)
+    # SOLIDER (Swin-Small, CVPR 2023) — 全身 ReID 特征提取
+    reid_model_name: str = "solider_swin_small"  # ReID 模型名
+    reid_model_weights: str = ""  # 模型权重路径 (空=自动查找 models/solider_swin_small_reid.pth)
+    reid_input_size: tuple[int, int] = (384, 128)  # 输入尺寸 (H, W) — SOLIDER 标准尺寸
+    reid_pixel_mean: tuple[float, float, float] = (0.5, 0.5, 0.5)  # 像素均值 (SOLIDER-REID swin_small 标准)
+    reid_pixel_std: tuple[float, float, float] = (0.5, 0.5, 0.5)  # 像素标准差 (SOLIDER-REID swin_small 标准)
     use_flip_test: bool = False  # 水平翻转测试增强
 
 

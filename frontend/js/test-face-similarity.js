@@ -110,6 +110,10 @@
             const formData = new FormData();
             formData.append('file1', file1);
             formData.append('file2', file2);
+            const undistortCb = document.getElementById('face-sim-undistort');
+            if (undistortCb && undistortCb.checked) {
+                formData.append('undistort', 'true');
+            }
 
             try {
                 const apiUrl = window.BACKEND_CONFIG ? window.BACKEND_CONFIG.apiUrl : '/api';
@@ -127,6 +131,14 @@
                 if (data.error) {
                     resultContainer.innerHTML = `<div style="color: var(--accent-red); text-align: center; padding: 15px;">Error: ${data.error}</div>`;
                     return;
+                }
+
+                // 如果有矫正后的图片, 替换预览
+                if (data.corrected_image1_b64) {
+                    preview1Img.src = 'data:image/jpeg;base64,' + data.corrected_image1_b64;
+                }
+                if (data.corrected_image2_b64) {
+                    preview2Img.src = 'data:image/jpeg;base64,' + data.corrected_image2_b64;
                 }
 
                 // Render face info panels

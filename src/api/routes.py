@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import base64
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from loguru import logger
 from src.api.registry import get_camera_orchestrator
 from src.config import get_config as _get_config
 
 from src.api.schemas import (
     BodyQualityTestResponse,
+    BodySimilarityBodyInfo,
+    BodySimilarityTestResponse,
     CachedFrameInfo,
     ConfigResponse,
     ConfigUpdateRequest,
@@ -31,6 +33,7 @@ from src.api.schemas import (
     PersonListResponse,
     PersonSummary,
     QualityCacheResponse,
+    ReIDCompareResponse,
     RenamePersonRequest,
     TunableParam,
 )
@@ -239,20 +242,36 @@ async def test_body_quality(file: UploadFile = File(...)) -> BodyQualityTestResp
 async def test_face_similarity(
     file1: UploadFile = File(...),
     file2: UploadFile = File(...),
+    undistort: str = Form("false"),
 ) -> FaceSimilarityTestResponse:
     """测试两张图片的人脸相似度 (使用与底库匹配相同的 ArcFace/AdaFace + cosine similarity)。"""
+    do_undistort = undistort.lower() in ("true", "1", "yes")
     try:
         detector = get_fast_detector()
         face_det = get_face_detector_light()
         face_ext = get_face_extractor()
         ediffiqa = get_ediffiqa()
 
-        def _process_image(image_bytes: bytes) -> tuple[FaceSimilarityFaceInfo, np.ndarray | None]:
+        def _process_image(image_bytes: bytes) -> tuple[FaceSimilarityFaceInfo, np.ndarray | None, str | None]:
             """处理单张图片: 检测人体 → 检测人脸 → 对齐 → 提取嵌入。"""
+            corrected_b64 = None
+            # 镜头畸变矫正
+            if do_undistort:
+                from src.utils.image_correction import correct_image_bytes
+                try:
+                    image_bytes = correct_image_bytes(image_bytes)
+                except Exception:
+                    logger.warning("Image undistortion failed, using original")
+
             np_arr = np.frombuffer(image_bytes, np.uint8)
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if frame is None:
-                return FaceSimilarityFaceInfo(has_face=False), None
+                return FaceSimilarityFaceInfo(has_face=False), None, None
+
+            # 矫正后的原图编码供前端预览
+            if do_undistort:
+                _, cb = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                corrected_b64 = base64.b64encode(cb.tobytes()).decode('ascii')
 
             h_f, w_f = frame.shape[:2]
 
@@ -262,7 +281,7 @@ async def test_face_similarity(
                 # 没检测到人体, 直接在全图检测人脸
                 face_result = face_det.get_aligned_face(frame)
                 if face_result is None:
-                    return FaceSimilarityFaceInfo(has_face=False), None
+                    return FaceSimilarityFaceInfo(has_face=False), None, corrected_b64
                 aligned, face_bbox_raw, kps = face_result
                 face_bbox = [float(face_bbox_raw[0]), float(face_bbox_raw[1]),
                              float(face_bbox_raw[2]), float(face_bbox_raw[3])]
@@ -276,7 +295,7 @@ async def test_face_similarity(
                     face_bbox=face_bbox,
                     face_quality=round(quality, 4),
                     aligned_face_b64=aligned_b64,
-                ), embedding
+                ), embedding, corrected_b64
 
             # 注意力选人: 1 人直接取, 多人按注意力评分选
             best_idx = select_best_detection(detections, frame.shape)
@@ -291,7 +310,7 @@ async def test_face_similarity(
             # Step 2: 在人体裁剪上检测人脸 (SCRFD)
             face_result = face_det.get_aligned_face(crop)
             if face_result is None:
-                return FaceSimilarityFaceInfo(has_face=False, person_bbox=person_bbox), None
+                return FaceSimilarityFaceInfo(has_face=False, person_bbox=person_bbox), None, corrected_b64
 
             aligned, face_bbox_raw, kps = face_result
             # 人脸框从 crop 坐标转到原图坐标
@@ -318,14 +337,14 @@ async def test_face_similarity(
                 face_bbox=face_bbox,
                 face_quality=round(quality, 4),
                 aligned_face_b64=aligned_b64,
-            ), embedding
+            ), embedding, corrected_b64
 
         # 处理两张图片
         bytes1 = await file1.read()
         bytes2 = await file2.read()
 
-        info1, emb1 = _process_image(bytes1)
-        info2, emb2 = _process_image(bytes2)
+        info1, emb1, corr1 = _process_image(bytes1)
+        info2, emb2, corr2 = _process_image(bytes2)
 
         # 计算相似度 (与 gallery matcher 一致的 cosine similarity)
         similarity = None
@@ -336,6 +355,8 @@ async def test_face_similarity(
             face1=info1,
             face2=info2,
             similarity=similarity,
+            corrected_image1_b64=corr1,
+            corrected_image2_b64=corr2,
         )
 
     except Exception as e:
@@ -343,6 +364,216 @@ async def test_face_similarity(
         return FaceSimilarityTestResponse(
             face1=FaceSimilarityFaceInfo(has_face=False),
             face2=FaceSimilarityFaceInfo(has_face=False),
+            error=str(e),
+        )
+
+
+@router.post("/test_body_similarity", response_model=BodySimilarityTestResponse)
+async def test_body_similarity(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+    undistort: str = Form("false"),
+) -> BodySimilarityTestResponse:
+    """测试两张图片的全身 ReID 相似度 (SOLIDER Swin-Small + cosine similarity)。"""
+    do_undistort = undistort.lower() in ("true", "1", "yes")
+    try:
+        from src.tier2.features import get_body_extractor
+        detector = get_fast_detector()
+        body_ext = get_body_extractor()
+
+        def _process_image(image_bytes: bytes) -> tuple[BodySimilarityBodyInfo, np.ndarray | None, str | None]:
+            """处理单张图片: 检测人体 → 裁剪 → 提取 body embedding。"""
+            corrected_b64 = None
+            # 镜头畸变矫正
+            if do_undistort:
+                from src.utils.image_correction import correct_image_bytes
+                try:
+                    image_bytes = correct_image_bytes(image_bytes)
+                except Exception:
+                    logger.warning("Image undistortion failed, using original")
+
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if frame is None:
+                return BodySimilarityBodyInfo(has_body=False), None, None
+
+            # 矫正后的原图编码供前端预览
+            if do_undistort:
+                _, cb = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                corrected_b64 = base64.b64encode(cb.tobytes()).decode('ascii')
+
+            h_f, w_f = frame.shape[:2]
+
+            # 人体检测 (YOLO)
+            detections = detector.detect(frame)
+            if not detections or detections[0].bbox is None:
+                # 未检测到人体, 以全图作为 body crop
+                crops = [frame]
+                person_bbox = [0.0, 0.0, float(w_f), float(h_f)]
+            else:
+                best_idx = select_best_detection(detections, frame.shape)
+                det = detections[best_idx]
+                x1 = max(0, int(det.bbox[0]))
+                y1 = max(0, int(det.bbox[1]))
+                x2 = min(w_f, int(det.bbox[2]))
+                y2 = min(h_f, int(det.bbox[3]))
+                person_bbox = [float(x1), float(y1), float(x2), float(y2)]
+                crops = [frame[y1:y2, x1:x2].copy()]
+
+            # 提取 body embedding
+            embeddings = body_ext.extract_batch(crops)
+            if not embeddings:
+                return BodySimilarityBodyInfo(has_body=False), None, corrected_b64
+
+            # 编码裁剪图供前端显示
+            crop_resized = cv2.resize(crops[0], (128, 384))
+            _, buf = cv2.imencode('.jpg', crop_resized, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            crop_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+
+            return BodySimilarityBodyInfo(
+                has_body=True,
+                person_bbox=person_bbox,
+                body_crop_b64=crop_b64,
+            ), embeddings[0], corrected_b64
+
+        # 处理两张图片
+        bytes1 = await file1.read()
+        bytes2 = await file2.read()
+
+        info1, emb1, corr1 = _process_image(bytes1)
+        info2, emb2, corr2 = _process_image(bytes2)
+
+        # 计算相似度 (cosine similarity, embeddings 已 L2 归一化)
+        similarity = None
+        if emb1 is not None and emb2 is not None:
+            similarity = round(float(np.dot(emb1, emb2)), 4)
+
+        return BodySimilarityTestResponse(
+            body1=info1,
+            body2=info2,
+            similarity=similarity,
+            embedding_dim=body_ext.EMBEDDING_DIM,
+            corrected_image1_b64=corr1,
+            corrected_image2_b64=corr2,
+        )
+
+    except Exception as e:
+        logger.exception("Error testing body similarity")
+        return BodySimilarityTestResponse(
+            body1=BodySimilarityBodyInfo(has_body=False),
+            body2=BodySimilarityBodyInfo(has_body=False),
+            error=str(e),
+        )
+
+
+# ── ReID 模型对比 ─────────────────────────────────────────────
+_osnet_extractor = None
+
+
+def _get_osnet_extractor():
+    """延迟加载 OSNet 提取器 (singleton)。"""
+    global _osnet_extractor
+    if _osnet_extractor is None:
+        from src.tier2.features.osnet_extractor import OSNetExtractor
+        hw_config = _get_config().hardware
+        _osnet_extractor = OSNetExtractor(device=hw_config.device)
+    return _osnet_extractor
+
+
+@router.post("/test_reid_compare", response_model=ReIDCompareResponse)
+async def test_reid_compare(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+    undistort: str = Form("false"),
+) -> ReIDCompareResponse:
+    """对比两种 ReID 模型 (SOLIDER Swin-Small vs OSNet-AIN) 的相似度。"""
+    do_undistort = undistort.lower() in ("true", "1", "yes")
+    try:
+        from src.tier2.features import get_body_extractor
+        detector = get_fast_detector()
+        solider_ext = get_body_extractor()
+        osnet_ext = _get_osnet_extractor()
+
+        def _process_image(image_bytes: bytes):
+            corrected_b64 = None
+            # 镜头畸变矫正
+            if do_undistort:
+                from src.utils.image_correction import correct_image_bytes
+                try:
+                    image_bytes = correct_image_bytes(image_bytes)
+                except Exception:
+                    logger.warning("Image undistortion failed, using original")
+
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if frame is None:
+                return BodySimilarityBodyInfo(has_body=False), None, None
+
+            # 矫正后的原图编码供前端预览
+            if do_undistort:
+                _, cb = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                corrected_b64 = base64.b64encode(cb.tobytes()).decode('ascii')
+
+            h_f, w_f = frame.shape[:2]
+            detections = detector.detect(frame)
+            if not detections or detections[0].bbox is None:
+                crops = [frame]
+                person_bbox = [0.0, 0.0, float(w_f), float(h_f)]
+            else:
+                best_idx = select_best_detection(detections, frame.shape)
+                det = detections[best_idx]
+                x1 = max(0, int(det.bbox[0]))
+                y1 = max(0, int(det.bbox[1]))
+                x2 = min(w_f, int(det.bbox[2]))
+                y2 = min(h_f, int(det.bbox[3]))
+                person_bbox = [float(x1), float(y1), float(x2), float(y2)]
+                crops = [frame[y1:y2, x1:x2].copy()]
+
+            crop_resized = cv2.resize(crops[0], (128, 384))
+            _, buf = cv2.imencode('.jpg', crop_resized, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            crop_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+
+            return BodySimilarityBodyInfo(
+                has_body=True,
+                person_bbox=person_bbox,
+                body_crop_b64=crop_b64,
+            ), crops[0], corrected_b64
+
+        bytes1 = await file1.read()
+        bytes2 = await file2.read()
+        info1, crop1, corr1 = _process_image(bytes1)
+        info2, crop2, corr2 = _process_image(bytes2)
+
+        solider_sim = None
+        osnet_sim = None
+
+        if crop1 is not None and crop2 is not None:
+            # SOLIDER
+            s_embs = solider_ext.extract_batch([crop1, crop2])
+            if len(s_embs) == 2:
+                solider_sim = round(float(np.dot(s_embs[0], s_embs[1])), 4)
+
+            # OSNet
+            o_embs = osnet_ext.extract_batch([crop1, crop2])
+            if len(o_embs) == 2:
+                osnet_sim = round(float(np.dot(o_embs[0], o_embs[1])), 4)
+
+        return ReIDCompareResponse(
+            body1=info1,
+            body2=info2,
+            solider_similarity=solider_sim,
+            solider_dim=solider_ext.EMBEDDING_DIM,
+            osnet_similarity=osnet_sim,
+            osnet_dim=osnet_ext.EMBEDDING_DIM,
+            corrected_image1_b64=corr1,
+            corrected_image2_b64=corr2,
+        )
+
+    except Exception as e:
+        logger.exception("Error comparing ReID models")
+        return ReIDCompareResponse(
+            body1=BodySimilarityBodyInfo(has_body=False),
+            body2=BodySimilarityBodyInfo(has_body=False),
             error=str(e),
         )
 

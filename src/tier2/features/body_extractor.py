@@ -1,13 +1,12 @@
 """
 全身 ReID 特征提取器
 
-抽象 ReID 特征提取接口, 目前使用 torchreid OSNet-AIN 作为后备方案
-(SOLIDER 需要从源码安装, 后续可替换)。
+使用 SOLIDER (Swin-Small, CVPR 2023) 提取全身 ReID 特征。
 
 特征:
-- 2048 维 L2 归一化全身嵌入向量
+- 768 维 L2 归一化全身嵌入向量 (Swin-Small)
 - 支持水平翻转测试增强 (TTA)
-- 标准 ImageNet 预处理 (resize 256×128, normalize)
+- SOLIDER 标准预处理 (resize 384×128, normalize mean=0.5, std=0.5)
 """
 from __future__ import annotations
 
@@ -18,55 +17,69 @@ from loguru import logger
 
 from src.config import get_config
 
-# ImageNet normalization constants
-_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
 
 class BodyExtractor:
     """全身 ReID 特征提取器。
 
-    封装 person re-identification 模型, 从人体检测框中提取全身外观特征。
-    当前使用 torchreid OSNet-AIN; 如加载失败则抛出异常。
+    封装 SOLIDER Swin Transformer ReID 模型,
+    从人体检测框中提取全身外观特征。
 
     Attributes:
         config: ReID 配置。
-        model: 已加载的 ReID 模型。
+        model: 已加载的 SOLIDER ReID 模型。
         device: 推理设备。
+        EMBEDDING_DIM: 输出嵌入维度 (Swin-Small: 768)。
     """
 
-    # Output embedding dimension
-    EMBEDDING_DIM: int = 512
+    # Output embedding dimension (Swin-Small default)
+    EMBEDDING_DIM: int = 768
 
     def __init__(self) -> None:
-        """初始化 ReID 特征提取器。
-
-        加载 torchreid OSNet-AIN 模型。
-        """
-        config = get_config().reid
+        """初始化 SOLIDER ReID 特征提取器。"""
         hw_config = get_config().hardware
         self.device = torch.device(hw_config.device)
         self._model = None
+        self._pixel_mean = None
+        self._pixel_std = None
 
         self._load_model()
 
     def _load_model(self) -> None:
-        """加载 ReID 模型, 优先 torchreid。"""
-        import torchreid
+        """加载 SOLIDER ReID 模型。"""
+        from src.tier2.features.solider.solider_model import SOLIDERReID
 
         config = get_config().reid
-        # 自动查找缓存的权重文件，避免 gdown 下载卡住
-        model_path = config.reid_model_weights or None
-        if not model_path:
-            model_path = self._find_cached_weights()
 
-        self._model = torchreid.utils.FeatureExtractor(
-            model_name=config.reid_model_name,
-            model_path=model_path,
-            device=str(self.device),
-        )
-        # Query actual feature dimension from model
-        self.EMBEDDING_DIM = self._probe_embedding_dim()
+        # 查找权重文件
+        weights_path = config.reid_model_weights
+        if not weights_path:
+            weights_path = SOLIDERReID.find_checkpoint(config.reid_model_name)
+
+        if weights_path:
+            self._model = SOLIDERReID.from_checkpoint(
+                checkpoint_path=weights_path,
+                model_name=config.reid_model_name,
+                device=str(self.device),
+            )
+        else:
+            logger.warning(
+                "No SOLIDER checkpoint found. Model will be initialized with random weights. "
+                "Download weights and place at models/solider_swin_small_reid.pth"
+            )
+            self._model = SOLIDERReID(model_name=config.reid_model_name)
+            self._model.to(self.device)
+            self._model.eval()
+
+        self.EMBEDDING_DIM = self._model.feat_dim
+
+        # 预计算归一化参数 (转为 tensor, 用于批量预处理)
+        self._pixel_mean = torch.tensor(
+            config.reid_pixel_mean, dtype=torch.float32, device=self.device,
+        ).view(1, 3, 1, 1)
+        self._pixel_std = torch.tensor(
+            config.reid_pixel_std, dtype=torch.float32, device=self.device,
+        ).view(1, 3, 1, 1)
+
         logger.info(
             "BodyExtractor loaded: model={}, device={}, dim={}",
             config.reid_model_name,
@@ -74,52 +87,37 @@ class BodyExtractor:
             self.EMBEDDING_DIM,
         )
 
+    def _preprocess_batch(self, crops: list[np.ndarray]) -> torch.Tensor:
+        """批量预处理: resize + normalize → tensor.
 
-    @staticmethod
-    def _find_cached_weights() -> str | None:
-        """在常见缓存目录中搜索已下载的模型权重。"""
-        import os
-        import glob
-
-        model_name = get_config().reid.reid_model_name
-        search_dirs = [
-            os.path.expanduser("~/.cache/torch/checkpoints"),
-            os.path.expanduser("~/.torch/checkpoints"),
-            os.path.join(os.environ.get("TORCH_HOME", ""), "checkpoints"),
-            "models",
-        ]
-
-        for d in search_dirs:
-            if not d or not os.path.isdir(d):
-                continue
-            matches = glob.glob(os.path.join(d, f"{model_name}*"))
-            if matches:
-                path = matches[0]
-                logger.info("Found cached ReID weights: {}", path)
-                return path
-
-        logger.debug("No cached weights found for {}", model_name)
-        return None
-
-    def _probe_embedding_dim(self) -> int:
-        """探测模型实际输出特征维度。
+        Args:
+            crops: BGR 图像列表
 
         Returns:
-            嵌入向量维度。
+            预处理后的 tensor, shape (N, 3, H, W)
         """
-        try:
-            dummy = np.zeros((128, 64, 3), dtype=np.uint8)
-            features = self._model([dummy])
-            dim = features.shape[1]
-            return int(dim)
-        except Exception:
-            return 512
+        config = get_config().reid
+        input_h, input_w = config.reid_input_size
+
+        batch = []
+        for crop in crops:
+            # Resize
+            resized = cv2.resize(crop, (input_w, input_h))
+            # BGR → RGB, HWC → CHW, uint8 → float32 [0, 1]
+            img = resized[:, :, ::-1].copy()
+            img = img.transpose(2, 0, 1).astype(np.float32) / 255.0
+            batch.append(img)
+
+        tensor = torch.from_numpy(np.stack(batch)).to(self.device)
+        # Normalize: (x - mean) / std
+        tensor = (tensor - self._pixel_mean) / self._pixel_std
+        return tensor
 
     def extract_batch(self, crops: list[np.ndarray]) -> list[np.ndarray]:
-        """批量推理, 利用 GPU 并行提速
+        """批量推理, 利用 GPU 并行提速。
 
         flip-test TTA 时将原图+翻转图拼为一个大 batch 一次推理,
-        避免两次 kernel launch 的开销.
+        避免两次 kernel launch 的开销。
 
         Args:
             crops: BGR 图像列表 (已裁剪的人体区域)
@@ -130,32 +128,30 @@ class BodyExtractor:
             return []
 
         config = get_config().reid
-        input_h, input_w = config.reid_input_size
-
-        # 预处理: resize 所有 crop
-        resized_list = []
-        for crop in crops:
-            resized = cv2.resize(crop, (input_w, input_h))
-            resized_list.append(resized)
 
         try:
             if config.use_flip_test:
-                # 原图 + 翻转图拼成一个大列表, 一次 forward
-                flipped_list = [cv2.flip(r, 1) for r in resized_list]
-                all_images = resized_list + flipped_list
-                features = self._model(all_images)  # (2N, dim)
+                # 原图 + 水平翻转图
+                flipped_crops = [cv2.flip(c, 1) for c in crops]
+                all_crops = crops + flipped_crops
 
+                tensor = self._preprocess_batch(all_crops)
+
+                with torch.no_grad():
+                    features = self._model(tensor)  # (2N, dim)
+
+                features = features.cpu().numpy()
                 n = len(crops)
-                if isinstance(features, torch.Tensor):
-                    features = features.cpu().numpy()
                 orig_feats = features[:n]
                 flip_feats = features[n:]
                 avg_feats = (orig_feats + flip_feats) / 2.0
             else:
-                features = self._model(resized_list)
-                if isinstance(features, torch.Tensor):
-                    features = features.cpu().numpy()
-                avg_feats = features
+                tensor = self._preprocess_batch(crops)
+
+                with torch.no_grad():
+                    features = self._model(tensor)  # (N, dim)
+
+                avg_feats = features.cpu().numpy()
 
             # L2 normalize each
             results = []
@@ -168,7 +164,7 @@ class BodyExtractor:
             return results
 
         except Exception as e:
-            logger.warning("Batch ReID extraction failed: {}", e)
+            logger.warning("Batch SOLIDER extraction failed: {}", e)
             return [self._random_feature() for _ in crops]
 
     def _random_feature(self) -> np.ndarray:
