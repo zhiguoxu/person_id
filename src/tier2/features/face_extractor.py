@@ -80,6 +80,16 @@ class FaceExtractor:
             logger.error("Failed to initialize FaceExtractor: {}", e)
             raise
 
+    @property
+    def backend(self) -> str:
+        """当前识别后端 (``"arcface"`` / ``"adaface"``)。"""
+        return self._backend
+
+    @property
+    def default_channel_order(self) -> str:
+        """backend 默认送入模型的通道顺序 (arcface→rgb, adaface→bgr)。"""
+        return "rgb" if self._backend == "arcface" else "bgr"
+
     @staticmethod
     def _get_providers(ctx_id: int) -> list[str]:
         """根据设备 ID 获取 ONNX Runtime providers。
@@ -97,22 +107,27 @@ class FaceExtractor:
             ]
         return ["CPUExecutionProvider"]
 
-    def _preprocess(self, aligned_face: np.ndarray) -> np.ndarray:
+    def _preprocess(
+        self, aligned_face: np.ndarray, channel_order: str | None = None,
+    ) -> np.ndarray:
         """预处理对齐人脸 → ONNX 输入 tensor。
 
         Args:
             aligned_face: 112×112 BGR 对齐人脸。
+            channel_order: 强制指定送入模型的通道顺序 ``"bgr"`` / ``"rgb"``;
+                为 ``None`` 时按 backend 默认 (arcface→RGB, adaface→BGR)。
 
         Returns:
             (1, 3, 112, 112) float32 tensor, 值域 [-1, 1]。
         """
         img = aligned_face.astype(np.float32)
 
-        if self._backend == "arcface":
-            # ArcFace: BGR → RGB
-            img = img[:, :, ::-1].copy()
+        # 未指定时按 backend 默认 (arcface→rgb, adaface→bgr)
+        order = channel_order or self.default_channel_order
 
-        # AdaFace: 保持 BGR 不变
+        if order == "rgb":
+            # 输入是 BGR, 翻转为 RGB
+            img = img[:, :, ::-1].copy()
 
         # 统一归一化到 [-1, 1]
         img = (img - 127.5) / 127.5
@@ -121,11 +136,15 @@ class FaceExtractor:
         # 添加 batch 维度
         return np.expand_dims(img, 0)
 
-    def extract_embedding(self, aligned_face: np.ndarray) -> np.ndarray | None:
+    def extract_embedding(
+        self, aligned_face: np.ndarray, channel_order: str | None = None,
+    ) -> np.ndarray | None:
         """从预对齐的 112×112 人脸提取嵌入。
 
         Args:
             aligned_face: 112×112 BGR 对齐人脸 (来自 Tier1 norm_crop)。
+            channel_order: 强制指定送入模型的通道顺序 ``"bgr"`` / ``"rgb"``;
+                为 ``None`` 时按 backend 默认。
 
         Returns:
             512 维 L2 归一化嵌入向量, 或 None (提取失败时)。
@@ -135,7 +154,7 @@ class FaceExtractor:
             return None
 
         try:
-            blob = self._preprocess(aligned_face)
+            blob = self._preprocess(aligned_face, channel_order)
             output = self._session.run(None, {self._input_name: blob})
             embedding = output[0].flatten().astype(np.float32)
 

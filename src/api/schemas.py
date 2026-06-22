@@ -230,7 +230,9 @@ class FaceSimilarityTestResponse(BaseModel):
     """人脸相似度测试结果"""
     face1: FaceSimilarityFaceInfo
     face2: FaceSimilarityFaceInfo
-    similarity: float | None = None
+    similarity: float | None = None  # backend 默认通道的相似度
+    similarity_bgr: float | None = None  # 以 BGR 通道送入模型的相似度
+    similarity_rgb: float | None = None  # 以 RGB 通道送入模型的相似度
     corrected_image1_b64: str | None = None  # 畸变矫正后的原图 base64
     corrected_image2_b64: str | None = None
     error: str | None = None

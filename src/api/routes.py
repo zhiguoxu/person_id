@@ -252,8 +252,14 @@ async def test_face_similarity(
         face_ext = get_face_extractor()
         ediffiqa = get_ediffiqa()
 
-        def _process_image(image_bytes: bytes) -> tuple[FaceSimilarityFaceInfo, np.ndarray | None, str | None]:
-            """处理单张图片: 检测人体 → 检测人脸 → 对齐 → 提取嵌入。"""
+        def _process_image(
+            image_bytes: bytes,
+        ) -> tuple[FaceSimilarityFaceInfo, np.ndarray | None, np.ndarray | None, str | None]:
+            """处理单张图片: 检测人体 → 检测人脸 → 对齐 → 提取 BGR/RGB 两种通道嵌入。
+
+            Returns:
+                (人脸信息, BGR 通道嵌入, RGB 通道嵌入, 矫正原图 b64)。
+            """
             corrected_b64 = None
             # 镜头畸变矫正
             if do_undistort:
@@ -266,7 +272,7 @@ async def test_face_similarity(
             np_arr = np.frombuffer(image_bytes, np.uint8)
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if frame is None:
-                return FaceSimilarityFaceInfo(has_face=False), None, None
+                return FaceSimilarityFaceInfo(has_face=False), None, None, None
 
             # 矫正后的原图编码供前端预览
             if do_undistort:
@@ -281,21 +287,22 @@ async def test_face_similarity(
                 # 没检测到人体, 直接在全图检测人脸
                 face_result = face_det.get_aligned_face(frame)
                 if face_result is None:
-                    return FaceSimilarityFaceInfo(has_face=False), None, corrected_b64
+                    return FaceSimilarityFaceInfo(has_face=False), None, None, corrected_b64
                 aligned, face_bbox_raw, kps = face_result
                 face_bbox = [float(face_bbox_raw[0]), float(face_bbox_raw[1]),
                              float(face_bbox_raw[2]), float(face_bbox_raw[3])]
                 quality = ediffiqa.predict(aligned)
                 _, buf = cv2.imencode('.jpg', aligned, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 aligned_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
-                embedding = face_ext.extract_embedding(aligned)
+                emb_bgr = face_ext.extract_embedding(aligned, channel_order="bgr")
+                emb_rgb = face_ext.extract_embedding(aligned, channel_order="rgb")
                 return FaceSimilarityFaceInfo(
                     has_face=True,
                     person_bbox=None,
                     face_bbox=face_bbox,
                     face_quality=round(quality, 4),
                     aligned_face_b64=aligned_b64,
-                ), embedding, corrected_b64
+                ), emb_bgr, emb_rgb, corrected_b64
 
             # 注意力选人: 1 人直接取, 多人按注意力评分选
             best_idx = select_best_detection(detections, frame.shape)
@@ -310,7 +317,7 @@ async def test_face_similarity(
             # Step 2: 在人体裁剪上检测人脸 (SCRFD)
             face_result = face_det.get_aligned_face(crop)
             if face_result is None:
-                return FaceSimilarityFaceInfo(has_face=False, person_bbox=person_bbox), None, corrected_b64
+                return FaceSimilarityFaceInfo(has_face=False, person_bbox=person_bbox), None, None, corrected_b64
 
             aligned, face_bbox_raw, kps = face_result
             # 人脸框从 crop 坐标转到原图坐标
@@ -328,8 +335,9 @@ async def test_face_similarity(
             _, buf = cv2.imencode('.jpg', aligned, [cv2.IMWRITE_JPEG_QUALITY, 95])
             aligned_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
 
-            # Step 4: 人脸嵌入 (ArcFace/AdaFace)
-            embedding = face_ext.extract_embedding(aligned)
+            # Step 4: 人脸嵌入 (ArcFace/AdaFace) — 同时计算 BGR / RGB 两种通道
+            emb_bgr = face_ext.extract_embedding(aligned, channel_order="bgr")
+            emb_rgb = face_ext.extract_embedding(aligned, channel_order="rgb")
 
             return FaceSimilarityFaceInfo(
                 has_face=True,
@@ -337,24 +345,32 @@ async def test_face_similarity(
                 face_bbox=face_bbox,
                 face_quality=round(quality, 4),
                 aligned_face_b64=aligned_b64,
-            ), embedding, corrected_b64
+            ), emb_bgr, emb_rgb, corrected_b64
 
         # 处理两张图片
         bytes1 = await file1.read()
         bytes2 = await file2.read()
 
-        info1, emb1, corr1 = _process_image(bytes1)
-        info2, emb2, corr2 = _process_image(bytes2)
+        info1, emb1_bgr, emb1_rgb, corr1 = _process_image(bytes1)
+        info2, emb2_bgr, emb2_rgb, corr2 = _process_image(bytes2)
 
         # 计算相似度 (与 gallery matcher 一致的 cosine similarity)
-        similarity = None
-        if emb1 is not None and emb2 is not None:
-            similarity = round(float(np.dot(emb1, emb2)), 4)
+        def _cosine(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
+            if a is None or b is None:
+                return None
+            return round(float(np.dot(a, b)), 4)
+
+        similarity_bgr = _cosine(emb1_bgr, emb2_bgr)
+        similarity_rgb = _cosine(emb1_rgb, emb2_rgb)
+        # similarity 保持 backend 默认通道, 与底库匹配口径一致
+        similarity = similarity_rgb if face_ext.default_channel_order == "rgb" else similarity_bgr
 
         return FaceSimilarityTestResponse(
             face1=info1,
             face2=info2,
             similarity=similarity,
+            similarity_bgr=similarity_bgr,
+            similarity_rgb=similarity_rgb,
             corrected_image1_b64=corr1,
             corrected_image2_b64=corr2,
         )

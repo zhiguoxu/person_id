@@ -300,9 +300,23 @@
                         <span>+1.0</span>
                     </div>
                     <div class="face-sim-interp" style="color: ${interpColor};">${interp}</div>
+                    ${_renderChannelBreakdown(data)}
                     <div class="face-sim-thresholds">
                         <span>System thresholds — Definite: ≥0.85 | Confident: ≥0.72 | Suspected: ≥0.55</span>
                     </div>
+                </div>
+            `;
+        }
+
+        function _renderChannelBreakdown(data) {
+            const bgr = data.similarity_bgr;
+            const rgb = data.similarity_rgb;
+            if (bgr == null && rgb == null) return '';
+            const fmt = (v) => (v == null ? '—' : v.toFixed(4));
+            return `
+                <div class="face-sim-channels">
+                    <span class="face-sim-channel">BGR channel: <strong>${fmt(bgr)}</strong></span>
+                    <span class="face-sim-channel">RGB channel: <strong>${fmt(rgb)}</strong></span>
                 </div>
             `;
         }

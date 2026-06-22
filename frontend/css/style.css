@@ -2171,6 +2171,20 @@ h1, h2, h3 {
     font-weight: 500;
 }
 
+.face-sim-channels {
+    margin-top: 10px;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.face-sim-channel strong {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
 .face-sim-thresholds {
     margin-top: 8px;
     font-size: 11px;
