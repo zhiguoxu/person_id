@@ -11,7 +11,7 @@ Tier1 SCRFD 已完成人脸检测 + 对齐 (aligned_face 112×112),
 
 支持的后端:
 - arcface: InsightFace w600k_r50 (BGR→RGB, normalize [-1,1])
-- adaface: AdaFace IR-101 (BGR 直接输入, normalize [-1,1])
+- adaface: AdaFace IR-101 (BGR→RGB, normalize [-1,1])
 """
 from __future__ import annotations
 
@@ -27,9 +27,9 @@ class FaceExtractor:
     通过 ONNX Runtime 直接加载模型, 从预对齐的 112×112 人脸
     提取 512 维 L2 归一化特征向量。
 
-    两种后端的预处理差异:
+    两种后端的预处理一致:
     - ArcFace: BGR → RGB → normalize to [-1, 1]
-    - AdaFace: BGR → normalize to [-1, 1] (不做通道翻转)
+    - AdaFace: BGR → RGB → normalize to [-1, 1]
     """
 
     def __init__(self) -> None:
@@ -87,8 +87,8 @@ class FaceExtractor:
 
     @property
     def default_channel_order(self) -> str:
-        """backend 默认送入模型的通道顺序 (arcface→rgb, adaface→bgr)。"""
-        return "rgb" if self._backend == "arcface" else "bgr"
+        """backend 默认送入模型的通道顺序 (arcface / adaface 均为 rgb)。"""
+        return "rgb"
 
     @staticmethod
     def _get_providers(ctx_id: int) -> list[str]:
@@ -115,14 +115,14 @@ class FaceExtractor:
         Args:
             aligned_face: 112×112 BGR 对齐人脸。
             channel_order: 强制指定送入模型的通道顺序 ``"bgr"`` / ``"rgb"``;
-                为 ``None`` 时按 backend 默认 (arcface→RGB, adaface→BGR)。
+                为 ``None`` 时按 backend 默认 (arcface / adaface 均为 RGB)。
 
         Returns:
             (1, 3, 112, 112) float32 tensor, 值域 [-1, 1]。
         """
         img = aligned_face.astype(np.float32)
 
-        # 未指定时按 backend 默认 (arcface→rgb, adaface→bgr)
+        # 未指定时按 backend 默认 (arcface / adaface 均为 rgb)
         order = channel_order or self.default_channel_order
 
         if order == "rgb":

@@ -183,9 +183,8 @@ class ServerConfig(BaseModel):
     # 图像矫正
     image_correction_enabled: bool = False  # 是否启用镜头畸变矫正
 
-    # ISS 直播流 API
+    # ISS 直播流 API (device-sn 由请求的 camera_id 动态传入, 不在此写死)
     iss_api_url: str = "http://42.192.205.141:8999"  # ISS 服务地址
-    iss_device_sn: str = "EU0125MH00100015056"  # 设备序列号
 
     # WebSocket
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小

@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from src.api.registry import camera_registry, get_camera_orchestrator
+from src.api.registry import camera_registry
 from src.api.routes import router as api_router
 from src.api.websocket import handle_ws_connection
 from src.config import FRONTEND_DIR, load_config

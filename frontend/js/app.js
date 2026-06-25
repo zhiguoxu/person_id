@@ -166,7 +166,8 @@
                 refreshBtn.disabled = true;
                 refreshBtn.classList.add('spinning');
                 try {
-                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/refresh_stream`, {
+                    const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
+                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/refresh_stream`, {
                         method: 'POST',
                     });
                     if (!resp.ok) {

@@ -25,6 +25,7 @@ from src.api.schemas import (
     ConfigUpdateRequest,
     ConfigUpdateResponse,
     ConfirmIdentityRequest,
+    CurrentIdentityResponse,
     FaceSimilarityFaceInfo,
     FaceSimilarityTestResponse,
     FeatureEntryInfo,
@@ -33,10 +34,13 @@ from src.api.schemas import (
     PersonListResponse,
     PersonSummary,
     QualityCacheResponse,
+    RegisterCurrentRequest,
+    RegisterCurrentResponse,
     ReIDCompareResponse,
     RenamePersonRequest,
     TunableParam,
 )
+from src.pipeline.data_models import IdentityStatus
 from src.pipeline.frame_buffer import CachedFrame
 from src.tier1.attention import select_best_detection
 from src.tier1.detection import get_fast_detector
@@ -50,16 +54,15 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 
 # ==============================================================================
-# ISS Stream refresh (stop + start → FLV URL)
+# ISS Stream refresh (start → FLV URL)
 # ==============================================================================
 
 @router.post("/refresh_stream")
 async def refresh_stream() -> dict:
-    """重启 ISS 直播流并返回 FLV URL。
+    """获取 ISS 直播流并返回 FLV URL。
 
-    1. POST /iss/stop_stream
-    2. POST /iss/start_stream
-    3. 返回 data.Flv
+    1. POST /iss/start_stream
+    2. 返回 data.Flv
     """
     import httpx
 
@@ -68,13 +71,6 @@ async def refresh_stream() -> dict:
     headers = {"device-sn": cfg.iss_device_sn}
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        # stop
-        try:
-            await client.post(f"{base}/iss/stop_stream", headers=headers)
-        except Exception as e:
-            logger.warning("ISS stop_stream failed (ignored): {}", e)
-
-        # start
         resp = await client.post(f"{base}/iss/start_stream", headers=headers)
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"ISS start_stream failed: {resp.status_code}")
@@ -87,12 +83,16 @@ async def refresh_stream() -> dict:
         if not flv_url:
             raise HTTPException(status_code=502, detail="ISS returned no FLV URL")
 
-    logger.info("ISS stream refreshed: {}", flv_url)
+    logger.info("ISS stream started: {}", flv_url)
     return {"flv_url": flv_url}
 
 
-def _get_camera_orchestrator(camera_id: str):
-    """获取指定摄像头的编排器。"""
+def require_camera_orchestrator(camera_id: str):
+    """获取指定摄像头的编排器; 不在线则抛 404。
+
+    需要"必须有活跃 orchestrator"的端点用本函数; 能优雅降级(回退 DB / 返回离线状态)的
+    端点请直接用 registry 的 get_camera_orchestrator(返回 None)。
+    """
     orch = get_camera_orchestrator(camera_id)
     if orch is None:
         raise HTTPException(
@@ -597,7 +597,7 @@ async def test_reid_compare(
 @router.get("/{camera_id}/gallery/person/{person_id}", response_model=PersonDetailResponse)
 async def get_person(camera_id: str, person_id: str) -> PersonDetailResponse:
     """获取指定摄像头中单个人物的详细信息。"""
-    orch = _get_camera_orchestrator(camera_id)
+    orch = require_camera_orchestrator(camera_id)
     gallery = orch.gallery
 
     if person_id not in gallery:
@@ -718,7 +718,7 @@ async def get_quality_cache(camera_id: str, track_id: int) -> QualityCacheRespon
     """
     import cv2
 
-    orch = _get_camera_orchestrator(camera_id)
+    orch = require_camera_orchestrator(camera_id)
     state = orch.tracks.get(track_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"Track {track_id} not found")
@@ -756,7 +756,7 @@ async def get_quality_cache(camera_id: str, track_id: int) -> QualityCacheRespon
 @router.delete("/{camera_id}/track/{track_id}/quality_cache")
 async def clear_quality_cache(camera_id: str, track_id: int) -> dict:
     """清空指定 track 的 quality cache, 使新数据能重新进入。"""
-    orch = _get_camera_orchestrator(camera_id)
+    orch = require_camera_orchestrator(camera_id)
     state = orch.tracks.get(track_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"Track {track_id} not found")
@@ -776,7 +776,7 @@ async def confirm_identity(
 
     将指定 track_id 绑定到 person_id，更新底库和缓存。
     """
-    orch = _get_camera_orchestrator(camera_id)
+    orch = require_camera_orchestrator(camera_id)
 
     try:
         await orch.confirm_identity(
@@ -803,6 +803,132 @@ async def confirm_identity(
             status_code=500,
             detail=f"Confirmation failed: {str(e)}",
         ) from e
+
+
+# ==============================================================================
+# Voice-agent integration (语音对话集成: 查询/注册当前对话对象)
+# ==============================================================================
+
+# 视为"已识别(可直接报名字)"的状态
+_KNOWN_STATUSES = {IdentityStatus.DEFINITE, IdentityStatus.CONFIDENT}
+
+
+@router.get(
+    "/{camera_id}/vision/current_identity",
+    response_model=CurrentIdentityResponse,
+)
+async def current_identity(camera_id: str) -> CurrentIdentityResponse:
+    """查询"当前镜头前的人是谁"。
+
+    读取该摄像头 orchestrator 实时维护的注意力目标(current_target)及其身份,
+    把内部置信度状态归一化为 known / suspected / unknown 三档返回。
+    摄像头未连接时返回 camera_online=False / recognition=unknown (不报错),
+    便于对话端在无视频流时安全降级为"不知道"。
+    """
+    orch = get_camera_orchestrator(camera_id)
+    if orch is None:
+        return CurrentIdentityResponse(
+            camera_online=False,
+            has_target=False,
+            recognition="unknown",
+        )
+
+    target_id = orch.current_target_id
+    state = orch.tracks.get(target_id) if target_id is not None else None
+    if state is None:
+        # 摄像头在线但镜头前没人
+        return CurrentIdentityResponse(
+            camera_online=True,
+            has_target=False,
+            recognition="unknown",
+        )
+
+    ir = state.identity_result
+    status = ir.status
+
+    if status in _KNOWN_STATUSES and ir.person_id:
+        recognition = "known"
+    elif status == IdentityStatus.SUSPECTED and ir.person_id:
+        recognition = "suspected"
+    else:
+        # STRANGER / IDENTIFYING / CONFLICT / 无 person_id → 不可信, 一律 unknown
+        recognition = "unknown"
+
+    return CurrentIdentityResponse(
+        camera_online=True,
+        has_target=True,
+        recognition=recognition,
+        track_id=target_id,
+        person_id=ir.person_id if recognition != "unknown" else None,
+        display_name=ir.display_name if recognition != "unknown" else None,
+        status=status.value if hasattr(status, "value") else str(status),
+        fused_score=ir.fused_score,
+    )
+
+
+@router.post(
+    "/{camera_id}/vision/register_current",
+    response_model=RegisterCurrentResponse,
+)
+async def register_current(
+        camera_id: str, request: RegisterCurrentRequest,
+) -> RegisterCurrentResponse:
+    """把"当前镜头前的人"注册到底库并命名 (对应用户说"我是xxx")。
+
+    自动选取当前注意力目标的 track_id, 复用 orchestrator.confirm_identity 入库。
+    失败时返回 success=False 及可读 message, 由对话端转述给用户(如"请正对摄像头")。
+    """
+    orch = get_camera_orchestrator(camera_id)
+    if orch is None:
+        return RegisterCurrentResponse(
+            status="camera_offline",
+            success=False,
+            message="摄像头未连接，暂时看不到你，请稍后再试。",
+        )
+
+    target_id = orch.current_target_id
+    if target_id is None or target_id not in orch.tracks:
+        return RegisterCurrentResponse(
+            status="no_target",
+            success=False,
+            message="现在镜头前没有看到人，请正对摄像头后再说一次。",
+        )
+
+    # 造 key 由本服务推导: 当前目标已识别则复用其 key(改名+补特征), 否则新建。
+    target_person_id = None
+    ir = orch.tracks[target_id].identity_result
+    if ir.status in _KNOWN_STATUSES and ir.person_id:
+        target_person_id = ir.person_id
+
+    try:
+        await orch.confirm_identity(
+            track_id=target_id,
+            person_id=target_person_id,
+            name=request.name,
+        )
+    except ValueError as e:
+        # confirm_identity 在无人脸数据时抛 ValueError
+        msg = str(e)
+        is_no_face = "人脸" in msg
+        return RegisterCurrentResponse(
+            status="no_face" if is_no_face else "no_target",
+            success=False,
+            track_id=target_id,
+            message="还没看清你的脸，麻烦正对摄像头，我再记一次。" if is_no_face else msg,
+        )
+    except Exception as e:
+        logger.exception("register_current failed")
+        raise HTTPException(status_code=500, detail=f"Register failed: {e}") from e
+
+    # confirm_identity 成功后, track 的 identity_result 已写入最终 person_id
+    final_pid = orch.tracks[target_id].identity_result.person_id
+    return RegisterCurrentResponse(
+        status="registered",
+        success=True,
+        person_id=final_pid,
+        track_id=target_id,
+        message=f"已经记住你了，{request.name}。",
+    )
 
 
 @router.delete("/{camera_id}/gallery/person/{person_id}")

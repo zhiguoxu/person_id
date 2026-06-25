@@ -56,6 +56,50 @@ class RenamePersonRequest(BaseModel):
 
 
 # ==============================================================================
+# Voice-agent integration (语音对话集成: 查询/注册当前对话对象)
+# ==============================================================================
+
+class CurrentIdentityResponse(BaseModel):
+    """查询"当前镜头前的人是谁"。
+
+    供 voice_agent 在每轮对话前调用, 用于回答"你知道我是谁吗"。
+    recognition 字段把内部置信度状态归一化为三档, 让对话端无需理解细节:
+    - "known":   已确信识别 (definite/confident), 可直接报出 display_name
+    - "suspected": 疑似 (suspected), 不确定, 对话端应试探确认而非断定
+    - "unknown": 陌生/识别中/无人/摄像头离线, 必须如实回答不知道, 不可编造
+    """
+    camera_online: bool = Field(..., description="该 camera_id 是否有活跃视频流")
+    has_target: bool = Field(False, description="当前是否有注意力目标(镜头前有人)")
+    recognition: str = Field("unknown", description="known | suspected | unknown")
+    track_id: int | None = Field(None, description="当前目标的 track_id")
+    person_id: str | None = Field(None, description="底库人物 ID (已识别时)")
+    display_name: str | None = Field(None, description="人物名称 (已识别时)")
+    status: str | None = Field(None, description="原始 IdentityStatus 值, 调试用")
+    fused_score: float | None = Field(None, description="融合匹配分, 调试用")
+
+
+class RegisterCurrentRequest(BaseModel):
+    """把"当前镜头前的人"注册到底库并命名 (对应用户说"我是xxx")。
+
+    不接受调用方指定 person_id: 造 key 是本服务的职责 —— 当前目标若已识别则复用其 key、
+    否则新建, 由端点内部自行推导。
+    """
+    name: str = Field(..., description="用户的称呼/姓名", min_length=1, max_length=100)
+
+
+class RegisterCurrentResponse(BaseModel):
+    """注册当前对话对象的结果。
+
+    不回显 camera_id / name: 它们是请求输入, 调用方已有, 回显冗余。
+    """
+    status: str = Field(..., description="registered | no_target | no_face | camera_offline")
+    success: bool = Field(...)
+    person_id: str | None = Field(None, description="入库/复用的人物 key")
+    track_id: int | None = Field(None, description="本次入库的轨迹 ID (调试用)")
+    message: str = Field("", description="人类可读的结果说明 (失败时给出原因/引导)")
+
+
+# ==============================================================================
 # Quality Cache
 # ==============================================================================
 
