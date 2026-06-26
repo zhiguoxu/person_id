@@ -114,16 +114,19 @@ class BodyExtractor:
         tensor = (tensor - self._pixel_mean) / self._pixel_std
         return tensor
 
-    def extract_batch(self, crops: list[np.ndarray]) -> list[np.ndarray]:
+    def extract_batch(self, crops: list[np.ndarray]) -> list[np.ndarray] | None:
         """批量推理, 利用 GPU 并行提速。
 
         flip-test TTA 时将原图+翻转图拼为一个大 batch 一次推理,
         避免两次 kernel launch 的开销。
 
+        推理是整批级别的: 要么整批成功, 要么整批失败。
+
         Args:
             crops: BGR 图像列表 (已裁剪的人体区域)
         Returns:
-            L2-normalized embeddings 列表
+            成功: 与 crops 等长、每项为 L2-normalized embedding 的列表。
+            整批推理失败: None (调用方应丢弃这些帧, 不可落库)。
         """
         if not crops:
             return []
@@ -165,17 +168,8 @@ class BodyExtractor:
             return results
 
         except Exception as e:
+            # 整批推理失败时返回 None (而非随机向量): 随机 embedding 会
+            # 通过仅看图像质量的入库门槛被持久化, 永久污染该用户的 gallery。
+            # 返回 None 让调用方丢弃这些帧。
             logger.warning("Batch SOLIDER extraction failed: {}", e)
-            return [self._random_feature() for _ in crops]
-
-    def _random_feature(self) -> np.ndarray:
-        """生成随机 L2 归一化特征 (调试/降级用)。
-
-        Returns:
-            随机 L2 归一化向量, shape (EMBEDDING_DIM,)。
-        """
-        feat = np.random.randn(self.EMBEDDING_DIM).astype(np.float32)
-        norm = np.linalg.norm(feat)
-        if norm > 1e-6:
-            feat = feat / norm
-        return feat
+            return None

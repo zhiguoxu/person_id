@@ -64,17 +64,37 @@ class BatchExtractor:
         if body_pending:
             body_crops = [cf.entry.crop for cf in body_pending]
             body_embs = get_body_extractor().extract_batch(body_crops)
-            for cf, emb in zip(body_pending, body_embs):
-                cf.embedding = emb
+            if body_embs is None:
+                # 整批提取失败: 直接从 body_pool 移除这些帧 (按身份, 原地过滤),
+                # 避免残留 embedding=None 的帧污染后续入库/匹配; 本轮计数归零。
+                pending_ids = {id(cf) for cf in body_pending}
+                cache.body_pool[:] = [
+                    cf for cf in cache.body_pool if id(cf) not in pending_ids
+                ]
+                body_pending = []
+            else:
+                for cf, emb in zip(body_pending, body_embs):
+                    cf.embedding = emb
 
         # Face embedding: 从 Tier1 对齐人脸直接提取 (ArcFace/AdaFace, 无需重跑 SCRFD)
+        # 逐帧提取: 失败的帧从 face_pool 移除 (与 body 一致), 不残留 embedding=None。
         face_pending = [cf for cf in cache.face_pool if cf.embedding is None]
         if face_pending:
             face_extractor = get_face_extractor()
+            face_failed = []
             for cf in face_pending:
                 embedding = face_extractor.extract_embedding(cf.entry.aligned_face)
                 if embedding is not None:
                     cf.embedding = embedding
+                else:
+                    face_failed.append(cf)  # 提取失败, 待移除
+            if face_failed:
+                failed_ids = {id(cf) for cf in face_failed}
+                cache.face_pool[:] = [
+                    cf for cf in cache.face_pool if id(cf) not in failed_ids
+                ]
+                # 计数只算成功提取的帧
+                face_pending = [cf for cf in face_pending if cf.embedding is not None]
 
         if body_pending or face_pending:
             logger.debug("Extracted embeddings for {} body frames and {} face frames",

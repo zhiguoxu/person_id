@@ -566,7 +566,7 @@ async def test_reid_compare(
         if crop1 is not None and crop2 is not None:
             # SOLIDER
             s_embs = solider_ext.extract_batch([crop1, crop2])
-            if len(s_embs) == 2:
+            if s_embs is not None and len(s_embs) == 2:
                 solider_sim = round(float(np.dot(s_embs[0], s_embs[1])), 4)
 
             # OSNet
