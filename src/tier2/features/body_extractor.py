@@ -55,20 +55,21 @@ class BodyExtractor:
         if not weights_path:
             weights_path = SOLIDERReID.find_checkpoint(config.reid_model_name)
 
-        if weights_path:
-            self._model = SOLIDERReID.from_checkpoint(
-                checkpoint_path=weights_path,
-                model_name=config.reid_model_name,
-                device=str(self.device),
+        if not weights_path:
+            raise RuntimeError(
+                "No SOLIDER checkpoint found. Refusing to start with random weights: "
+                "random weights produce meaningless body embeddings that change on every "
+                "process restart (in-session match ~0.99, post-restart match ~0.0). "
+                "Download the SOLIDER Swin-Small ReID weights and place them at "
+                "models/solider_swin_small_reid.pth, or set reid.reid_model_weights to "
+                "the checkpoint path."
             )
-        else:
-            logger.warning(
-                "No SOLIDER checkpoint found. Model will be initialized with random weights. "
-                "Download weights and place at models/solider_swin_small_reid.pth"
-            )
-            self._model = SOLIDERReID(model_name=config.reid_model_name)
-            self._model.to(self.device)
-            self._model.eval()
+
+        self._model = SOLIDERReID.from_checkpoint(
+            checkpoint_path=weights_path,
+            model_name=config.reid_model_name,
+            device=str(self.device),
+        )
 
         self.EMBEDDING_DIM = self._model.feat_dim
 
