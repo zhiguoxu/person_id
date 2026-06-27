@@ -40,6 +40,30 @@ class IdentityStatus(str, Enum):
     IDENTIFYING = "identifying"  # 识别中 (Tier 2 异步处理)
 
 
+class RegisterFailureReason(str, Enum):
+    """confirm_identity / register_current 失败的结构化原因。
+
+    用结构化原因码替代对 message 文本的匹配, 让上层 (对话 agent) 能针对不同
+    情况精准引导用户 (没看到人 / 没看清脸 / 画面不够清晰)。
+    """
+    NO_TARGET = "no_target"  # 镜头前没有可注册的目标 (track 不存在)
+    NO_FACE = "no_face"  # 完全没有人脸数据 (无 embedding)
+    LOW_FACE_QUALITY = "low_face_quality"  # 有脸但质量/尺寸未达入库门槛, 无特征入库
+    UNKNOWN_PERSON_ID = "unknown_person_id"  # 指定了 person_id 但底库中不存在
+
+
+class ConfirmIdentityError(ValueError):
+    """confirm_identity 入库失败, 携带结构化原因码与可读信息。
+
+    继承 ValueError 以兼容既有 ``except ValueError`` 处理 (仍返回可读 message)。
+    """
+
+    def __init__(self, reason: RegisterFailureReason, message: str) -> None:
+        self.reason = reason
+        self.message = message
+        super().__init__(message)
+
+
 class EventType(str, Enum):
     """系统事件类型"""
     NEW_PERSON = "new_person"

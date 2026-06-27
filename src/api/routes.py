@@ -40,7 +40,11 @@ from src.api.schemas import (
     RenamePersonRequest,
     TunableParam,
 )
-from src.pipeline.data_models import IdentityStatus
+from src.pipeline.data_models import (
+    ConfirmIdentityError,
+    IdentityStatus,
+    RegisterFailureReason,
+)
 from src.pipeline.frame_buffer import CachedFrame
 from src.tier1.attention import select_best_detection
 from src.tier1.detection import get_fast_detector
@@ -811,6 +815,19 @@ async def confirm_identity(
 # 视为"已识别(可直接报名字)"的状态
 _KNOWN_STATUSES = {IdentityStatus.DEFINITE, IdentityStatus.CONFIDENT}
 
+# register_current 可能遇到的失败的用户可读引导语 (对话端可直接转述)。
+# 只列这条路径能真正触发的原因: target_person_id 由本服务从已匹配的 track 推导,
+# 不会传入未知 id, 故 UNKNOWN_PERSON_ID 在此不可达 (它是通用 confirm_identity API
+# 的校验)。未列出的原因走 .get() 兜底, 回落到 ConfirmIdentityError 自带 message。
+_REGISTER_FAILURE_MESSAGES: dict[RegisterFailureReason, str] = {
+    RegisterFailureReason.NO_TARGET: "现在镜头前没有看到人，请正对摄像头后再说一次。",
+    RegisterFailureReason.NO_FACE: "还没看清你的脸，麻烦正对摄像头，我再记一次。",
+    RegisterFailureReason.LOW_FACE_QUALITY: (
+        "看到你了，但画面不够清晰（可能太远或角度偏了），"
+        "麻烦正对摄像头并靠近一点，我再记一次。"
+    ),
+}
+
 
 @router.get(
     "/{camera_id}/vision/current_identity",
@@ -888,9 +905,9 @@ async def register_current(
     target_id = orch.current_target_id
     if target_id is None or target_id not in orch.tracks:
         return RegisterCurrentResponse(
-            status="no_target",
+            status=RegisterFailureReason.NO_TARGET.value,
             success=False,
-            message="现在镜头前没有看到人，请正对摄像头后再说一次。",
+            message=_REGISTER_FAILURE_MESSAGES[RegisterFailureReason.NO_TARGET],
         )
 
     # 造 key 由本服务推导: 当前目标已识别则复用其 key(改名+补特征), 否则新建。
@@ -905,15 +922,14 @@ async def register_current(
             person_id=target_person_id,
             name=request.name,
         )
-    except ValueError as e:
-        # confirm_identity 在无人脸数据时抛 ValueError
-        msg = str(e)
-        is_no_face = "人脸" in msg
+    except ConfirmIdentityError as e:
+        # 用结构化原因码区分各类失败, 让对话端针对性地引导用户。
+        message = _REGISTER_FAILURE_MESSAGES.get(e.reason, e.message)
         return RegisterCurrentResponse(
-            status="no_face" if is_no_face else "no_target",
+            status=e.reason.value,
             success=False,
             track_id=target_id,
-            message="还没看清你的脸，麻烦正对摄像头，我再记一次。" if is_no_face else msg,
+            message=message,
         )
     except Exception as e:
         logger.exception("register_current failed")

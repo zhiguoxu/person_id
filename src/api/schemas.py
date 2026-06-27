@@ -92,7 +92,13 @@ class RegisterCurrentResponse(BaseModel):
 
     不回显 camera_id / name: 它们是请求输入, 调用方已有, 回显冗余。
     """
-    status: str = Field(..., description="registered | no_target | no_face | camera_offline")
+    status: str = Field(
+        ...,
+        description=(
+            "registered | camera_offline | no_target | no_face | "
+            "low_face_quality | unknown_person_id"
+        ),
+    )
     success: bool = Field(...)
     person_id: str | None = Field(None, description="入库/复用的人物 key")
     track_id: int | None = Field(None, description="本次入库的轨迹 ID (调试用)")

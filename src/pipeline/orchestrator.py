@@ -24,10 +24,12 @@ from src.gallery.data_models import (
     PersonProfile, PoseBucket,
 )
 from src.pipeline.data_models import (
+    ConfirmIdentityError,
     EventType,
     IdentityResult,
     IdentityStatus,
     MatchResult,
+    RegisterFailureReason,
     SystemEvent,
     TrackedPerson,
 )
@@ -242,31 +244,58 @@ class VisionOrchestrator(BaseModel):
 
         state = self.tracks.get(track_id)
         if state is None:
-            raise ValueError(f"Track {track_id} not found, cannot confirm")
+            raise ConfirmIdentityError(
+                RegisterFailureReason.NO_TARGET,
+                f"Track {track_id} not found, cannot confirm",
+            )
 
         # 检查是否有人脸数据 (必须有至少一个带 embedding 的人脸帧)
         has_face = any(
             cf.embedding is not None for cf in state.quality_cache.face_pool
         )
         if not has_face:
-            raise ValueError("入库失败：没有人脸数据。请等待目标正面朝向摄像头后重试。")
+            raise ConfirmIdentityError(
+                RegisterFailureReason.NO_FACE,
+                "入库失败：没有人脸数据。请等待目标正面朝向摄像头后重试。",
+            )
 
+        is_new_person = False
         if not person_id:
             # 传空表示创建新用户
             profile = PersonProfile.create_new(display_name=name)
             person_id = profile.person_id
             self.gallery[person_id] = profile
+            is_new_person = True
             logger.info("Created new profile for {} (no ID provided)", person_id)
         elif person_id not in self.gallery:
             # 传了 ID 但库里没有，视为错误
             logger.error("Person ID {} not found in gallery", person_id)
-            raise ValueError(f"Person ID {person_id} not found in gallery")
+            raise ConfirmIdentityError(
+                RegisterFailureReason.UNKNOWN_PERSON_ID,
+                f"Person ID {person_id} not found in gallery",
+            )
 
         profile = self.gallery[person_id]
         profile.display_name = name
 
         # 将当前 track 缓存的特征立即入库
         changes = self._update_gallery_person(person_id, state)
+
+        # 新建用户必须真正写入至少一条人脸特征, 否则会产生"有 person 行但无人脸
+        # 特征"的空人物 (embedding 存在但质量/尺寸未达入库门槛)。回滚并报质量不足。
+        enrolled_face = any(op.kind == "face" for op in changes.feature_ops)
+        if is_new_person and not enrolled_face:
+            self.gallery.pop(person_id, None)
+            logger.warning(
+                "Rolled back new profile {}: no face feature passed enroll "
+                "threshold (face quality/size insufficient)",
+                person_id,
+            )
+            raise ConfirmIdentityError(
+                RegisterFailureReason.LOW_FACE_QUALITY,
+                "入库失败：人脸画面不够清晰 (可能太远或角度偏)，未能记录有效特征。"
+                "请正对摄像头并靠近一点后重试。",
+            )
 
         # 统一走 save_lock + 共享 session 落库 (含 upsert_person_row)
         await self._save_gallery_person_incremental(person_id, changes)
