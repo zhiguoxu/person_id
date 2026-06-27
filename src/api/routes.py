@@ -910,16 +910,29 @@ async def register_current(
             message=_REGISTER_FAILURE_MESSAGES[RegisterFailureReason.NO_TARGET],
         )
 
-    # 造 key 由本服务推导: 当前目标已识别则复用其 key(改名+补特征), 否则新建。
-    target_person_id = None
+    # 当前目标已被识别: 系统已经认识此人, 无需再入库, 直接复用其 ID。
+    # 这属于意外路径 —— 注册一般针对陌生人, 已识别的人不该再走"我是xxx", 故记 warning。
     ir = orch.tracks[target_id].identity_result
     if ir.status in _KNOWN_STATUSES and ir.person_id:
-        target_person_id = ir.person_id
+        logger.warning(
+            "register_current called on already-recognized target: "
+            "track_id={}, person_id={}, status={}, name={!r}. "
+            "Skipping enrollment, returning existing ID.",
+            target_id, ir.person_id, ir.status.value, request.name,
+        )
+        return RegisterCurrentResponse(
+            status="already_known",
+            success=True,
+            person_id=ir.person_id,
+            track_id=target_id,
+            message=f"我已经认识你了，{request.name}。",
+        )
 
+    # 走到这里说明目标尚未被识别, 一定是新建用户 (person_id=None)。
     try:
         await orch.confirm_identity(
             track_id=target_id,
-            person_id=target_person_id,
+            person_id=None,
             name=request.name,
         )
     except ConfirmIdentityError as e:

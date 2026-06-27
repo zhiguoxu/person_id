@@ -95,8 +95,8 @@ class RegisterCurrentResponse(BaseModel):
     status: str = Field(
         ...,
         description=(
-            "registered | camera_offline | no_target | no_face | "
-            "low_face_quality | unknown_person_id"
+            "registered | already_known | camera_offline | no_target | "
+            "no_face | low_face_quality | unknown_person_id"
         ),
     )
     success: bool = Field(...)
