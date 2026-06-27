@@ -87,7 +87,7 @@ async def refresh_stream() -> dict:
         if not flv_url:
             raise HTTPException(status_code=502, detail="ISS returned no FLV URL")
 
-    logger.info("ISS stream started: {}", flv_url)
+    logger.info("ISS 流已启动: {}", flv_url)
     return {"flv_url": flv_url}
 
 
@@ -130,7 +130,7 @@ async def update_config_endpoint(request: ConfigUpdateRequest) -> ConfigUpdateRe
     """更新可调参数。"""
     updated = _get_config().update_from_dict(request.updates)
     if updated:
-        logger.info("Config updated via REST: {}", updated)
+        logger.info("通过 REST 更新 config: {}", updated)
     return ConfigUpdateResponse(updated_keys=updated)
 
 
@@ -164,7 +164,7 @@ async def list_persons(camera_id: str) -> PersonListResponse:
         try:
             gallery = await get_gallery_persistence().load_all_profiles(camera_id)
         except Exception as e:
-            logger.warning("Failed to load gallery from DB for camera {}: {}", camera_id, e)
+            logger.warning("从 DB 加载摄像头 {} 的 gallery 失败: {}", camera_id, e)
             gallery = {}
 
     persons = []
@@ -237,7 +237,7 @@ async def test_body_quality(file: UploadFile = File(...)) -> BodyQualityTestResp
             bbox=det.bbox.tolist()
         )
     except Exception as e:
-        logger.exception("Error testing body quality")
+        logger.exception("测试 body quality 出错")
         return BodyQualityTestResponse(has_person=False, error=str(e))
 
 
@@ -270,7 +270,7 @@ async def test_face_similarity(
                 try:
                     image_bytes = correct_image_bytes(image_bytes)
                 except Exception:
-                    logger.warning("Image undistortion failed, using original")
+                    logger.warning("图像去畸变失败，使用原图")
 
             np_arr = np.frombuffer(image_bytes, np.uint8)
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -379,7 +379,7 @@ async def test_face_similarity(
         )
 
     except Exception as e:
-        logger.exception("Error testing face similarity")
+        logger.exception("测试 face similarity 出错")
         return FaceSimilarityTestResponse(
             face1=FaceSimilarityFaceInfo(has_face=False),
             face2=FaceSimilarityFaceInfo(has_face=False),
@@ -409,7 +409,7 @@ async def test_body_similarity(
                 try:
                     image_bytes = correct_image_bytes(image_bytes)
                 except Exception:
-                    logger.warning("Image undistortion failed, using original")
+                    logger.warning("图像去畸变失败，使用原图")
 
             np_arr = np.frombuffer(image_bytes, np.uint8)
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -477,7 +477,7 @@ async def test_body_similarity(
         )
 
     except Exception as e:
-        logger.exception("Error testing body similarity")
+        logger.exception("测试 body similarity 出错")
         return BodySimilarityTestResponse(
             body1=BodySimilarityBodyInfo(has_body=False),
             body2=BodySimilarityBodyInfo(has_body=False),
@@ -521,7 +521,7 @@ async def test_reid_compare(
                 try:
                     image_bytes = correct_image_bytes(image_bytes)
                 except Exception:
-                    logger.warning("Image undistortion failed, using original")
+                    logger.warning("图像去畸变失败，使用原图")
 
             np_arr = np.frombuffer(image_bytes, np.uint8)
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -589,7 +589,7 @@ async def test_reid_compare(
         )
 
     except Exception as e:
-        logger.exception("Error comparing ReID models")
+        logger.exception("比较 ReID 模型出错")
         return ReIDCompareResponse(
             body1=BodySimilarityBodyInfo(has_body=False),
             body2=BodySimilarityBodyInfo(has_body=False),
@@ -695,13 +695,13 @@ async def rename_person(
         persistence = get_gallery_persistence()
         await persistence.upsert_person_row(profile, camera_id)
     except Exception as e:
-        logger.exception("Failed to persist rename for {}", person_id)
+        logger.exception("持久化 {} 的重命名失败", person_id)
         raise HTTPException(
             status_code=500,
             detail=f"Rename failed: {str(e)}",
         ) from e
 
-    logger.info("Renamed person {} to '{}' (camera={})", person_id, new_name, camera_id)
+    logger.info("已将人物 {} 重命名为 '{}' (camera={})", person_id, new_name, camera_id)
     return {
         "status": "renamed",
         "camera_id": camera_id,
@@ -766,7 +766,7 @@ async def clear_quality_cache(camera_id: str, track_id: int) -> dict:
 
     state.quality_cache.clear()
     state.force_probe = True
-    logger.info("Quality cache cleared for track_id={} (camera={})", track_id, camera_id)
+    logger.info("已清空 track_id={} 的 quality cache (camera={})", track_id, camera_id)
     return {"status": "cleared", "track_id": track_id}
 
 
@@ -795,13 +795,13 @@ async def confirm_identity(
             "name": request.name,
         }
     except ValueError as e:
-        logger.warning(f"Bad request in confirm_identity: {e}")
+        logger.warning(f"confirm_identity 请求非法: {e}")
         raise HTTPException(
             status_code=400,
             detail=str(e),
         )
     except Exception as e:
-        logger.exception("Confirm identity failed")
+        logger.exception("确认身份失败")
         raise HTTPException(
             status_code=500,
             detail=f"Confirmation failed: {str(e)}",
@@ -915,9 +915,9 @@ async def register_current(
     ir = orch.tracks[target_id].identity_result
     if ir.status in _KNOWN_STATUSES and ir.person_id:
         logger.warning(
-            "register_current called on already-recognized target: "
+            "register_current 在已识别的目标上被调用: "
             "track_id={}, person_id={}, status={}, name={!r}. "
-            "Skipping enrollment, returning existing ID.",
+            "跳过 enroll，返回已有 ID。",
             target_id, ir.person_id, ir.status.value, request.name,
         )
         return RegisterCurrentResponse(
@@ -945,7 +945,7 @@ async def register_current(
             message=message,
         )
     except Exception as e:
-        logger.exception("register_current failed")
+        logger.exception("register_current 失败")
         raise HTTPException(status_code=500, detail=f"Register failed: {e}") from e
 
     # confirm_identity 成功后, track 的 identity_result 已写入最终 person_id
@@ -975,7 +975,7 @@ async def delete_person(camera_id: str, person_id: str) -> dict:
     else:
         from src.api.registry import camera_registry
         logger.warning(
-            "DELETE person={} camera={}: orch=NOT_FOUND, registry_keys={}",
+            "DELETE person={} camera={}: orch=未找到, registry_keys={}",
             person_id, camera_id, list(camera_registry.keys()),
         )
 
@@ -987,13 +987,13 @@ async def delete_person(camera_id: str, person_id: str) -> dict:
             persistence = get_gallery_persistence()
             await persistence.delete_profile(person_id, camera_id)
     except Exception as e:
-        logger.exception("Failed to delete person {} from DB", person_id)
+        logger.exception("从 DB 删除人物 {} 失败", person_id)
         raise HTTPException(
             status_code=500,
             detail=f"Delete failed: {str(e)}",
         ) from e
 
-    logger.info("Deleted person {} (camera={})", person_id, camera_id)
+    logger.info("已删除人物 {} (camera={})", person_id, camera_id)
     return {
         "status": "deleted",
         "camera_id": camera_id,

@@ -67,17 +67,17 @@ class FaceExtractor:
             self._input_name = self._session.get_inputs()[0].name
 
             logger.info(
-                "FaceExtractor loaded: backend={}, model={}, ctx_id={}",
+                "FaceExtractor 已加载: backend={}, model={}, ctx_id={}",
                 self._backend, model_file, ctx_id,
             )
         except ImportError:
             logger.error(
-                "onnxruntime is not installed. "
-                "Install with: pip install onnxruntime-gpu"
+                "未安装 onnxruntime。"
+                "请通过以下命令安装: pip install onnxruntime-gpu"
             )
             raise
         except Exception as e:
-            logger.error("Failed to initialize FaceExtractor: {}", e)
+            logger.error("FaceExtractor 初始化失败: {}", e)
             raise
 
     @property
@@ -150,7 +150,7 @@ class FaceExtractor:
             512 维 L2 归一化嵌入向量, 或 None (提取失败时)。
         """
         if self._session is None:
-            logger.warning("FaceExtractor session not initialized")
+            logger.warning("FaceExtractor session 未初始化")
             return None
 
         try:
@@ -160,12 +160,12 @@ class FaceExtractor:
 
             norm = float(np.linalg.norm(embedding))
             if norm < 1e-6:
-                logger.debug("Face embedding has near-zero norm")
+                logger.debug("Face embedding 范数(norm)接近 0")
                 return None
             embedding = embedding / norm
 
             return embedding
 
         except Exception as e:
-            logger.debug("Failed to extract face embedding: {}", e)
+            logger.debug("提取 face embedding 失败: {}", e)
             return None

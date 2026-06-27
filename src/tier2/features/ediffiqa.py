@@ -80,7 +80,7 @@ class EDifFIQA:
         )
         self._input_name = self._session.get_inputs()[0].name
         self._variant = variant
-        logger.info("EDifFIQA loaded: variant={}, model={}, ctx_id={}", variant, model_filename, ctx_id)
+        logger.info("EDifFIQA 已加载: variant={}, model={}, ctx_id={}", variant, model_filename, ctx_id)
 
     @property
     def variant(self) -> str:

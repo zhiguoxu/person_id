@@ -84,9 +84,9 @@ class TrackState(BaseModel):
             if result is not None:
                 self.vlm_result = result
         except asyncio.CancelledError:
-            logger.debug("VLM task cancelled for track_id={}", track_id)
+            logger.debug("track_id={} 的 VLM task 已取消", track_id)
         except Exception as e:
-            logger.exception("VLM processing failed for track_id={}: {}", track_id, e)
+            logger.exception("track_id={} 的 VLM 处理失败: {}", track_id, e)
         finally:
             self.vlm_task = None
 
@@ -148,7 +148,7 @@ class TrackState(BaseModel):
                 return vlm_result, False
             else:
                 logger.debug(
-                    "VLM result for track_id={} discarded: status already {}",
+                    "track_id={} 的 VLM result 已丢弃: status 已为 {}",
                     track_id, self.identity_result.status.value,
                 )
 

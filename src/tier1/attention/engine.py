@@ -101,7 +101,7 @@ class AttentionEngine:
     def __init__(self) -> None:
         """初始化注意力引擎。"""
         self._prev_areas: dict[int, list[float]] = {}
-        logger.info("AttentionEngine initialised")
+        logger.info("AttentionEngine 已初始化")
 
     # ------------------------------------------------------------------
     # Public API

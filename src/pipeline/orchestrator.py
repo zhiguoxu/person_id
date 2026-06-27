@@ -95,12 +95,12 @@ class VisionOrchestrator(BaseModel):
         Args:
             camera_id: 摄像头标识，用于隔离 Gallery 和追踪状态。
         """
-        logger.info("Initializing VisionOrchestrator (camera={}) ...", camera_id)
+        logger.info("正在初始化 VisionOrchestrator (camera={}) ...", camera_id)
         orch = cls(camera_id=camera_id)
         await orch._load_gallery_from_db()
 
         logger.info(
-            "VisionOrchestrator [{}] initialized (gallery: {} persons)",
+            "VisionOrchestrator [{}] 已初始化 (gallery: {} 人)",
             camera_id, len(orch.gallery),
         )
         return orch
@@ -111,13 +111,13 @@ class VisionOrchestrator(BaseModel):
 
     async def shutdown(self) -> None:
         """清理资源: 取消异步任务、保存底库。"""
-        logger.info("Shutting down VisionOrchestrator ...")
+        logger.info("正在关闭 VisionOrchestrator ...")
 
         for state in self.tracks.values():
             state.cancel_vlm()
 
         self.tracks.clear()
-        logger.info("VisionOrchestrator shutdown complete")
+        logger.info("VisionOrchestrator 关闭完成")
 
     # ==================================================================
     # Frame Processing
@@ -238,7 +238,7 @@ class VisionOrchestrator(BaseModel):
             name: 显示名称。
         """
         logger.info(
-            "Human confirmed: track_id={} → person_id={}, name={}",
+            "人工已确认: track_id={} → person_id={}, name={}",
             track_id, person_id, name,
         )
 
@@ -266,10 +266,10 @@ class VisionOrchestrator(BaseModel):
             person_id = profile.person_id
             self.gallery[person_id] = profile
             is_new_person = True
-            logger.info("Created new profile for {} (no ID provided)", person_id)
+            logger.info("已为 {} 创建新 profile (未提供 ID)", person_id)
         elif person_id not in self.gallery:
             # 传了 ID 但库里没有，视为错误
-            logger.error("Person ID {} not found in gallery", person_id)
+            logger.error("gallery 中未找到 Person ID {}", person_id)
             raise ConfirmIdentityError(
                 RegisterFailureReason.UNKNOWN_PERSON_ID,
                 f"Person ID {person_id} not found in gallery",
@@ -287,8 +287,8 @@ class VisionOrchestrator(BaseModel):
         if is_new_person and not enrolled_face:
             self.gallery.pop(person_id, None)
             logger.warning(
-                "Rolled back new profile {}: no face feature passed enroll "
-                "threshold (face quality/size insufficient)",
+                "已回滚新 profile {}: 没有 face feature 通过 enroll threshold "
+                "(face quality/尺寸不足)",
                 person_id,
             )
             raise ConfirmIdentityError(
@@ -304,7 +304,7 @@ class VisionOrchestrator(BaseModel):
         body_count = sum(len(v) for v in profile.body_features.values())
         wardrobe_count = len(profile.wardrobe)
         logger.info(
-            "Enrolled features for {}: face={}, body={}, wardrobe={}",
+            "已为 {} enroll feature: face={}, body={}, wardrobe={}",
             person_id, face_count, body_count, wardrobe_count,
         )
 
@@ -476,7 +476,7 @@ class VisionOrchestrator(BaseModel):
         if proportions is not None:
             profile.update_proportions(proportions)
 
-        logger.info("Gallery updated for person_id={}", person_id)
+        logger.info("已更新 gallery, person_id={}", person_id)
         return changes
 
     def _emit_match_event(
@@ -757,7 +757,7 @@ class VisionOrchestrator(BaseModel):
                 # 提交前最终检查
                 if person_id not in self.gallery:
                     logger.debug(
-                        "Save aborted for {} (deleted during transaction)",
+                        "已中止保存 {} (事务期间被删除)",
                         person_id,
                     )
                     return  # session close 自动 rollback
@@ -765,7 +765,7 @@ class VisionOrchestrator(BaseModel):
                 await session.commit()
 
         logger.debug(
-            "Incremental save for {}: {} feature ops, wardrobe={}",
+            "增量保存 {}: {} 个 feature ops, wardrobe={}",
             person_id,
             len(changes.feature_ops),
             changes.wardrobe_op is not None,

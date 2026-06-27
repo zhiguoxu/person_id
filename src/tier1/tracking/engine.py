@@ -37,7 +37,7 @@ class TrackingEngine:
         """初始化追踪引擎。"""
         self._trails: dict[int, list[tuple[float, float]]] = {}
         self._tracker = self._create_tracker()
-        logger.info("TrackingEngine initialised — backend=BoT-SORT")
+        logger.info("TrackingEngine 已初始化 — backend=BoT-SORT")
 
     # ------------------------------------------------------------------
     # Public API
@@ -64,7 +64,7 @@ class TrackingEngine:
         try:
             results = self._tracker.update(det_array, frame)
         except Exception:
-            logger.exception("Tracker update failed, returning empty")
+            logger.exception("Tracker 更新失败, 返回空结果")
             return []
 
         if results is None or len(results) == 0:
@@ -142,7 +142,7 @@ class TrackingEngine:
             cmc_method=config.tracking.cmc_method,
             with_reid=False,
         )
-        logger.info("BoT-SORT tracker created successfully")
+        logger.info("BoT-SORT tracker 创建成功")
         return tracker
 
     @staticmethod

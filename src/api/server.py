@@ -39,19 +39,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     persistence = get_gallery_persistence()
     await persistence.initialize(get_config().server.gallery_db_path)
 
-    logger.info("Application ready (cameras will initialize on first connection)")
+    logger.info("应用已就绪 (摄像头将在首次连接时初始化)")
 
     yield  # ← 应用运行中
 
     # --- shutdown ---
-    logger.info("Application shutting down ({} cameras) ...", len(camera_registry))
+    logger.info("应用正在关闭 ({} 个摄像头) ...", len(camera_registry))
     for cam_id, orch in camera_registry.items():
-        logger.info("Shutting down camera: {}", cam_id)
+        logger.info("正在关闭摄像头: {}", cam_id)
         await orch.shutdown()
     camera_registry.clear()
 
     await get_gallery_persistence().close()
-    logger.info("Application shutdown complete")
+    logger.info("应用关闭完成")
 
 
 # ==============================================================================
@@ -99,10 +99,10 @@ def create_app() -> FastAPI:
             StaticFiles(directory=str(frontend_path), html=True),
             name="frontend",
         )
-        logger.info("Frontend mounted from {}", frontend_path)
+        logger.info("已从 {} 挂载前端", frontend_path)
     else:
         logger.warning(
-            "Frontend directory not found: {}", frontend_path
+            "未找到前端目录: {}", frontend_path
         )
 
     return app
@@ -115,7 +115,7 @@ def main() -> None:
     config = load_config()
 
     logger.info(
-        "Starting server on {}:{}",
+        "服务器启动于 {}:{}",
         config.server.host, config.server.port,
     )
 

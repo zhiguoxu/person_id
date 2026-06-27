@@ -54,7 +54,7 @@ def resolve_vlm(
     if status == IdentityStatus.STRANGER:
         match_result.status = IdentityStatus.STRANGER
         match_result.best_match = None
-        logger.info("VLM → STRANGER (reason: {})", vlm_response.reasoning[:80])
+        logger.info("VLM → STRANGER（reason: {}）", vlm_response.reasoning[:80])
         return match_result
 
     # 在候选列表中查找 VLM 指认的人
@@ -70,7 +70,7 @@ def resolve_vlm(
         match_result.status = IdentityStatus.STRANGER
         match_result.best_match = None
         logger.warning(
-            "VLM matched_candidate_id='{}' not in candidates → STRANGER",
+            "VLM 指认的 matched_candidate_id='{}' 不在 candidates 中 → STRANGER",
             matched_id,
         )
         return match_result
@@ -78,7 +78,7 @@ def resolve_vlm(
     match_result.status = status
     match_result.best_match = matched_candidate
     logger.info(
-        "VLM → {}: {} (reason: {})",
+        "VLM → {}: {}（reason: {}）",
         grade, matched_candidate.person_id, vlm_response.reasoning[:80],
     )
 

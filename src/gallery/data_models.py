@@ -384,7 +384,7 @@ class PersonProfile(BaseModel):
         gallery_cfg = get_config().gallery
         if entry.quality_score < gallery_cfg.face_quality_enroll_threshold:
             logger.debug(
-                "Face quality {:.3f} below threshold {:.3f} for {}",
+                "face quality {:.3f} 低于 threshold {:.3f} ({})",
                 entry.quality_score, gallery_cfg.face_quality_enroll_threshold, self.person_id,
             )
             return None
@@ -396,7 +396,7 @@ class PersonProfile(BaseModel):
         if success:
             self._face_centroids = None  # 失效缓存
             logger.debug(
-                "Enrolled face for {} in bucket {} (quality={:.3f})",
+                "已为 {} enroll face (bucket {}, quality={:.3f})",
                 self.person_id, entry.pose_bucket.value, entry.quality_score,
             )
             return FeatureOperation(entry=entry, evicted=evicted, kind="face")
@@ -409,7 +409,7 @@ class PersonProfile(BaseModel):
         gallery_cfg = get_config().gallery
         if entry.quality_score < gallery_cfg.body_quality_enroll_threshold:
             logger.debug(
-                "Body feature quality {:.3f} below threshold {:.3f} for {}",
+                "body feature quality {:.3f} 低于 threshold {:.3f} ({})",
                 entry.quality_score, gallery_cfg.body_quality_enroll_threshold, self.person_id,
             )
             return None
@@ -420,7 +420,7 @@ class PersonProfile(BaseModel):
         )
         if success:
             logger.debug(
-                "Enrolled body feature for {} in bucket {} (quality={:.3f})",
+                "已为 {} enroll body feature (bucket {}, quality={:.3f})",
                 self.person_id, entry.pose_bucket.value, entry.quality_score,
             )
             return FeatureOperation(entry=entry, evicted=evicted, kind="body")
@@ -431,7 +431,7 @@ class PersonProfile(BaseModel):
         gallery_cfg = get_config().gallery
         if quality < gallery_cfg.body_quality_enroll_threshold:
             logger.debug(
-                "Outfit body quality {:.3f} below threshold {:.3f} for {}",
+                "outfit body quality {:.3f} 低于 threshold {:.3f} ({})",
                 quality, gallery_cfg.body_quality_enroll_threshold, self.person_id,
             )
             return None
@@ -454,7 +454,7 @@ class PersonProfile(BaseModel):
                 outfit.last_seen = now
                 outfit.seen_count += 1
                 logger.debug(
-                    "Updated outfit for {} (quality={:.3f}, wardrobe_size={})",
+                    "已更新 {} 的 outfit (quality={:.3f}, wardrobe_size={})",
                     self.person_id, quality, len(self.wardrobe),
                 )
                 return OutfitEnrollResult(outfit=outfit, updated=old_snapshot)
@@ -476,7 +476,7 @@ class PersonProfile(BaseModel):
             self.wardrobe[oldest_idx] = new_outfit
 
         logger.debug(
-            "Enrolled new outfit for {} (quality={:.3f}, wardrobe_size={})",
+            "已为 {} enroll 新 outfit (quality={:.3f}, wardrobe_size={})",
             self.person_id, quality, len(self.wardrobe),
         )
         return OutfitEnrollResult(outfit=new_outfit, evicted=evicted)
@@ -500,7 +500,7 @@ class PersonProfile(BaseModel):
             )
             self.body_proportions_samples = n + 1
         logger.debug(
-            "Updated proportions for {} (samples={})",
+            "已更新 {} 的 body_proportions (samples={})",
             self.person_id, self.body_proportions_samples,
         )
 

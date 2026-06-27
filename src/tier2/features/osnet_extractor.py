@@ -48,13 +48,14 @@ class OSNetExtractor:
         # 探测实际输出维度
         self.EMBEDDING_DIM = self._probe_dim()
         logger.info(
-            "OSNetExtractor loaded: weights={}, device={}, dim={}",
+            "OSNetExtractor 已加载: weights={}, device={}, dim={}",
             os.path.basename(model_path) if model_path else 'default',
             self.device,
             self.EMBEDDING_DIM,
         )
 
-    def _find_weights(self) -> str | None:
+    @staticmethod
+    def _find_weights() -> str | None:
         """搜索 OSNet 权重文件, 优先 ReID 微调权重。"""
         search_dirs = [
             'models',
@@ -67,7 +68,7 @@ class OSNetExtractor:
             if not os.path.isdir(d):
                 continue
             for f in glob.glob(os.path.join(d, '*osnet*msmt17*')):
-                logger.info("Found OSNet ReID weights: {}", f)
+                logger.info("找到 OSNet ReID weights: {}", f)
                 return f
 
         # 退而求其次: ImageNet 预训练
@@ -75,7 +76,7 @@ class OSNetExtractor:
             if not os.path.isdir(d):
                 continue
             for f in glob.glob(os.path.join(d, '*osnet*')):
-                logger.info("Found OSNet ImageNet weights: {}", f)
+                logger.info("找到 OSNet ImageNet weights: {}", f)
                 return f
 
         return None
@@ -117,7 +118,7 @@ class OSNetExtractor:
             return results
 
         except Exception as e:
-            logger.warning("OSNet extraction failed: {}", e)
+            logger.warning("OSNet feature 提取失败: {}", e)
             return [self._random_feature() for _ in crops]
 
     def _random_feature(self) -> np.ndarray:

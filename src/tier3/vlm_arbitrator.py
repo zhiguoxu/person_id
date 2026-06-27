@@ -71,7 +71,7 @@ class VLMArbitrator:
         )
 
         logger.info(
-            "VLMArbitrator initialized (model={}, base_url={})",
+            "VLMArbitrator 初始化完成（model={}, base_url={}）",
             self._config.model,
             self._config.base_url,
         )
@@ -92,7 +92,7 @@ class VLMArbitrator:
             出错时返回默认不匹配结果。
         """
         if not query_image or not candidate_images:
-            logger.warning("VLM arbitrate called with empty images")
+            logger.warning("VLM arbitrate 调用时 images 为空")
             return VLMResponse(reasoning="VLM arbitration failed or unavailable")
 
         try:
@@ -115,7 +115,7 @@ class VLMArbitrator:
             result = _parse_response(raw_text)
 
             logger.info(
-                "VLM arbitration result: matched={}, grade={}, reason={}",
+                "VLM arbitration 结果: matched={}, grade={}, reason={}",
                 result.matched_candidate_id,
                 result.grade,
                 result.reasoning[:80],
@@ -123,7 +123,7 @@ class VLMArbitrator:
             return result
 
         except Exception as e:
-            logger.error("VLM arbitration failed: {}", str(e))
+            logger.error("VLM arbitration 失败: {}", str(e))
             return VLMResponse(reasoning="VLM arbitration failed or unavailable")
 
 
@@ -210,7 +210,7 @@ def _parse_response(raw_text: str) -> VLMResponse:
         except json.JSONDecodeError:
             pass
 
-    logger.warning("Could not parse VLM response: {}", raw_text[:200])
+    logger.warning("无法解析 VLM response: {}", raw_text[:200])
     return VLMResponse(reasoning=f"Unparseable response: {raw_text[:100]}")
 
 

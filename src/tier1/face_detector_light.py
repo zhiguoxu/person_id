@@ -52,7 +52,7 @@ class FaceDetectorLight:
             str(model_path), providers=providers,
         )
         self._detector.prepare(ctx_id=ctx_id, input_size=config.det_size)
-        logger.info("FaceDetectorLight loaded: model=det_10g (SCRFD_10G), ctx_id={}, det_size={}", ctx_id, config.det_size)
+        logger.info("FaceDetectorLight 已加载: model=det_10g (SCRFD_10G), ctx_id={}, det_size={}", ctx_id, config.det_size)
 
     def detect(self, crop: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
         """检测最大人脸。

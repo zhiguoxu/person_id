@@ -82,7 +82,7 @@ class BodyExtractor:
         ).view(1, 3, 1, 1)
 
         logger.info(
-            "BodyExtractor loaded: model={}, device={}, dim={}",
+            "BodyExtractor 已加载: model={}, device={}, dim={}",
             config.reid_model_name,
             get_config().hardware.device,
             self.EMBEDDING_DIM,
@@ -171,5 +171,5 @@ class BodyExtractor:
             # 整批推理失败时返回 None (而非随机向量): 随机 embedding 会
             # 通过仅看图像质量的入库门槛被持久化, 永久污染该用户的 gallery。
             # 返回 None 让调用方丢弃这些帧。
-            logger.warning("Batch SOLIDER extraction failed: {}", e)
+            logger.warning("批量 SOLIDER feature 提取失败: {}", e)
             return None

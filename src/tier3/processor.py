@@ -110,7 +110,7 @@ class Tier3VLMProcessor:
         # 1. 选取查询 crop
         crop: np.ndarray | None = Tier3VLMProcessor.select_query_crop(quality_cache)
         if crop is None:
-            logger.warning("Tier3 VLM: no cached frames for track_id={}, aborting", track_id)
+            logger.warning("Tier3 VLM: track_id={} 没有 cache frame，中止", track_id)
             return None
 
         # 2. 编码为 JPEG
@@ -124,7 +124,7 @@ class Tier3VLMProcessor:
         )
 
         # 4. 调用 VLM
-        logger.info("Tier3 VLM: arbitrating track_id={} with {} candidates",
+        logger.info("Tier3 VLM: 正在 arbitrate track_id={}，共 {} 个 candidates",
                     track_id, len(candidate_images))
         vlm_response = await get_vlm_arbitrator().arbitrate(query_bytes, candidate_images)
 

@@ -54,11 +54,11 @@ class YoloPoseDetector:
 
             self.model(np.zeros((128, 128, 3), dtype=np.uint8), device=device_obj, verbose=False)
             logger.info(
-                "YoloPoseDetector loaded: model={}, device={}, conf={}",
+                "YoloPoseDetector 已加载: model={}, device={}, conf={}",
                 model_path, hw_cfg.device, cfg.yolo_confidence,
             )
         except Exception as e:
-            logger.error("Failed to load YOLO model '{}': {}", model_path, e)
+            logger.error("加载 YOLO 模型失败 '{}': {}", model_path, e)
             raise
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -87,7 +87,7 @@ class YoloPoseDetector:
                 verbose=False,
             )
         except Exception as e:
-            logger.error("YOLO inference failed: {}", e)
+            logger.error("YOLO 推理失败: {}", e)
             return []
 
         return self._parse_results(results)
@@ -156,7 +156,7 @@ class YoloPoseDetector:
                 detections.append(detection)
 
             except Exception as e:
-                logger.warning("Failed to parse detection {}: {}", i, e)
+                logger.warning("解析 Detection 失败 {}: {}", i, e)
                 continue
 
         # Sort by confidence descending

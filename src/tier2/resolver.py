@@ -41,7 +41,7 @@ def resolve_reid(match_result: MatchResult) -> MatchResult:
         if n_above_B > 1:
             match_result.status = IdentityStatus.CONFLICT
             match_result.best_match = candidates[0]
-            logger.info("冲突 (CONFLICT): {} candidates above B", n_above_B)
+            logger.info("冲突 (CONFLICT): {} 个 candidate 超过 B", n_above_B)
         elif margin >= cfg.B_margin:
             match_result.status = IdentityStatus.CONFIDENT
             match_result.best_match = candidates[0]

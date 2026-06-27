@@ -68,14 +68,14 @@ class GalleryPersistence:
         )
         async with self._engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
-        logger.info("GalleryPersistence initialized: db={}", db_path)
+        logger.info("GalleryPersistence 已初始化: db={}", db_path)
 
     async def close(self) -> None:
         """关闭引擎。在 FastAPI lifespan shutdown 中调用。"""
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None
-            logger.info("GalleryPersistence closed")
+            logger.info("GalleryPersistence 已关闭")
 
     @property
     def engine(self) -> AsyncEngine:
@@ -120,12 +120,12 @@ class GalleryPersistence:
                     profiles[profile.person_id] = profile
 
             logger.info(
-                "Loaded {} profiles (camera={})",
+                "已加载 {} 个 profile (camera={})",
                 len(profiles), camera_id,
             )
 
         except Exception:
-            logger.exception("Failed to load profiles from database")
+            logger.exception("从数据库加载 profile 失败")
             raise
 
         return profiles
@@ -162,11 +162,11 @@ class GalleryPersistence:
 
                 await session.commit()
                 logger.info(
-                    "Deleted profile: {} (camera={})",
+                    "已删除 profile: {} (camera={})",
                     person_id, camera_id,
                 )
         except Exception:
-            logger.exception("Failed to delete profile: {}", person_id)
+            logger.exception("删除 profile 失败: {}", person_id)
             raise
 
     # ------------------------------------------------------------------

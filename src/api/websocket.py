@@ -45,14 +45,14 @@ async def handle_ws_connection(
     if camera_id in registry:
         orchestrator = registry[camera_id]
         logger.info(
-            "WebSocket connected: camera={} (reusing existing orchestrator)",
+            "WebSocket 已连接: camera={} (复用已有 orchestrator)",
             camera_id,
         )
     else:
         orchestrator = await VisionOrchestrator.create(camera_id=camera_id)
         registry[camera_id] = orchestrator
         logger.info(
-            "WebSocket connected: camera={} (new orchestrator, gallery={} persons)",
+            "WebSocket 已连接: camera={} (新建 orchestrator, gallery={} 人)",
             camera_id, len(orchestrator.gallery),
         )
 
@@ -72,7 +72,7 @@ async def handle_ws_connection(
                     )
             except Exception:
                 logger.exception(
-                    "Error processing message: camera={}, client={}",
+                    "处理消息出错: camera={}, client={}",
                     camera_id, client_id,
                 )
                 await _send_error(
@@ -80,7 +80,7 @@ async def handle_ws_connection(
                 )
     except Exception as e:
         logger.info(
-            "WebSocket disconnected: camera={}, client={}, reason={}",
+            "WebSocket 已断开: camera={}, client={}, reason={}",
             camera_id, client_id, str(e)[:100],
         )
     finally:
@@ -89,7 +89,7 @@ async def handle_ws_connection(
             await registry[camera_id].shutdown()
             del registry[camera_id]
         logger.info(
-            "WebSocket cleaned up: camera={}, client={}",
+            "WebSocket 已清理: camera={}, client={}",
             camera_id, client_id,
         )
 
@@ -120,7 +120,7 @@ async def _handle_binary(
             from src.utils.image_correction import correct_image_bytes
             data = correct_image_bytes(data)
         except Exception:
-            logger.warning("Image correction failed, using original frame")
+            logger.warning("图像矫正失败，使用原始帧")
 
     # 解码 JPEG
     try:
@@ -141,7 +141,7 @@ async def _handle_binary(
     try:
         result = await orchestrator.process_frame(frame)
     except Exception:
-        logger.exception("Frame processing failed")
+        logger.exception("帧处理失败")
         await _send_error(
             websocket, "processing_error", "Frame processing failed"
         )
@@ -209,7 +209,7 @@ async def _handle_text(
                 },
             )
         except Exception as e:
-            logger.exception("Identity confirmation failed")
+            logger.exception("身份确认失败")
             await _send_error(
                 websocket, "confirm_error", str(e) or "Identity confirmation failed"
             )

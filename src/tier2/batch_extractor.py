@@ -97,7 +97,7 @@ class BatchExtractor:
                 face_pending = [cf for cf in face_pending if cf.embedding is not None]
 
         if body_pending or face_pending:
-            logger.debug("Extracted embeddings for {} body frames and {} face frames",
+            logger.debug("已提取 {} 个 body frame 和 {} 个 face frame 的 embedding",
                          len(body_pending), len(face_pending))
 
         return len(body_pending) + len(face_pending)

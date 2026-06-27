@@ -167,7 +167,7 @@ class SOLIDERReID(nn.Module):
         if 'teacher' in ckpt:
             # SOLIDER 原始预训练 checkpoint
             state_dict = ckpt['teacher']
-            logger.info("Detected SOLIDER pretrained checkpoint (teacher format)")
+            logger.info("检测到 SOLIDER 预训练 checkpoint (teacher 格式)")
         elif 'model' in ckpt:
             state_dict = ckpt['model']
         elif 'state_dict' in ckpt:
@@ -222,11 +222,11 @@ class SOLIDERReID(nn.Module):
         model.load_state_dict(model_state, strict=False)
 
         logger.info(
-            "SOLIDER checkpoint loaded: {} params matched, {} skipped, path={}",
+            "SOLIDER checkpoint 已加载: {} 个 param 匹配, {} 个跳过, path={}",
             len(loaded_keys), len(skipped_keys), checkpoint_path,
         )
         if skipped_keys and len(skipped_keys) <= 20:
-            logger.debug("Skipped keys: {}", skipped_keys)
+            logger.debug("跳过的 keys: {}", skipped_keys)
 
         model = model.to(device)
         model.eval()
@@ -260,7 +260,7 @@ class SOLIDERReID(nn.Module):
             for name in possible_names:
                 path = os.path.join(models_dir, name)
                 if os.path.isfile(path):
-                    logger.info("Found SOLIDER weights: {}", path)
+                    logger.info("找到 SOLIDER weights: {}", path)
                     return path
 
         return None
