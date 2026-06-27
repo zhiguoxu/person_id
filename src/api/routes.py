@@ -114,9 +114,8 @@ async def get_config_endpoint() -> ConfigResponse:
     params = {
         key: TunableParam(**info) for key, info in tunable.items()
     }
+    # AGG_MIN_FACE/BODY_QUALITY 已升级为可调滑块 (见 _TUNABLE_DEFS), 不再放在只读 flags 里
     flags = {
-        "AGG_MIN_FACE_QUALITY": config.multiframe.agg_min_face_quality,
-        "AGG_MIN_BODY_QUALITY": config.multiframe.agg_min_body_quality,
         "IMAGE_CORRECTION_ENABLED": config.server.image_correction_enabled,
     }
     return ConfigResponse(params=params, flags=flags)

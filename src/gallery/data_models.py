@@ -382,10 +382,10 @@ class PersonProfile(BaseModel):
         if entry.pose_bucket == PoseBucket.UNKNOWN:
             return None
         gallery_cfg = get_config().gallery
-        if entry.quality_score < gallery_cfg.quality_enroll_threshold:
+        if entry.quality_score < gallery_cfg.face_quality_enroll_threshold:
             logger.debug(
                 "Face quality {:.3f} below threshold {:.3f} for {}",
-                entry.quality_score, gallery_cfg.quality_enroll_threshold, self.person_id,
+                entry.quality_score, gallery_cfg.face_quality_enroll_threshold, self.person_id,
             )
             return None
         success, evicted = self._enroll_feature(
@@ -407,10 +407,10 @@ class PersonProfile(BaseModel):
         if entry.pose_bucket == PoseBucket.UNKNOWN:
             return None
         gallery_cfg = get_config().gallery
-        if entry.quality_score < gallery_cfg.quality_enroll_threshold:
+        if entry.quality_score < gallery_cfg.body_quality_enroll_threshold:
             logger.debug(
-                "Body feature quality {:.3f} below threshold for {}",
-                entry.quality_score, self.person_id,
+                "Body feature quality {:.3f} below threshold {:.3f} for {}",
+                entry.quality_score, gallery_cfg.body_quality_enroll_threshold, self.person_id,
             )
             return None
         success, evicted = self._enroll_feature(
@@ -429,10 +429,10 @@ class PersonProfile(BaseModel):
     def enroll_outfit(self, body_embedding: np.ndarray, quality: float) -> OutfitEnrollResult | None:
         """入库/更新衣橱记录 — 质量门槛 + EMA 更新。失败返回 None。"""
         gallery_cfg = get_config().gallery
-        if quality < gallery_cfg.quality_enroll_threshold:
+        if quality < gallery_cfg.body_quality_enroll_threshold:
             logger.debug(
-                "Body quality {:.3f} below threshold for {}",
-                quality, self.person_id,
+                "Outfit body quality {:.3f} below threshold {:.3f} for {}",
+                quality, gallery_cfg.body_quality_enroll_threshold, self.person_id,
             )
             return None
 

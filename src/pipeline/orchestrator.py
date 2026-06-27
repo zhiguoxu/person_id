@@ -361,6 +361,7 @@ class VisionOrchestrator(BaseModel):
 
         cache = state.quality_cache
         gallery_cfg = get_config().gallery
+        min_face_size = get_config().face.min_face_size
 
         # --- 人脸 / 人体特征入库 ---
         body_best: dict[PoseBucket, tuple[CachedFrame, float]] = {}
@@ -370,16 +371,28 @@ class VisionOrchestrator(BaseModel):
             (cache.face_pool, profile.enroll_face, True),
             (cache.body_pool, profile.enroll_body_feature, False),
         ]:
+            # 人脸与人体使用各自的入库质量门槛 (人脸要求更高)
+            quality_threshold = (
+                gallery_cfg.face_quality_enroll_threshold if with_face
+                else gallery_cfg.body_quality_enroll_threshold
+            )
             # 每个姿态桶选最高质量的未入库帧
             best_frames: dict[PoseBucket, tuple[CachedFrame, float]] = {}
             for cf in pool:
                 if cf.enrolled:
                     continue
-                # 人脸: 用入库专用模型重新评估质量
+                # 人脸: 尺寸门槛 (短边像素) + 入库专用模型重评质量
                 quality = cf.quality
-                if with_face and cf.entry.aligned_face is not None:
-                    quality = enroll_scorer.predict(cf.entry.aligned_face)
-                if quality >= gallery_cfg.quality_enroll_threshold:
+                if with_face:
+                    fb = cf.entry.face_bbox
+                    if fb is None:
+                        continue
+                    face_short_edge = min(float(fb[2] - fb[0]), float(fb[3] - fb[1]))
+                    if face_short_edge < min_face_size:
+                        continue  # 脸太小, 分辨率不足, 不入库
+                    if cf.entry.aligned_face is not None:
+                        quality = enroll_scorer.predict(cf.entry.aligned_face)
+                if quality >= quality_threshold:
                     pose = cf.entry.detection.pose_bucket
                     if pose not in best_frames or quality > best_frames[pose][1]:
                         best_frames[pose] = (cf, quality)

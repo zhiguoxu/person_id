@@ -41,7 +41,9 @@ class DetectionConfig(BaseModel):
 
     # 关键点
     keypoint_confidence: float = 0.3  # 关键点最低置信度
-    min_person_height_px: int = 80  # 最小人体像素高度
+    # 最小人体像素高度 — Tier1 硬门槛, 过小的人直接不追踪/不入库。
+    # 调高可收紧注册: 只对靠得够近、分辨率够高的人建档 (人脸/人体特征更可靠)。
+    min_person_height_px: int = 120
 
 
 class FaceConfig(BaseModel):
@@ -49,7 +51,9 @@ class FaceConfig(BaseModel):
     insightface_model: str = "buffalo_l"  # InsightFace 模型包 (仅用于 SCRFD 检测)
     det_size: tuple[int, int] = (640, 640)  # 人脸检测输入尺寸
 
-    min_face_size: int = 40  # 最小人脸像素尺寸
+    # 入库人脸最小像素边长 (人脸 bbox 短边) — 小于此值不入库。
+    # eDifFIQA 分数无法完全反映分辨率, 太小的脸即使"清晰"也只是低分辨率特征, 故额外加尺寸门槛。
+    min_face_size: int = 60
 
     # 人脸识别模型 — ArcFace / AdaFace 可切换
     recognition_backend: str = "adaface"  # "arcface" 或 "adaface"
@@ -86,8 +90,11 @@ class GalleryConfig(BaseModel):
     outfit_half_life_days: float = 30.0  # 衣橱衰减半衰期
     outfit_match_threshold: float = 0.85  # 衣橱匹配阈值 (同一套衣服)
 
-    # 入库质量门槛
-    quality_enroll_threshold: float = 0.4  # 入库最低质量分
+    # 入库质量门槛 — 人脸与人体分开管理
+    # 注册人脸要求更高质量: 人脸是强标识, 一张糊脸入库会污染质心、引发误识;
+    # 人体特征容错更高 (多桶 + 时间衰减), 门槛可略低以保证覆盖率。
+    face_quality_enroll_threshold: float = 0.55   # 人脸入库最低质量分 (eDifFIQA large 评估)
+    body_quality_enroll_threshold: float = 0.40   # 人体/衣橱入库最低质量分 (清晰度+完整度)
     ediffiqa_enroll_variant: str = "large"  # 入库质量评估模型变体 (独立于 Tier1, 默认最大)
 
     # 入库衰减 — 统一量纲: 半衰期 (天)
@@ -144,9 +151,9 @@ class MultiFrameConfig(BaseModel):
     face_pool_size: int = 10  # 人脸质量缓存容量
     body_pool_size: int = 10  # 人体质量缓存容量
 
-    # 聚合质量阈值
-    agg_min_face_quality: float = 0.1  # 人脸聚合最低质量
-    agg_min_body_quality: float = 0.3  # 人体聚合最低质量
+    # 聚合质量阈值 — 低于此质量的帧不参与身份聚合 (影响识别, 间接影响入库特征来源)
+    agg_min_face_quality: float = 0.20  # 人脸聚合最低质量 (收紧: 0.1 → 0.2)
+    agg_min_body_quality: float = 0.30  # 人体聚合最低质量
 
     # Tier2 (ReID) 调度 (注意力目标基准间隔)
     tier2_fast_interval: float = 1.0  # IDENTIFYING/SUSPECTED/CONFLICT 间隔
@@ -232,6 +239,9 @@ class Config(BaseModel):
                 current = getattr(sub_config, attr_name, None)
                 if isinstance(current, bool):
                     value = bool(value)
+                elif isinstance(current, int):
+                    # 像素类整型字段 (min_face_size 等): 滑块会传 float, 落库前取整
+                    value = int(round(float(value)))
                 setattr(sub_config, attr_name, value)
                 updated_keys.append(key_upper)
 
@@ -243,7 +253,12 @@ class Config(BaseModel):
         "A_THRESHOLD": ("matching", "A_threshold", 0, 1, 0.01, "reid", "A Threshold (笃定)"),
         "B_THRESHOLD": ("matching", "B_threshold", 0, 1, 0.01, "reid", "B Threshold (确定)"),
         "C_THRESHOLD": ("matching", "C_threshold", 0, 1, 0.01, "reid", "C Threshold (怀疑)"),
-        "QUALITY_ENROLL_THRESHOLD": ("gallery", "quality_enroll_threshold", 0, 1, 0.05, "quality", "入库质量门槛"),
+        "FACE_QUALITY_ENROLL_THRESHOLD": ("gallery", "face_quality_enroll_threshold", 0, 1, 0.05, "quality", "人脸入库质量门槛"),
+        "BODY_QUALITY_ENROLL_THRESHOLD": ("gallery", "body_quality_enroll_threshold", 0, 1, 0.05, "quality", "人体入库质量门槛"),
+        "MIN_FACE_SIZE": ("face", "min_face_size", 0, 200, 5, "quality", "入库人脸最小像素"),
+        "MIN_PERSON_HEIGHT_PX": ("detection", "min_person_height_px", 0, 400, 10, "quality", "最小人体像素高度"),
+        "AGG_MIN_FACE_QUALITY": ("multiframe", "agg_min_face_quality", 0, 1, 0.05, "quality", "人脸聚合最低质量"),
+        "AGG_MIN_BODY_QUALITY": ("multiframe", "agg_min_body_quality", 0, 1, 0.05, "quality", "人体聚合最低质量"),
         "OUTFIT_MATCH_THRESHOLD": ("gallery", "outfit_match_threshold", 0, 1, 0.01, "matching", "衣橱匹配阈值"),
     }
 
