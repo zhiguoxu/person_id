@@ -6,7 +6,7 @@
  */
 const BACKEND_CONFIG = {
     // 远程 CUDA 服务器地址
-    host: '8.145.38.125',
+    host: '1.15.11.133',
     port: 10003,
     // 摄像头 ID: 优先取 URL 查询参数 ?camera_id=xxx, 缺省回退 'zhiguo'。
     // 约定 camera_id = 设备 device_sn, 例: index.html?camera_id=EU0125MH00100015056

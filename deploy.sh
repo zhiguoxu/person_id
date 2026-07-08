@@ -3,7 +3,7 @@
 # Vision ID — CUDA 服务器部署启动脚本
 #
 # 架构: 前端(本地浏览器) ←WebSocket→ 后端(此服务器 CUDA 推理)
-# 服务器: 8.145.38.125:10003
+# 服务器: 1.15.11.133:10003 (GPU 服务机, 与 embedding 同机; 内网 172.17.0.11)
 #
 # 用法:  bash deploy.sh  (自动激活 conda 环境)
 # ==============================================================================
@@ -22,7 +22,9 @@ cd "$SCRIPT_DIR"
 # 0. 自动激活 conda 环境
 # --------------------------------------------------------------------------
 CONDA_ENV="person_id"
+# conda 安装位置因机器而异: 优先用户目录, 回退系统目录 (GPU 服务机为 /opt/miniconda3)
 CONDA_BASE="${HOME}/miniconda3"
+[ -f "$CONDA_BASE/etc/profile.d/conda.sh" ] || CONDA_BASE="/opt/miniconda3"
 
 # 如果当前不在目标 conda 环境中, 自动激活
 if [ -z "$CONDA_DEFAULT_ENV" ] || [ "$CONDA_DEFAULT_ENV" != "$CONDA_ENV" ]; then
@@ -93,7 +95,7 @@ printf "${GREEN}[3/3]${NC} Starting backend server...\n"
 echo ""
 printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
 printf "  ${CYAN}  Backend API: http://0.0.0.0:10003${NC}\n"
-printf "  ${CYAN}  WebSocket:   ws://8.145.38.125:10003/ws/vision${NC}\n"
+printf "  ${CYAN}  WebSocket:   ws://1.15.11.133:10003/ws/vision${NC}\n"
 printf "  ${CYAN}${NC}\n"
 printf "  ${CYAN}  Frontend: 在本地浏览器打开 frontend/index.html${NC}\n"
 printf "  ${CYAN}  (摄像头在本地采集, JPEG 帧通过 WebSocket 发到此服务器处理)${NC}\n"
@@ -103,7 +105,7 @@ echo "  Press Ctrl+C to stop"
 echo ""
 
 # 确保使用 conda 环境的 libstdc++ (解决 GLIBCXX 版本问题)
-CONDA_LIB="${CONDA_PREFIX:-/home/zhiguo/miniconda3/envs/person_id}/lib"
+CONDA_LIB="${CONDA_PREFIX:-$CONDA_BASE/envs/$CONDA_ENV}/lib"
 export LD_LIBRARY_PATH="$CONDA_LIB:${LD_LIBRARY_PATH:-}"
 
 export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
