@@ -19,7 +19,6 @@ from src.config import get_config as _get_config
 from src.api.schemas import (
     BodyQualityTestResponse,
     BodySimilarityBodyInfo,
-    BodySimilarityTestResponse,
     CachedFrameInfo,
     ConfigResponse,
     ConfigUpdateRequest,
@@ -60,11 +59,11 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 
 # ==============================================================================
-# ISS Stream refresh (start → FLV URL)
+# 设备推流 (ISS start/stop, device-sn = camera_id)
 # ==============================================================================
 
-@router.post("/{camera_id}/refresh_stream")
-async def refresh_stream(camera_id: str) -> dict:
+@router.post("/{camera_id}/device_stream/start")
+async def start_device_stream(camera_id: str) -> dict:
     """开启设备推流并返回 FLV 直播地址。
 
     camera_id 即设备 device-sn (前端约定 camera_id = device_sn):
@@ -104,8 +103,8 @@ async def refresh_stream(camera_id: str) -> dict:
     return {"flv_url": flv_url}
 
 
-@router.post("/{camera_id}/stop_stream")
-async def stop_stream(camera_id: str) -> dict:
+@router.post("/{camera_id}/device_stream/stop")
+async def stop_device_stream(camera_id: str) -> dict:
     """停止设备推流 (ISS stop_stream, device-sn = camera_id)。"""
     import httpx
 
@@ -135,8 +134,8 @@ async def stop_stream(camera_id: str) -> dict:
 # 服务端拉流消费 (StreamConsumer)
 # ==============================================================================
 
-@router.post("/{camera_id}/stream/start", response_model=StreamStatusResponse)
-async def start_stream_consume(
+@router.post("/{camera_id}/consume/start", response_model=StreamStatusResponse)
+async def start_consume(
     camera_id: str, request: StreamStartRequest,
 ) -> StreamStatusResponse:
     """开启服务端拉流消费: 后台拉取视频流 → 识别 → 广播给观看端。"""
@@ -166,8 +165,8 @@ async def start_stream_consume(
     return consumer.status()
 
 
-@router.post("/{camera_id}/stream/stop", response_model=StreamStatusResponse)
-async def stop_stream_consume(camera_id: str) -> StreamStatusResponse:
+@router.post("/{camera_id}/consume/stop", response_model=StreamStatusResponse)
+async def stop_consume(camera_id: str) -> StreamStatusResponse:
     """停止服务端拉流消费。无活跃 WebSocket 时顺带回收 orchestrator。"""
     from src.api.registry import consumer_registry, maybe_release_orchestrator
 
@@ -182,8 +181,8 @@ async def stop_stream_consume(camera_id: str) -> StreamStatusResponse:
     return status
 
 
-@router.get("/{camera_id}/stream/status", response_model=StreamStatusResponse)
-async def stream_consume_status(camera_id: str) -> StreamStatusResponse:
+@router.get("/{camera_id}/consume/status", response_model=StreamStatusResponse)
+async def consume_status(camera_id: str) -> StreamStatusResponse:
     """查询服务端拉流消费状态 (前端刷新页面后据此恢复观看模式)。"""
     from src.api.registry import consumer_registry
 
@@ -251,6 +250,32 @@ async def list_cameras() -> dict[str, list[str]]:
 # Gallery endpoints (per-camera)
 # ==============================================================================
 
+def _make_avatar_b64(image_bytes: bytes | None, max_w: int = 128) -> str | None:
+    """把底库 source_image (VLM 用的大图) 缩成头像尺寸再编码 b64。
+
+    原图可达数百 KB, 直接下发会把列表接口撑爆; 缩到 128px 后约 3-5KB。
+    """
+    if not image_bytes:
+        return None
+    try:
+        img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        if w > max_w:
+            img = cv2.resize(
+                img, (max_w, max(1, round(h * max_w / w))),
+                interpolation=cv2.INTER_AREA,
+            )
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode("ascii")
+    except Exception:
+        logger.warning("头像缩略生成失败, 跳过")
+        return None
+
+
 @router.get("/{camera_id}/gallery/persons", response_model=PersonListResponse)
 async def list_persons(camera_id: str) -> PersonListResponse:
     """列出指定摄像头底库中所有人物。
@@ -275,6 +300,7 @@ async def list_persons(camera_id: str) -> PersonListResponse:
             PersonSummary(
                 person_id=profile.person_id,
                 display_name=profile.display_name,
+                avatar_b64=_make_avatar_b64(profile.best_face_image()),
                 face_count=profile.total_face_features(),
                 outfit_count=len(profile.wardrobe),
                 last_updated=profile.last_updated,
@@ -485,104 +511,6 @@ async def test_face_similarity(
         return FaceSimilarityTestResponse(
             face1=FaceSimilarityFaceInfo(has_face=False),
             face2=FaceSimilarityFaceInfo(has_face=False),
-            error=str(e),
-        )
-
-
-@router.post("/test_body_similarity", response_model=BodySimilarityTestResponse)
-async def test_body_similarity(
-    file1: UploadFile = File(...),
-    file2: UploadFile = File(...),
-    undistort: str = Form("false"),
-) -> BodySimilarityTestResponse:
-    """测试两张图片的全身 ReID 相似度 (SOLIDER Swin-Small + cosine similarity)。"""
-    do_undistort = undistort.lower() in ("true", "1", "yes")
-    try:
-        from src.tier2.features import get_body_extractor
-        detector = get_fast_detector()
-        body_ext = get_body_extractor()
-
-        def _process_image(image_bytes: bytes) -> tuple[BodySimilarityBodyInfo, np.ndarray | None, str | None]:
-            """处理单张图片: 检测人体 → 裁剪 → 提取 body embedding。"""
-            corrected_b64 = None
-            # 镜头畸变矫正
-            if do_undistort:
-                from src.utils.image_correction import correct_image_bytes
-                try:
-                    image_bytes = correct_image_bytes(image_bytes)
-                except Exception:
-                    logger.warning("图像去畸变失败，使用原图")
-
-            np_arr = np.frombuffer(image_bytes, np.uint8)
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            if frame is None:
-                return BodySimilarityBodyInfo(has_body=False), None, None
-
-            # 矫正后的原图编码供前端预览
-            if do_undistort:
-                _, cb = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                corrected_b64 = base64.b64encode(cb.tobytes()).decode('ascii')
-
-            h_f, w_f = frame.shape[:2]
-
-            # 人体检测 (YOLO)
-            detections = detector.detect(frame)
-            if not detections or detections[0].bbox is None:
-                # 未检测到人体, 以全图作为 body crop
-                crops = [frame]
-                person_bbox = [0.0, 0.0, float(w_f), float(h_f)]
-            else:
-                best_idx = select_best_detection(detections, frame.shape)
-                det = detections[best_idx]
-                x1 = max(0, int(det.bbox[0]))
-                y1 = max(0, int(det.bbox[1]))
-                x2 = min(w_f, int(det.bbox[2]))
-                y2 = min(h_f, int(det.bbox[3]))
-                person_bbox = [float(x1), float(y1), float(x2), float(y2)]
-                crops = [frame[y1:y2, x1:x2].copy()]
-
-            # 提取 body embedding
-            embeddings = body_ext.extract_batch(crops)
-            if not embeddings:
-                return BodySimilarityBodyInfo(has_body=False), None, corrected_b64
-
-            # 编码裁剪图供前端显示
-            crop_resized = cv2.resize(crops[0], (128, 384))
-            _, buf = cv2.imencode('.jpg', crop_resized, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            crop_b64 = base64.b64encode(buf.tobytes()).decode('ascii')
-
-            return BodySimilarityBodyInfo(
-                has_body=True,
-                person_bbox=person_bbox,
-                body_crop_b64=crop_b64,
-            ), embeddings[0], corrected_b64
-
-        # 处理两张图片
-        bytes1 = await file1.read()
-        bytes2 = await file2.read()
-
-        info1, emb1, corr1 = _process_image(bytes1)
-        info2, emb2, corr2 = _process_image(bytes2)
-
-        # 计算相似度 (cosine similarity, embeddings 已 L2 归一化)
-        similarity = None
-        if emb1 is not None and emb2 is not None:
-            similarity = round(float(np.dot(emb1, emb2)), 4)
-
-        return BodySimilarityTestResponse(
-            body1=info1,
-            body2=info2,
-            similarity=similarity,
-            embedding_dim=body_ext.EMBEDDING_DIM,
-            corrected_image1_b64=corr1,
-            corrected_image2_b64=corr2,
-        )
-
-    except Exception as e:
-        logger.exception("测试 body similarity 出错")
-        return BodySimilarityTestResponse(
-            body1=BodySimilarityBodyInfo(has_body=False),
-            body2=BodySimilarityBodyInfo(has_body=False),
             error=str(e),
         )
 

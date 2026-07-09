@@ -8,7 +8,6 @@
 - MatchCandidate / IdentityResult: 匹配候选与身份结果
 - TrackedPerson: 追踪人物
 - MatchResult: 匹配结果
-- PipelineDebug: 调试信息
 - SystemEvent: 系统事件
 """
 from __future__ import annotations
@@ -196,22 +195,6 @@ class MatchResult(BaseModel):
         if len(self.candidates) < 2:
             return self.top_score
         return self.candidates[0].fused_score - self.candidates[1].fused_score
-
-
-class PipelineDebug(BaseModel):
-    """流水线调试信息 (用于前端可视化)"""
-
-    class StageInfo(BaseModel):
-        status: str = "pending"  # "pending" | "running" | "done" | "skipped"
-        time_ms: float = 0.0
-        details: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
-
-    detection: StageInfo = Field(default_factory=StageInfo)
-    pose: StageInfo = Field(default_factory=StageInfo)
-    face: StageInfo = Field(default_factory=StageInfo)
-    reid: StageInfo = Field(default_factory=StageInfo)
-    matching: StageInfo = Field(default_factory=StageInfo)
-    identity: StageInfo = Field(default_factory=StageInfo)
 
 
 class SystemEvent(BaseModel):

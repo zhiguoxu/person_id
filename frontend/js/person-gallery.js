@@ -39,6 +39,37 @@ class PersonGallery {
     }
 
     /**
+     * 从底库补齐实时在场人物的头像 (质量最高的人脸特征图), 5s 节流
+     */
+    async _refreshAvatars() {
+        if (this._avatarRefreshing) return;
+        this._avatarRefreshing = true;
+        setTimeout(() => { this._avatarRefreshing = false; }, 5000);
+        try {
+            const cameraId = window.BACKEND_CONFIG?.cameraId;
+            if (!cameraId) return;
+            const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${cameraId}/gallery/persons`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            let updated = false;
+            for (const p of (data.persons || [])) {
+                if (!p.avatar_b64) continue;
+                const entry = this.persons.get(p.person_id);
+                if (entry && !entry.thumbnail) {
+                    entry.thumbnail = p.avatar_b64;
+                    updated = true;
+                }
+                const allEntry = this.allPersons.get(p.person_id);
+                if (allEntry && !allEntry.thumbnail) {
+                    allEntry.thumbnail = p.avatar_b64;
+                    updated = true;
+                }
+            }
+            if (updated) this._render();
+        } catch (e) { /* 静默, 下次创建条目时再试 */ }
+    }
+
+    /**
      * 从 API 拉取全部 gallery 用户
      */
     async _fetchAllPersons() {
@@ -60,7 +91,7 @@ class PersonGallery {
                     person_id: p.person_id,
                     display_name: p.display_name || p.person_id,
                     confidence: sessionData?.confidence ?? 0,
-                    thumbnail: null,
+                    thumbnail: p.avatar_b64 || null,
                     first_seen: sessionData?.first_seen ?? Date.now(),
                     last_seen: sessionData?.last_seen ?? Date.now(),
                     present: sessionData?.present ?? false,
@@ -96,6 +127,7 @@ class PersonGallery {
                             first_seen: Date.now(),
                             last_seen: Date.now(),
                         });
+                        this._refreshAvatars(); // 从底库补头像 (节流)
                     } else {
                         const person = this.persons.get(p.person_id);
                         person.display_name = p.display_name || person.display_name;
@@ -110,6 +142,14 @@ class PersonGallery {
         this.persons.forEach((person, id) => {
             person.present = activePersonIds.has(id);
         });
+
+        // 在场但还没头像的, 持续尝试从底库补齐 (内部 5s 节流)
+        for (const [id, person] of this.persons) {
+            if (person.present && !person.thumbnail) {
+                this._refreshAvatars();
+                break;
+            }
+        }
 
         // 同步到 allPersons (更新已有 + 添加新增)
         if (this.mode === 'all') {
@@ -207,6 +247,12 @@ class PersonGallery {
     _updateCard(card, person) {
         const nameEl = card.querySelector('.person-name');
         const statusEl = card.querySelector('.person-status-label');
+
+        // 卡片创建时头像可能还没到 (thumbnail=null 显示首字母), 到货后补渲染
+        const avatarEl = card.querySelector('.person-avatar');
+        if (avatarEl && person.thumbnail && !avatarEl.querySelector('img')) {
+            avatarEl.innerHTML = this._getAvatar(person);
+        }
 
         if (nameEl) nameEl.textContent = person.display_name;
         if (statusEl) {

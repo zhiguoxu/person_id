@@ -28,7 +28,6 @@ class TrackedPersonResponse(BaseModel):
     person: TrackedPerson
     identity_result: IdentityResult
     is_current_target: bool = False
-    thumbnail_b64: str | None = None
 
 
 class CurrentTargetResponse(BaseModel):
@@ -165,6 +164,7 @@ class PersonSummary(BaseModel):
     """人物摘要 (列表用)。"""
     person_id: str
     display_name: str
+    avatar_b64: str | None = None  # 头像: 底库中质量最高的人脸特征缩略图
     face_count: int = 0
     outfit_count: int = 0
     last_updated: float = 0.0
@@ -349,17 +349,6 @@ class BodySimilarityBodyInfo(BaseModel):
     has_body: bool
     person_bbox: list[float] | None = None
     body_crop_b64: str | None = None  # 裁剪后的人体图 base64
-
-
-class BodySimilarityTestResponse(BaseModel):
-    """全身 ReID 相似度测试结果"""
-    body1: BodySimilarityBodyInfo
-    body2: BodySimilarityBodyInfo
-    similarity: float | None = None
-    embedding_dim: int | None = None
-    corrected_image1_b64: str | None = None  # 畸变矫正后的原图 base64
-    corrected_image2_b64: str | None = None
-    error: str | None = None
 
 
 class ReIDCompareResponse(BaseModel):

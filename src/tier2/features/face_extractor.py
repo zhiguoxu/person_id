@@ -81,11 +81,6 @@ class FaceExtractor:
             raise
 
     @property
-    def backend(self) -> str:
-        """当前识别后端 (``"arcface"`` / ``"adaface"``)。"""
-        return self._backend
-
-    @property
     def default_channel_order(self) -> str:
         """backend 默认送入模型的通道顺序 (arcface / adaface 均为 rgb)。"""
         return "rgb"

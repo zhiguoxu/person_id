@@ -1,20 +1,13 @@
 """
 Tier 2 流水线 — 深度身份识别（异步）
 
-当 Tier 1 判定某追踪目标需要深度识别时触发:
-1. 精确 YOLO11x-pose 检测 (ROI)
-2. 姿态分类
-3. 人脸特征提取 (非背面)
-4. 全身 ReID 特征提取
-5. 体型比例提取
-6. 时序聚合
-7. 底库匹配 (人脸 + 全身 + 体型)
-8. 多模态融合
-9. 歧义消解 (ReID 阶段)
-10. 若 SUSPECTED / CONFLICT → VLM 仲裁
-11. 返回最终 MatchResult
-
-每个阶段记录耗时到 PipelineDebug。
+当调度器判定某追踪目标需要深度识别时触发, 基于 Tier1 缓存的多帧数据:
+1. drain RecentBuffer 取新帧
+2. 批量质量评估, 竞争进入 QualityCache
+3. 增量特征提取 (人脸 + 全身 ReID + 体型比例, 仅新入缓存帧)
+4. 多帧聚合
+5. 底库匹配 (分模态) + 多模态融合
+6. 歧义消解, 返回最终 MatchResult (SUSPECTED/CONFLICT 由上层触发 VLM 仲裁)
 """
 from __future__ import annotations
 
@@ -24,7 +17,6 @@ from src.gallery.data_models import PersonProfile
 from src.pipeline.data_models import (
     IdentityStatus,
     MatchResult,
-    PipelineDebug,
 )
 from src.pipeline.frame_buffer import RecentBuffer, QualityCache
 from src.tier2.batch_extractor import BatchExtractor
@@ -43,11 +35,10 @@ class Tier2Processor:
     """
     Tier 2 深度身份识别处理器。
 
-    异步处理单个追踪目标的精确身份识别：从 ROI 切割开始
-    到最终 MatchResult 输出，沿途在 PipelineDebug 中记录
-    每个阶段的状态和耗时。
+    异步处理单个追踪目标的精确身份识别: 从 Tier1 缓存的多帧数据
+    到最终 MatchResult 输出。
 
-    所有子模块在构造时一次性创建，无需外部传入。
+    所有子模块均为静态调用，无实例状态。
     """
 
     # ------------------------------------------------------------------
@@ -60,7 +51,7 @@ class Tier2Processor:
             buffer: RecentBuffer,
             quality_cache: QualityCache,
             gallery: dict[str, PersonProfile]
-    ) -> tuple[MatchResult | None, PipelineDebug]:
+    ) -> MatchResult | None:
         """多帧 Tier2 处理。
 
         新的处理流程:
@@ -78,7 +69,6 @@ class Tier2Processor:
             gallery: 当前底库
         """
         import time as _time
-        debug = PipelineDebug()
         t0 = _time.perf_counter()
 
         # --- 1. Drain buffer ---
@@ -92,7 +82,7 @@ class Tier2Processor:
 
         # 两阶段控制: 无新 embedding → query 数据没变, 匹配结果不会变
         if n_new == 0:
-            return MatchResult(stale=True), debug
+            return MatchResult(stale=True)
 
         # --- 4. Multi-frame aggregation ---
         aggregated = MultiFrameAggregator.aggregate_from_cache(quality_cache)
@@ -107,8 +97,6 @@ class Tier2Processor:
         proportion_candidates = gallery_matcher.match_proportions(
             aggregated.proportions, gallery
         )
-
-        debug.matching.status = "done"
 
         # --- 6. Fusion ---
         candidates = fusion.fuse(
@@ -147,4 +135,4 @@ class Tier2Processor:
             elapsed,
         )
 
-        return result, debug
+        return result

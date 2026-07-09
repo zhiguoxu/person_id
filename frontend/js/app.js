@@ -56,8 +56,7 @@
                         identity_status: p.identity_result.status,
                         confidence: p.identity_result.confidence,
                         face_quality: p.identity_result.face_quality,
-                        is_current_target: p.is_current_target,
-                        thumbnail_b64: p.thumbnail_b64
+                        is_current_target: p.is_current_target
                     };
                 }
                 return p;
@@ -236,15 +235,15 @@
         }
 
         // --- 按钮 1: 开启设备推流 (ISS start_stream → FLV 地址填入输入框) ---
-        const refreshBtn = document.getElementById('btn-refresh-stream');
-        if (refreshBtn) {
-            const refreshBtnHtml = refreshBtn.innerHTML;
-            refreshBtn.addEventListener('click', async () => {
+        const deviceStreamBtn = document.getElementById('btn-device-stream');
+        if (deviceStreamBtn) {
+            const deviceStreamBtnHtml = deviceStreamBtn.innerHTML;
+            deviceStreamBtn.addEventListener('click', async () => {
                 if (!requireDeviceSn()) return;
 
                 // 进入加载态: 按钮与 URL 输入框都锁住, 输入框显示加载提示
-                refreshBtn.disabled = true;
-                refreshBtn.innerHTML = '⏳ 获取中...';
+                deviceStreamBtn.disabled = true;
+                deviceStreamBtn.innerHTML = '⏳ 获取中...';
                 const prevUrl = streamUrlInput?.value || '';
                 if (streamUrlInput) {
                     streamUrlInput.value = '';
@@ -256,7 +255,7 @@
                 let ok = false;
                 try {
                     const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
-                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/refresh_stream`, {
+                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/device_stream/start`, {
                         method: 'POST',
                     });
                     if (!resp.ok) {
@@ -276,8 +275,8 @@
                 } catch (e) {
                     showToast(`❌ 开启设备推流失败: ${e.message}`, 'error', 6000);
                 } finally {
-                    refreshBtn.disabled = false;
-                    refreshBtn.innerHTML = refreshBtnHtml;
+                    deviceStreamBtn.disabled = false;
+                    deviceStreamBtn.innerHTML = deviceStreamBtnHtml;
                     if (streamUrlInput) {
                         streamUrlInput.readOnly = false;
                         streamUrlInput.classList.remove('loading');
@@ -291,7 +290,7 @@
         // --- 设备推流的下拉菜单: 停止推流 ---
         const streamMenuBtn = document.getElementById('btn-stream-menu');
         const streamMenu = document.getElementById('stream-menu');
-        const stopStreamBtn = document.getElementById('btn-stop-stream');
+        const deviceStreamStopBtn = document.getElementById('btn-device-stream-stop');
 
         if (streamMenuBtn && streamMenu) {
             streamMenuBtn.addEventListener('click', (e) => {
@@ -303,20 +302,20 @@
             streamMenu.addEventListener('click', (e) => e.stopPropagation());
         }
 
-        if (stopStreamBtn) {
-            stopStreamBtn.addEventListener('click', async () => {
+        if (deviceStreamStopBtn) {
+            deviceStreamStopBtn.addEventListener('click', async () => {
                 streamMenu?.classList.add('hidden');
                 if (!requireDeviceSn()) return;
-                stopStreamBtn.disabled = true;
+                deviceStreamStopBtn.disabled = true;
                 try {
                     const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
                     // 服务端还在消费该流的话先停消费, 避免消费器对着死流反复重连
                     if (consumeActive) {
-                        await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/stop`, { method: 'POST' })
+                        await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/consume/stop`, { method: 'POST' })
                             .catch(() => { });
                         setConsumeUI(false);
                     }
-                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stop_stream`, {
+                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/device_stream/stop`, {
                         method: 'POST',
                     });
                     if (!resp.ok) {
@@ -331,7 +330,7 @@
                 } catch (e) {
                     showToast(`❌ 停止推流失败: ${e.message}`, 'error', 6000);
                 } finally {
-                    stopStreamBtn.disabled = false;
+                    deviceStreamStopBtn.disabled = false;
                 }
             });
         }
@@ -373,7 +372,7 @@
                             resetCameraButton();
                         }
                         localStorage.setItem('vision_stream_url', url);
-                        const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/start`, {
+                        const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/consume/start`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ url }),
@@ -385,7 +384,7 @@
                         }
                         setConsumeUI(true);
                     } else {
-                        const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/stop`, {
+                        const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/consume/stop`, {
                             method: 'POST',
                         });
                         if (!resp.ok) {
@@ -407,7 +406,7 @@
             if (!window.BACKEND_CONFIG.cameraId) return;
             try {
                 const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
-                const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/status`);
+                const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/consume/status`);
                 if (!resp.ok) return;
                 const st = await resp.json();
                 if (st.running && !consumeActive) {

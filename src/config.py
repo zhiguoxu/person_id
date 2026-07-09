@@ -34,13 +34,11 @@ class DetectionConfig(BaseModel):
     """检测模块配置"""
     # YOLO 模型
     yolo_fast_model: str = "yolo11n-pose.pt"  # Tier 1 轻量模型
-    yolo_heavy_model: str = "yolo11x-pose.pt"  # Tier 2 精确模型
     yolo_confidence: float = 0.5  # 检测置信度阈值
     yolo_iou_threshold: float = 0.7  # NMS IoU 阈值
     yolo_max_det: int = 10  # 最大检测数
 
     # 关键点
-    keypoint_confidence: float = 0.3  # 关键点最低置信度
     # 最小人体像素高度 — Tier1 硬门槛, 过小的人直接不追踪/不入库。
     # 调高可收紧注册: 只对靠得够近、分辨率够高的人建档 (人脸/人体特征更可靠)。
     min_person_height_px: int = 120
@@ -87,7 +85,6 @@ class GalleryConfig(BaseModel):
 
     # 衣橱库
     max_outfits: int = 20  # 最大衣橱记录数
-    outfit_half_life_days: float = 30.0  # 衣橱衰减半衰期
     outfit_match_threshold: float = 0.85  # 衣橱匹配阈值 (同一套衣服)
 
     # 入库质量门槛 — 人脸与人体分开管理
@@ -207,7 +204,6 @@ class ServerConfig(BaseModel):
 
     # WebSocket
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小
-    ws_send_timeout: float = 5.0  # 发送超时
 
 
 class Config(BaseModel):

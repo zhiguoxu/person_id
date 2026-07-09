@@ -166,7 +166,7 @@ class TrackState(BaseModel):
         self.tier2_count += 1
 
         # --- 3. Tier2 执行 ---
-        result, _ = Tier2Processor.process_multiframe(
+        result = Tier2Processor.process_multiframe(
             track_id=track_id,
             buffer=self.buffer,
             quality_cache=self.quality_cache,

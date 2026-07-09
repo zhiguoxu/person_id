@@ -5,14 +5,6 @@ from pydantic import BaseModel, ConfigDict
 import cv2
 import numpy as np
 
-_FORMAT_PARAMS = {
-    ".jpg": [cv2.IMWRITE_JPEG_QUALITY, 95],
-    ".jpeg": [cv2.IMWRITE_JPEG_QUALITY, 95],
-    ".png": [cv2.IMWRITE_PNG_COMPRESSION, 3],
-    ".bmp": [],
-    ".tiff": [],
-    ".tif": [],
-}
 
 image_size = (2560, 1440)
 camera_matrix = [[1215.26939, 0.0, 1295.73231],

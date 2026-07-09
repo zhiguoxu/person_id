@@ -105,8 +105,6 @@ class WebSocketManager {
                 if (this.onEvent) this.onEvent(msg);
             } else if (msg.type === 'identity_confirmed') {
                 alert(`身份已确认: ${msg.name}`);
-            } else if (msg.type === 'connected') {
-                console.log('[WS] Server acknowledged connection');
             } else if (msg.type === 'error') {
                 // 服务端错误反馈
                 if (msg.code === 'confirm_error') {

@@ -3,7 +3,7 @@
  * 
  * 功能:
  * - 枚举可用本地摄像头
- * - 支持网络摄像头 (FLV / HLS / MJPEG)
+ * - 支持网络流 (FLV via flv.js / MJPEG; HLS 仅 Safari 原生支持)
  * - 开始/停止采集
  * - 定时抓帧并通过 WebSocket 发送
  */
@@ -234,17 +234,6 @@ class VideoCapture {
         if (this.videoEl.canPlayType('application/vnd.apple.mpegurl')) {
             this.videoEl.src = url;
             await this.videoEl.play();
-            return;
-        }
-
-        // 非 Safari: 尝试 hls.js (需额外加载)
-        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-            this._hlsPlayer = new Hls();
-            this._hlsPlayer.loadSource(url);
-            this._hlsPlayer.attachMedia(this.videoEl);
-            this._hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
-                this.videoEl.play();
-            });
             return;
         }
 

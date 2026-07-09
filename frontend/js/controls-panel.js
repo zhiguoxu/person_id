@@ -77,14 +77,12 @@ class ControlsPanel {
             reid: '🔍 ReID',
             quality: '📊 Quality',
             matching: '🔗 Matching',
-            system: '⚙️ System',
         };
 
         const groupColors = {
             reid: 'group-reid',
             quality: 'group-quality',
             matching: 'group-matching',
-            system: 'group-system',
         };
 
         Object.entries(groups).forEach(([group, items]) => {

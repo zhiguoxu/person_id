@@ -508,3 +508,25 @@ class PersonProfile(BaseModel):
     def total_face_features(self) -> int:
         """所有姿态桶的人脸特征总数"""
         return sum(len(feats) for feats in self.face_features.values())
+
+    def best_face_image(self) -> bytes | None:
+        """取质量最高的人脸特征缩略图 (正脸桶优先), 无人脸图时回退人体图。
+
+        底库入库时每条特征都存了 source_image (JPEG, 供 VLM 用),
+        前端画廊头像直接复用它, 无需另行生成。
+        """
+        def _best(features: dict) -> bytes | None:
+            best_img, best_q = None, -1.0
+            for entries in features.values():
+                for e in entries:
+                    if e.source_image is not None and e.quality_score > best_q:
+                        best_img, best_q = e.source_image, e.quality_score
+            return best_img
+
+        frontal = [
+            e for e in self.face_features.get(PoseBucket.FRONTAL, [])
+            if e.source_image is not None
+        ]
+        if frontal:
+            return max(frontal, key=lambda e: e.quality_score).source_image
+        return _best(self.face_features) or _best(self.body_features)

@@ -142,7 +142,4 @@
 
         open(img.src, overlayBbox, boxColor);
     });
-
-    // 暴露全局 API (供其他模块主动调用)
-    window.imageLightbox = { open, close };
 })();

@@ -573,8 +573,6 @@ class EventsTimeline {
      */
     clear() {
         this.events = [];
-        this._lastCard = null;
-        this._lastEventKey = null;
         this.container.innerHTML = '<div class="timeline-empty">No events yet. Start the camera to begin detection.</div>';
     }
 }
