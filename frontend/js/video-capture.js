@@ -51,7 +51,6 @@ class VideoCapture {
     async enumerateDevices() {
         try {
             // 请求权限并保留 stream (使用正式采集的分辨率)
-            // this._pendingStream = await navigator.mediaDevices.getUserMedia({ video: true });
             this._pendingStream = await navigator.mediaDevices.getUserMedia({
                 video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
                 audio: false,

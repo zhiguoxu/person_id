@@ -1,7 +1,7 @@
 /**
  * Pipeline Panel — 算法流程可视化面板
  * 
- * 显示算法各阶段的状态、耗时、缩略图、匹配分数条形图。
+ * 显示算法各阶段的状态、耗时、缩略图与匹配详情。
  */
 class PipelinePanel {
     constructor() {

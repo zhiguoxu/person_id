@@ -108,12 +108,12 @@ class OutfitEnrollResult(BaseModel):
     """衣橱入库操作的结果（仅成功时返回）。
 
     三种情况:
-    - updated 不为 None: EMA 更新了已有 outfit → DB UPDATE
+    - previous 不为 None: EMA 更新了已有 outfit → DB UPDATE
     - evicted 不为 None: 替换了最旧 outfit → DB DELETE + INSERT
     - 两者都为 None: 新增 outfit (衣橱未满) → DB INSERT
     """
     outfit: OutfitRecord  # 新增或更新后的 outfit
-    updated: OutfitRecord | None = None  # EMA 更新前的旧版本 (用于定位 DB 行)
+    previous: OutfitRecord | None = None  # EMA 更新前的旧快照 (用于定位 DB 行)
     evicted: OutfitRecord | None = None  # 被替换淘汰的旧 outfit
 
 
@@ -457,7 +457,7 @@ class PersonProfile(BaseModel):
                     "已更新 {} 的 outfit (quality={:.3f}, wardrobe_size={})",
                     self.person_id, quality, len(self.wardrobe),
                 )
-                return OutfitEnrollResult(outfit=outfit, updated=old_snapshot)
+                return OutfitEnrollResult(outfit=outfit, previous=old_snapshot)
 
         # 新衣服
         new_outfit = OutfitRecord(

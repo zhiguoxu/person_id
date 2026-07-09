@@ -741,9 +741,9 @@ class VisionOrchestrator(BaseModel):
                 # 3. 衣橱
                 wop = changes.wardrobe_op
                 if wop is not None:
-                    if wop.updated is not None:
+                    if wop.previous is not None:
                         await persistence.update_outfit_in(
-                            session, person_id, wop.updated, wop.outfit,
+                            session, person_id, wop.previous, wop.outfit,
                         )
                     elif wop.evicted is not None:
                         await persistence.replace_outfit_in(

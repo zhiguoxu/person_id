@@ -1,10 +1,10 @@
 """
 Tier2/Tier3 调度逻辑
 
-状态驱动的固定间隔调度:
-- IDENTIFYING/SUSPECTED/CONFLICT → 1s 快速间隔
-- CONFIDENT/STRANGER → 5s 慢速间隔
-- DEFINITE → 20s 后台富化
+状态驱动的固定间隔调度 (间隔值见 config.multiframe, 此处不硬编码数值):
+- IDENTIFYING/SUSPECTED/CONFLICT → tier2_fast_interval 快速间隔
+- CONFIDENT/STRANGER → tier2_slow_interval 慢速间隔
+- DEFINITE → definite_enrich_interval 后台富化
 - 非注意力目标: 所有间隔 × non_attention_factor
 """
 from __future__ import annotations

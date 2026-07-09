@@ -118,9 +118,7 @@ class OSNetExtractor:
             return results
 
         except Exception as e:
+            # 返回空列表而非随机向量: 随机向量会污染相似度对比,
+            # 调用方以 len(结果) 判断成败 (与 BodyExtractor 的失败契约一致)
             logger.warning("OSNet feature 提取失败: {}", e)
-            return [self._random_feature() for _ in crops]
-
-    def _random_feature(self) -> np.ndarray:
-        feat = np.random.randn(self.EMBEDDING_DIM).astype(np.float32)
-        return feat / np.linalg.norm(feat)
+            return []

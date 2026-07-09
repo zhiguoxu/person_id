@@ -243,10 +243,11 @@ class EventsTimeline {
             clearBtn.title = 'Clear quality cache';
             clearBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
+                const cameraId = window.BACKEND_CONFIG?.cameraId;
+                if (!cameraId) return; // 未选设备时不发请求
                 clearBtn.disabled = true;
                 clearBtn.textContent = '⏳';
                 try {
-                    const cameraId = window.BACKEND_CONFIG?.cameraId || 'default';
                     const resp = await fetch(
                         `${window.BACKEND_CONFIG.apiUrl}/${cameraId}/track/${event.track_id}/quality_cache`,
                         { method: 'DELETE' }
