@@ -69,6 +69,15 @@ def _undistort_image(
     return undistorted[y: y + rh, x: x + rw]
 
 
+def correct_frame(
+        img: np.ndarray,
+        camera_params: CameraParams = _camera_params,
+        alpha: float = 0,
+) -> np.ndarray:
+    """对已解码的 BGR 帧做镜头畸变矫正 (供服务端拉流路径使用, 免去 JPEG 编解码往返)。"""
+    return _undistort_image(img, camera_params, alpha=alpha)
+
+
 def correct_image_bytes(
         image_bytes: bytes,
         camera_params: CameraParams = _camera_params,

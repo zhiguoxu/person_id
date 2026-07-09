@@ -44,7 +44,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield  # ← 应用运行中
 
     # --- shutdown ---
-    logger.info("应用正在关闭 ({} 个摄像头) ...", len(camera_registry))
+    from src.api.registry import consumer_registry
+
+    logger.info(
+        "应用正在关闭 ({} 个摄像头, {} 个拉流消费器) ...",
+        len(camera_registry), len(consumer_registry),
+    )
+    for cam_id, consumer in list(consumer_registry.items()):
+        logger.info("正在停止拉流消费器: {}", cam_id)
+        await consumer.stop()
+    consumer_registry.clear()
+
     for cam_id, orch in camera_registry.items():
         logger.info("正在关闭摄像头: {}", cam_id)
         await orch.shutdown()
@@ -89,7 +99,7 @@ def create_app() -> FastAPI:
 
         连接方式: ws://host:port/ws/vision?camera_id=cam_01
         """
-        await handle_ws_connection(websocket, camera_id, camera_registry)
+        await handle_ws_connection(websocket, camera_id)
 
     # --- Static files (frontend) ---
     frontend_path = Path(FRONTEND_DIR)

@@ -193,6 +193,18 @@ class ServerConfig(BaseModel):
     # ISS 直播流 API (device-sn 由请求的 camera_id 动态传入, 不在此写死)
     iss_api_url: str = "http://42.192.205.141:8999"  # ISS 服务地址
 
+    # 服务端拉流消费 (StreamConsumer)
+    stream_max_fps: float = 15.0  # 处理帧率上限 (拉到的多余帧直接丢弃)
+    # 识别路径分辨率: 0 = 不缩放, 按视频流原生分辨率处理 (无损)。
+    # 仅当算力不足时才设为正数 (如 1280) 用等比缩小换速度。
+    stream_proc_max_width: int = 0
+    # ---- 前端预览帧 (下面两项只影响网页观看的带宽/清晰度) ----
+    # 识别用的是解码原帧, 与预览参数无关; 识别结果坐标随 frame_w/frame_h 下发,
+    # 预览图缩放不会导致框偏移。
+    stream_preview_max_width: int = 1280  # 预览帧最大宽度, 0 = 原生分辨率
+    stream_preview_jpeg_quality: int = 80  # 预览帧 JPEG 质量 (1-100)
+    stream_reconnect_delay: float = 2.0  # 拉流断开后的重连间隔 (秒)
+
     # WebSocket
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小
     ws_send_timeout: float = 5.0  # 发送超时

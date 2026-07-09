@@ -8,9 +8,21 @@ const BACKEND_CONFIG = {
     // 远程 CUDA 服务器地址
     host: '1.15.11.133',
     port: 10003,
-    // 摄像头 ID: 优先取 URL 查询参数 ?camera_id=xxx, 缺省回退 'zhiguo'。
-    // 约定 camera_id = 设备 device_sn, 例: index.html?camera_id=EU0125MH00100015056
-    cameraId: new URLSearchParams(location.search).get('camera_id') || 'zhiguo',
+    // 摄像头 ID (约定 camera_id = 设备 device_sn)。无默认值:
+    // 未填写设备号时不连 WebSocket, 也不允许推流/拉流/本地采集。
+    // 优先级: URL 参数 ?camera_id=xxx > 页面上次填写的设备号(localStorage)。
+    // 页面顶部的「设备 SN」输入框修改后 (失焦或回车) 立即生效并记住。
+    cameraId: (() => {
+        const fromUrl = new URLSearchParams(location.search).get('camera_id');
+        if (fromUrl) {
+            try { localStorage.setItem('vision_camera_id', fromUrl); } catch (e) { }
+            return fromUrl;
+        }
+        try {
+            return localStorage.getItem('vision_camera_id') || '';
+        } catch (e) { }
+        return '';
+    })(),
 
     // 自动构建 URL
     get baseUrl() {

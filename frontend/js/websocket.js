@@ -36,6 +36,10 @@ class WebSocketManager {
      * 建立 WebSocket 连接 (连接到远程 CUDA 后端)
      */
     connect() {
+        if (!window.BACKEND_CONFIG.cameraId) {
+            console.warn('[WS] No camera_id, connection skipped');
+            return;
+        }
         this.url = window.BACKEND_CONFIG.wsUrl;
         this._createConnection();
     }
@@ -63,6 +67,9 @@ class WebSocketManager {
         this.ws.onmessage = (event) => {
             if (typeof event.data === 'string') {
                 this._handleTextMessage(event.data);
+            } else if (event.data instanceof ArrayBuffer) {
+                // 服务端拉流模式: 后端推送的 JPEG 帧 → StreamViewer 渲染
+                window.streamViewer?.onFrame(event.data);
             }
         };
 
@@ -85,6 +92,10 @@ class WebSocketManager {
 
             if (msg.type === 'frame_result') {
                 this.pendingFrame = false; // 允许发送下一帧
+                // 服务端拉流模式: 同步识别坐标基准 (处理帧尺寸)
+                if (msg.frame_w && msg.frame_h) {
+                    window.streamViewer?.setFrameSize(msg.frame_w, msg.frame_h);
+                }
                 // 立即触发下一帧发送 (在 UI 更新之前, 避免被 DOM 操作阻塞)
                 window.videoCapture?.onResultReceived();
                 this._updateStats(msg);
@@ -100,6 +111,14 @@ class WebSocketManager {
                 // 服务端错误反馈
                 if (msg.code === 'confirm_error') {
                     alert(`确认身份失败: ${msg.message}`);
+                } else if (msg.code === 'consumer_active') {
+                    // 服务端拉流消费中, 本地上传帧被拒绝 → 停止本地采集
+                    console.warn('[WS] Server-side consumer active, stopping local capture');
+                    this.pendingFrame = false;
+                    if (window.videoCapture?.capturing) {
+                        window.videoCapture.stop();
+                        window.app?.resetCameraButton?.();
+                    }
                 } else {
                     console.warn('[WS] Server error:', msg.code, msg.message);
                 }

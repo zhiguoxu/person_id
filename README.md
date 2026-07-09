@@ -39,6 +39,33 @@ bash deploy.sh
 
 > 后端地址配置在 `frontend/js/config.js`。如果在本地运行，会自动连接 `localhost:10003`；如果连接远程服务器，可修改对应的 IP 地址。
 
+### 3. 视频来源的三种模式
+
+| 模式 | 视频数据路径 | 说明 |
+| --- | --- | --- |
+| 本地摄像头 | 浏览器 getUserMedia → 抓帧上传 | URL 输入框留空, 点 Start Camera |
+| 前端拉流 (旧) | 浏览器 flv.js 播放 → 抓帧上传 | 填入流地址, 点 Start Camera |
+| **服务端拉流 (推荐)** | **服务器直接拉流识别, 前端仅观看** | 点「📡 设备推流」获取地址 → 点「▶ 服务端拉流」 |
+
+服务端拉流模式下, 识别在后台持续运行, **不依赖浏览器页面保持打开**; 页面打开时服务端把
+处理帧 (JPEG) 和识别结果实时推送给前端渲染, 多个页面可同时观看同一路流。
+
+识别路径按视频流**原生分辨率无损处理**, 分辨率完全跟随设备推流动态适配, 换设备无需改配置
+(实际分辨率可在 `stream/status` 的 `stream_width/stream_height` 中确认)。解码帧直接进
+pipeline, 无缩放、无 JPEG 重压缩 —— 对比旧的浏览器抓帧路径是 640 宽 + JPEG 0.7 有损上传。
+
+推给网页的**预览帧**默认限宽 1280 (`stream_preview_max_width`)、JPEG 质量 80
+(`stream_preview_jpeg_quality`) 以省带宽, 这两项只影响观看清晰度, 不影响识别质量和框的精度。
+
+相关接口 (camera_id 即设备 device-sn):
+
+```
+POST /api/{camera_id}/refresh_stream   # 开启设备推流 (ISS start_stream), 返回 flv_url
+POST /api/{camera_id}/stream/start     # 开启服务端拉流消费, body: {"url": "..."}
+POST /api/{camera_id}/stream/stop      # 停止服务端拉流消费
+GET  /api/{camera_id}/stream/status    # 查询消费状态 (running/connected/fps/viewers)
+```
+
 ## 项目结构
 
 ```

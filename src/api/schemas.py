@@ -227,6 +227,10 @@ class WSFrameResult(BaseModel):
     gallery_size: int = 0
     pending_vlm: list[int] = Field(default_factory=list)
     pipeline_debug: dict[str, JsonValue] | None = None
+    # 处理帧尺寸 (服务端拉流模式下发): 检测坐标的基准。
+    # 预览 JPEG 可能为省带宽而缩小, 前端必须以此字段而非预览图尺寸做坐标映射。
+    frame_w: int | None = None
+    frame_h: int | None = None
 
 
 class WSIdentityConfirm(BaseModel):
@@ -256,6 +260,58 @@ class WSError(BaseModel):
     type: str = "error"
     message: str
     code: str = "unknown"
+
+
+class StreamStartRequest(BaseModel):
+    """开启服务端拉流消费的请求。"""
+    url: str
+
+
+class StreamStatusResponse(BaseModel):
+    """服务端拉流消费状态。"""
+    camera_id: str
+    running: bool = False
+    connected: bool = False  # 是否已成功连上视频流
+    url: str | None = None
+    # 实际拉到的流原生分辨率 (识别按此分辨率无损处理; 换设备后可在此确认)
+    stream_width: int = 0
+    stream_height: int = 0
+    frames_read: int = 0
+    frames_processed: int = 0
+    process_fps: float = 0.0
+    viewers: int = 0
+    last_error: str | None = None
+
+
+def build_frame_result(result: dict) -> WSFrameResult:
+    """把 orchestrator.process_frame 的返回字典转成 WSFrameResult。
+
+    WebSocket 推流路径与服务端拉流路径共用, 保证两种模式下前端收到的结构一致。
+    """
+    return WSFrameResult(
+        frame_id=result.get("frame_id", 0),
+        tracked_persons=result.get("tracked_persons", []),
+        current_target=result.get("current_target"),
+        processing_ms=result.get("processing_ms", 0.0),
+        gallery_size=result.get("gallery_size", 0),
+        pending_vlm=result.get("pending_vlm", []),
+        pipeline_debug=result.get("pipeline_debug"),
+    )
+
+
+def build_ws_event(event) -> WSEvent:
+    """把 orchestrator 的 SystemEvent 转成 WSEvent (duck-typed, 避免循环导入)。"""
+    return WSEvent(
+        event_type=event.event_type.value,
+        timestamp=event.timestamp,
+        track_id=event.track_id,
+        person_id=event.person_id,
+        display_name=event.display_name,
+        fused_score=event.fused_score,
+        source=event.source,
+        message=event.message,
+        candidates=event.candidates,
+    )
 
 class BodyQualityTestResponse(BaseModel):
     """测试 body quality 的返回结果"""

@@ -59,9 +59,18 @@
                         <option value="">Select Camera...</option>
                     </select>
                     <div id="stream-url-group" class="stream-url-group">
+                        <input type="text" id="device-sn-input" class="text-input stream-url-input device-sn-input"
+                               placeholder="设备 SN" title="设备号 (camera_id), 修改后回车切换设备">
+                        <div class="split-btn">
+                            <button id="btn-refresh-stream" class="btn split-btn-main" title="开启设备推流并获取直播地址 (ISS start_stream)">📡 设备推流</button>
+                            <button id="btn-stream-menu" class="btn split-btn-caret" title="更多操作">▾</button>
+                            <div id="stream-menu" class="split-menu hidden">
+                                <button id="btn-stop-stream" class="split-menu-item" title="停止设备推流 (ISS stop_stream)">⏹ 停止推流</button>
+                            </div>
+                        </div>
                         <input type="text" id="stream-url-input" class="text-input stream-url-input"
-                               placeholder="Stream URL (leave empty for local camera)">
-                        <button id="btn-refresh-stream" class="btn btn-icon-only" title="Refresh stream URL from ISS">🔄</button>
+                               placeholder="Stream URL (留空用本地摄像头)">
+                        <button id="btn-toggle-consume" class="btn btn-primary" title="服务端后台拉流识别, 页面实时观看">▶ 服务端拉流</button>
                     </div>
                     <div class="toggle-group">
                         <label class="toggle" title="Bounding Boxes">
@@ -90,6 +99,7 @@
             </div>
             <div id="video-container">
                 <video id="webcam" autoplay playsinline muted></video>
+                <canvas id="server-stream-canvas" class="hidden"></canvas>
                 <canvas id="overlay-canvas"></canvas>
                 <div id="no-camera-message">
                     <span class="no-camera-icon">📷</span>
@@ -397,6 +407,7 @@
     <script src="js/config.js"></script>
     <script src="js/websocket.js"></script>
     <script src="js/video-capture.js"></script>
+    <script src="js/stream-viewer.js"></script>
     <script src="js/overlay-renderer.js"></script>
     <script src="js/pipeline-panel.js"></script>
     <script src="js/controls-panel.js"></script>

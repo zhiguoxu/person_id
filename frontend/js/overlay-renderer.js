@@ -52,11 +52,21 @@ class OverlayRenderer {
         this._bindEvents();
     }
 
+    /**
+     * 坐标基准: 服务端拉流观看模式用 StreamViewer, 否则用本地采集
+     */
+    _getRect() {
+        if (window.streamViewer?.active) {
+            return window.streamViewer.getVideoRect();
+        }
+        return window.videoCapture.getVideoRect();
+    }
+
     _bindEvents() {
         this.canvas.addEventListener('click', (e) => {
             if (!this.onPersonClicked || !this.persons.length) return;
 
-            const rect = window.videoCapture.getVideoRect();
+            const rect = this._getRect();
             if (!rect) return;
 
             // Get click coordinates relative to canvas
@@ -109,7 +119,7 @@ class OverlayRenderer {
     }
 
     _render() {
-        const rect = window.videoCapture.getVideoRect();
+        const rect = this._getRect();
         if (!rect) return;
 
         // 同步 canvas 尺寸

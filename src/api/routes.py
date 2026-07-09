@@ -38,6 +38,8 @@ from src.api.schemas import (
     RegisterCurrentResponse,
     ReIDCompareResponse,
     RenamePersonRequest,
+    StreamStartRequest,
+    StreamStatusResponse,
     TunableParam,
 )
 from src.pipeline.data_models import (
@@ -61,34 +63,134 @@ router = APIRouter(prefix="/api", tags=["api"])
 # ISS Stream refresh (start → FLV URL)
 # ==============================================================================
 
-@router.post("/refresh_stream")
-async def refresh_stream() -> dict:
-    """获取 ISS 直播流并返回 FLV URL。
+@router.post("/{camera_id}/refresh_stream")
+async def refresh_stream(camera_id: str) -> dict:
+    """开启设备推流并返回 FLV 直播地址。
 
-    1. POST /iss/start_stream
+    camera_id 即设备 device-sn (前端约定 camera_id = device_sn):
+    1. POST {iss_api_url}/iss/start_stream, header device-sn: {camera_id}
     2. 返回 data.Flv
     """
     import httpx
 
     cfg = _get_config().server
     base = cfg.iss_api_url.rstrip("/")
-    headers = {"device-sn": cfg.iss_device_sn}
+    headers = {"device-sn": camera_id}
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(f"{base}/iss/start_stream", headers=headers)
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"ISS start_stream failed: {resp.status_code}")
+        # ISS 失败时 (含 HTTP 500) body 里通常带有 msg, 透传给前端便于定位
+        # (最常见: 设备号不存在 → "无法获取设备 DB ID")
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        if resp.status_code != 200 or data.get("code") != 0:
+            msg = data.get("msg") or f"HTTP {resp.status_code}"
+            logger.warning("ISS start_stream 失败: device-sn={}, {}", camera_id, msg)
+            raise HTTPException(
+                status_code=502,
+                detail=f"设备推流开启失败 (device-sn={camera_id}): {msg}。请确认设备号正确。",
+            )
 
-        data = resp.json()
-        if data.get("code") != 0:
-            raise HTTPException(status_code=502, detail=f"ISS error: {data.get('msg', 'unknown')}")
-
-        flv_url = data.get("data", {}).get("Flv", "")
+        flv_url = (data.get("data") or {}).get("Flv", "")
         if not flv_url:
-            raise HTTPException(status_code=502, detail="ISS returned no FLV URL")
+            raise HTTPException(
+                status_code=502,
+                detail=f"ISS 未返回 FLV 地址 (device-sn={camera_id})",
+            )
 
-    logger.info("ISS 流已启动: {}", flv_url)
+    logger.info("ISS 设备推流已启动: device-sn={}, flv={}", camera_id, flv_url)
     return {"flv_url": flv_url}
+
+
+@router.post("/{camera_id}/stop_stream")
+async def stop_stream(camera_id: str) -> dict:
+    """停止设备推流 (ISS stop_stream, device-sn = camera_id)。"""
+    import httpx
+
+    cfg = _get_config().server
+    base = cfg.iss_api_url.rstrip("/")
+    headers = {"device-sn": camera_id}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(f"{base}/iss/stop_stream", headers=headers)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        if resp.status_code != 200 or data.get("code") != 0:
+            msg = data.get("msg") or f"HTTP {resp.status_code}"
+            logger.warning("ISS stop_stream 失败: device-sn={}, {}", camera_id, msg)
+            raise HTTPException(
+                status_code=502,
+                detail=f"停止设备推流失败 (device-sn={camera_id}): {msg}",
+            )
+
+    logger.info("ISS 设备推流已停止: device-sn={}", camera_id)
+    return {"stopped": True}
+
+
+# ==============================================================================
+# 服务端拉流消费 (StreamConsumer)
+# ==============================================================================
+
+@router.post("/{camera_id}/stream/start", response_model=StreamStatusResponse)
+async def start_stream_consume(
+    camera_id: str, request: StreamStartRequest,
+) -> StreamStatusResponse:
+    """开启服务端拉流消费: 后台拉取视频流 → 识别 → 广播给观看端。"""
+    from src.api.registry import (
+        consumer_registry,
+        get_or_create_orchestrator,
+    )
+    from src.pipeline.stream_consumer import StreamConsumer
+
+    url = request.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    existing = consumer_registry.get(camera_id)
+    if existing is not None:
+        if existing.running and existing.url == url:
+            # 幂等: 同 URL 重复 start 直接返回现状
+            return existing.status()
+        # URL 变更或已停止 → 先停旧的再起新的
+        await existing.stop()
+        consumer_registry.pop(camera_id, None)
+
+    orch = await get_or_create_orchestrator(camera_id)
+    consumer = StreamConsumer(camera_id=camera_id, url=url, orchestrator=orch)
+    consumer.start()
+    consumer_registry[camera_id] = consumer
+    return consumer.status()
+
+
+@router.post("/{camera_id}/stream/stop", response_model=StreamStatusResponse)
+async def stop_stream_consume(camera_id: str) -> StreamStatusResponse:
+    """停止服务端拉流消费。无活跃 WebSocket 时顺带回收 orchestrator。"""
+    from src.api.registry import consumer_registry, maybe_release_orchestrator
+
+    consumer = consumer_registry.pop(camera_id, None)
+    if consumer is None:
+        return StreamStatusResponse(camera_id=camera_id, running=False)
+
+    await consumer.stop()
+    await maybe_release_orchestrator(camera_id)
+    status = consumer.status()
+    status.running = False
+    return status
+
+
+@router.get("/{camera_id}/stream/status", response_model=StreamStatusResponse)
+async def stream_consume_status(camera_id: str) -> StreamStatusResponse:
+    """查询服务端拉流消费状态 (前端刷新页面后据此恢复观看模式)。"""
+    from src.api.registry import consumer_registry
+
+    consumer = consumer_registry.get(camera_id)
+    if consumer is None:
+        return StreamStatusResponse(camera_id=camera_id, running=False)
+    return consumer.status()
 
 
 def require_camera_orchestrator(camera_id: str):

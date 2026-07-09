@@ -23,7 +23,8 @@ from src.tier1.face_detector_light import get_face_detector_light
 from src.pipeline.data_models import TrackedPerson
 from src.pipeline.quality_utils import compute_quality_hint, compute_blur_score
 from src.tier1.tracking import TrackingEngine
-from src.tier1.ediffiqa import get_ediffiqa
+# eDifFIQA 统一使用 tier2/features 的实现 (与入库把关、测试接口共用同一单例, 避免同模型重复加载)
+from src.tier2.features.ediffiqa import get_ediffiqa
 
 
 class Tier1Processor:

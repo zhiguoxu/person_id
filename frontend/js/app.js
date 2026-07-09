@@ -21,8 +21,15 @@
         // 4. 绑定 UI 事件
         bindUIEvents();
 
-        // 5. 连接 WebSocket
-        window.wsManager.connect();
+        // 5. 连接 WebSocket (未填设备 SN 时不连, 等用户填写后页面会重载)
+        if (window.BACKEND_CONFIG.cameraId) {
+            window.wsManager.connect();
+        } else {
+            const msg = document.querySelector('#no-camera-message p');
+            if (msg) msg.textContent = '请先在上方输入框填写设备 SN';
+            document.getElementById('device-sn-input')?.focus();
+            console.log('[App] No camera_id yet, WebSocket not connected');
+        }
 
         console.log('[App] Initialization complete');
     }
@@ -99,6 +106,8 @@
             loadServerConfig();
             // WS 重连后后端状态已刷新, 清除前端的删除标记
             window.personGallery._deletedIds.clear();
+            // 同步服务端拉流状态 (刷新页面 / 重连后恢复观看模式)
+            window.app?.syncConsumeState?.();
         };
     }
 
@@ -117,9 +126,20 @@
             if (savedUrl) streamUrlInput.value = savedUrl;
         }
 
+        function resetCameraButton() {
+            if (!cameraBtn) return;
+            cameraBtn.innerHTML = '<span class="btn-icon">▶</span> Start Camera';
+            cameraBtn.classList.remove('active');
+        }
+
         // --- Camera Start/Stop ---
         if (cameraBtn) {
             cameraBtn.addEventListener('click', async () => {
+                if (!requireDeviceSn()) return;
+                if (consumeActive && !window.videoCapture.capturing) {
+                    alert('服务端拉流进行中，无需本地采集。如需切换请先停止服务端拉流。');
+                    return;
+                }
                 if (window.videoCapture.capturing) {
                     window.videoCapture.stop();
                     cameraBtn.innerHTML = '<span class="btn-icon">▶</span> Start Camera';
@@ -159,12 +179,81 @@
             });
         }
 
-        // --- 刷新 ISS 直播流 ---
+        // --- 设备 SN 输入框: 失焦或回车即生效并记住 (无默认设备号) ---
+        const deviceSnInput = document.getElementById('device-sn-input');
+
+        /** 校验设备号已填写, 未填写则拦截操作并聚焦输入框 */
+        function requireDeviceSn() {
+            if (window.BACKEND_CONFIG.cameraId) return true;
+            alert('请先在左侧输入框填写设备 SN');
+            deviceSnInput?.focus();
+            return false;
+        }
+
+        function applyDeviceSn() {
+            const sn = deviceSnInput.value.trim();
+            if (sn === window.BACKEND_CONFIG.cameraId) return; // 未变化
+            // 保存并带着新 camera_id 重载页面 (WS/底库/拉流观看状态全部干净重建);
+            // 清空则移除绑定, 页面回到"未选设备"状态
+            try {
+                if (sn) localStorage.setItem('vision_camera_id', sn);
+                else localStorage.removeItem('vision_camera_id');
+            } catch (err) { }
+            localStorage.removeItem('vision_stream_url'); // 流地址跟设备走, 换设备后作废
+            const u = new URL(location.href);
+            if (sn) u.searchParams.set('camera_id', sn);
+            else u.searchParams.delete('camera_id');
+            location.href = u.toString();
+        }
+
+        if (deviceSnInput) {
+            deviceSnInput.value = window.BACKEND_CONFIG.cameraId;
+            deviceSnInput.addEventListener('change', applyDeviceSn); // 失焦且值有变化
+            deviceSnInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    applyDeviceSn();
+                }
+            });
+        }
+
+        // --- 轻量 toast 提示 (成功绿色 / 失败红色, 自动消失) ---
+        function showToast(message, type = 'success', duration = 3000) {
+            let box = document.getElementById('toast-box');
+            if (!box) {
+                box = document.createElement('div');
+                box.id = 'toast-box';
+                document.body.appendChild(box);
+            }
+            const item = document.createElement('div');
+            item.className = `toast toast-${type}`;
+            item.textContent = message;
+            box.appendChild(item);
+            setTimeout(() => {
+                item.classList.add('toast-out');
+                setTimeout(() => item.remove(), 300);
+            }, duration);
+        }
+
+        // --- 按钮 1: 开启设备推流 (ISS start_stream → FLV 地址填入输入框) ---
         const refreshBtn = document.getElementById('btn-refresh-stream');
         if (refreshBtn) {
+            const refreshBtnHtml = refreshBtn.innerHTML;
             refreshBtn.addEventListener('click', async () => {
+                if (!requireDeviceSn()) return;
+
+                // 进入加载态: 按钮与 URL 输入框都锁住, 输入框显示加载提示
                 refreshBtn.disabled = true;
-                refreshBtn.classList.add('spinning');
+                refreshBtn.innerHTML = '⏳ 获取中...';
+                const prevUrl = streamUrlInput?.value || '';
+                if (streamUrlInput) {
+                    streamUrlInput.value = '';
+                    streamUrlInput.placeholder = '正在开启设备推流, 获取直播地址...';
+                    streamUrlInput.readOnly = true;
+                    streamUrlInput.classList.add('loading');
+                }
+
+                let ok = false;
                 try {
                     const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
                     const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/refresh_stream`, {
@@ -172,22 +261,168 @@
                     });
                     if (!resp.ok) {
                         const err = await resp.json().catch(() => ({}));
-                        alert(`刷新失败: ${err.detail || resp.statusText}`);
+                        showToast(`❌ 开启设备推流失败: ${err.detail || resp.statusText}`, 'error', 6000);
                         return;
                     }
                     const data = await resp.json();
                     if (data.flv_url) {
+                        ok = true;
                         streamUrlInput.value = data.flv_url;
                         localStorage.setItem('vision_stream_url', data.flv_url);
+                        showToast('✅ 设备推流已开启, 地址已填入。可点击「服务端拉流」开始识别');
+                    } else {
+                        showToast('❌ 开启设备推流失败: 未返回直播地址', 'error', 6000);
                     }
                 } catch (e) {
-                    alert(`刷新失败: ${e.message}`);
+                    showToast(`❌ 开启设备推流失败: ${e.message}`, 'error', 6000);
                 } finally {
                     refreshBtn.disabled = false;
-                    refreshBtn.classList.remove('spinning');
+                    refreshBtn.innerHTML = refreshBtnHtml;
+                    if (streamUrlInput) {
+                        streamUrlInput.readOnly = false;
+                        streamUrlInput.classList.remove('loading');
+                        streamUrlInput.placeholder = 'Stream URL (留空用本地摄像头)';
+                        if (!ok) streamUrlInput.value = prevUrl; // 失败时恢复原值
+                    }
                 }
             });
         }
+
+        // --- 设备推流的下拉菜单: 停止推流 ---
+        const streamMenuBtn = document.getElementById('btn-stream-menu');
+        const streamMenu = document.getElementById('stream-menu');
+        const stopStreamBtn = document.getElementById('btn-stop-stream');
+
+        if (streamMenuBtn && streamMenu) {
+            streamMenuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                streamMenu.classList.toggle('hidden');
+            });
+            // 点击页面其他位置关闭菜单
+            document.addEventListener('click', () => streamMenu.classList.add('hidden'));
+            streamMenu.addEventListener('click', (e) => e.stopPropagation());
+        }
+
+        if (stopStreamBtn) {
+            stopStreamBtn.addEventListener('click', async () => {
+                streamMenu?.classList.add('hidden');
+                if (!requireDeviceSn()) return;
+                stopStreamBtn.disabled = true;
+                try {
+                    const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
+                    // 服务端还在消费该流的话先停消费, 避免消费器对着死流反复重连
+                    if (consumeActive) {
+                        await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/stop`, { method: 'POST' })
+                            .catch(() => { });
+                        setConsumeUI(false);
+                    }
+                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stop_stream`, {
+                        method: 'POST',
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({}));
+                        showToast(`❌ 停止推流失败: ${err.detail || resp.statusText}`, 'error', 6000);
+                        return;
+                    }
+                    // 推流已停, 旧地址作废
+                    if (streamUrlInput) streamUrlInput.value = '';
+                    localStorage.removeItem('vision_stream_url');
+                    showToast('✅ 设备推流已停止');
+                } catch (e) {
+                    showToast(`❌ 停止推流失败: ${e.message}`, 'error', 6000);
+                } finally {
+                    stopStreamBtn.disabled = false;
+                }
+            });
+        }
+
+        // --- 按钮 2: 服务端拉流消费开关 ---
+        const consumeBtn = document.getElementById('btn-toggle-consume');
+        let consumeActive = false;
+
+        function setConsumeUI(active) {
+            consumeActive = active;
+            if (consumeBtn) {
+                consumeBtn.innerHTML = active
+                    ? '<span class="btn-icon">⏹</span> 停止拉流'
+                    : '<span class="btn-icon">▶</span> 服务端拉流';
+                consumeBtn.classList.toggle('active', active);
+            }
+            if (active) {
+                window.streamViewer.start();
+            } else {
+                window.streamViewer.stop();
+            }
+        }
+
+        if (consumeBtn) {
+            consumeBtn.addEventListener('click', async () => {
+                if (!requireDeviceSn()) return;
+                const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
+                consumeBtn.disabled = true;
+                try {
+                    if (!consumeActive) {
+                        const url = streamUrlInput?.value?.trim();
+                        if (!url) {
+                            alert('请先填写视频流地址（可点击「📡 设备推流」自动获取）');
+                            return;
+                        }
+                        // 与本地采集互斥: 先停掉浏览器端采集
+                        if (window.videoCapture.capturing) {
+                            window.videoCapture.stop();
+                            resetCameraButton();
+                        }
+                        localStorage.setItem('vision_stream_url', url);
+                        const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/start`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url }),
+                        });
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            alert(`开启服务端拉流失败: ${err.detail || resp.statusText}`);
+                            return;
+                        }
+                        setConsumeUI(true);
+                    } else {
+                        const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/stop`, {
+                            method: 'POST',
+                        });
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            console.warn('[App] Stop consume failed:', err.detail || resp.statusText);
+                        }
+                        setConsumeUI(false);
+                    }
+                } catch (e) {
+                    alert(`操作失败: ${e.message}`);
+                } finally {
+                    consumeBtn.disabled = false;
+                }
+            });
+        }
+
+        // 查询服务端拉流状态并同步 UI (页面加载 / WS 重连后调用, 恢复观看模式)
+        async function syncConsumeState() {
+            if (!window.BACKEND_CONFIG.cameraId) return;
+            try {
+                const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
+                const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/stream/status`);
+                if (!resp.ok) return;
+                const st = await resp.json();
+                if (st.running && !consumeActive) {
+                    if (st.url && streamUrlInput) streamUrlInput.value = st.url;
+                    setConsumeUI(true);
+                } else if (!st.running && consumeActive) {
+                    setConsumeUI(false);
+                }
+            } catch (e) {
+                // 服务端不可达时忽略, 等下次重连再同步
+            }
+        }
+
+        // 暴露给 websocket.js / onConnected 回调使用
+        window.app = { resetCameraButton, syncConsumeState };
 
         // --- 镜头畸变矫正开关 ---
         const correctionToggle = document.getElementById('toggle-correction');
