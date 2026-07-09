@@ -140,6 +140,10 @@ def main() -> None:
         port=config.server.port,
         log_level=config.server.log_level.lower(),
         ws_max_size=config.server.ws_max_frame_size,
+        # current_identity 在对话首字延迟的关键路径上, 闲置连接保得久一点,
+        # 配合 agent_server 侧 60s 保活 ping, 避免每轮对话重付 TCP 握手。
+        # (uvicorn 默认 5s, 而对话轮距几乎总超 5s。)
+        timeout_keep_alive=300,
     )
     server = uvicorn.Server(uv_config)
     asyncio.run(server.serve())
