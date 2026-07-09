@@ -58,22 +58,7 @@ class VideoCapture {
 
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-            const select = document.getElementById('camera-select');
-            select.innerHTML = '<option value="">Select Camera...</option>';
-            videoDevices.forEach((device, idx) => {
-                const option = document.createElement('option');
-                option.value = device.deviceId;
-                option.textContent = device.label || `Camera ${idx + 1}`;
-                select.appendChild(option);
-            });
-
-            // 默认选择第一个
-            if (videoDevices.length > 0) {
-                select.value = videoDevices[0].deviceId;
-            }
-
-            return videoDevices;
+            return videoDevices; // 菜单渲染由 app.js 负责
         } catch (e) {
             console.error('[Camera] Failed to enumerate devices:', e);
             return [];

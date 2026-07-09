@@ -116,13 +116,62 @@
     function bindUIEvents() {
         // 摄像头开关
         const cameraBtn = document.getElementById('btn-toggle-camera');
-        const cameraSelect = document.getElementById('camera-select');
         const streamUrlInput = document.getElementById('stream-url-input');
 
         // 恢复上次的 stream URL
         if (streamUrlInput) {
             const savedUrl = localStorage.getItem('vision_stream_url');
             if (savedUrl) streamUrlInput.value = savedUrl;
+        }
+
+        // --- 本地摄像头选择 (Start Camera 的下拉, 多摄像头时才显示) ---
+        const cameraMenuBtn = document.getElementById('btn-camera-menu');
+        const cameraMenu = document.getElementById('camera-menu');
+        let localCameras = [];
+        let selectedCameraId = localStorage.getItem('vision_local_camera_id') || '';
+
+        function validCameraId() {
+            return localCameras.some(d => d.deviceId === selectedCameraId)
+                ? selectedCameraId : null;
+        }
+
+        function updateCameraMenu() {
+            if (!cameraMenuBtn || !cameraMenu) return;
+            if (localCameras.length <= 1) {
+                cameraMenuBtn.classList.add('hidden');
+                return;
+            }
+            cameraMenuBtn.classList.remove('hidden');
+            const currentId = validCameraId() || localCameras[0].deviceId;
+            cameraMenu.innerHTML = '';
+            localCameras.forEach((d, idx) => {
+                const item = document.createElement('button');
+                const checked = d.deviceId === currentId;
+                item.className = 'split-menu-item' + (checked ? ' checked' : '');
+                item.textContent = `${checked ? '✓' : '\u3000'} ${d.label || 'Camera ' + (idx + 1)}`;
+                item.addEventListener('click', async () => {
+                    cameraMenu.classList.add('hidden');
+                    if (d.deviceId === currentId) return;
+                    selectedCameraId = d.deviceId;
+                    localStorage.setItem('vision_local_camera_id', selectedCameraId);
+                    updateCameraMenu();
+                    // 正在本地采集 → 直接热切换摄像头
+                    if (window.videoCapture.capturing && window.videoCapture.sourceType !== 'network') {
+                        window.videoCapture.stop();
+                        await window.videoCapture.start(selectedCameraId);
+                    }
+                });
+                cameraMenu.appendChild(item);
+            });
+        }
+
+        if (cameraMenuBtn && cameraMenu) {
+            cameraMenuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                cameraMenu.classList.toggle('hidden');
+            });
+            document.addEventListener('click', () => cameraMenu.classList.add('hidden'));
+            cameraMenu.addEventListener('click', (e) => e.stopPropagation());
         }
 
         function resetCameraButton() {
@@ -156,11 +205,11 @@
                         localStorage.removeItem('vision_stream_url');
                         window.videoCapture.setSourceType('local');
                         if (!window.videoCapture._devicesEnumerated) {
-                            await window.videoCapture.enumerateDevices();
+                            localCameras = await window.videoCapture.enumerateDevices();
                             window.videoCapture._devicesEnumerated = true;
+                            updateCameraMenu(); // 多摄像头时显示下拉箭头
                         }
-                        const deviceId = cameraSelect?.value || null;
-                        await window.videoCapture.start(deviceId);
+                        await window.videoCapture.start(validCameraId());
                     }
                     cameraBtn.innerHTML = '<span class="btn-icon">⏹</span> Stop Camera';
                     cameraBtn.classList.add('active');
@@ -339,6 +388,46 @@
         const consumeBtn = document.getElementById('btn-toggle-consume');
         let consumeActive = false;
 
+        // --- 拉流状态徽章 (视频区左上角): 连接中/拉流中/失败详情 ---
+        let consumeStatusTimer = null;
+
+        function renderConsumeStatus(st) {
+            const el = document.getElementById('consume-status');
+            if (!el) return;
+            if (!st || !st.running) {
+                el.classList.add('hidden');
+                return;
+            }
+            el.classList.remove('hidden', 'ok', 'warn', 'err');
+            el.title = st.last_error || ''; // 截断时悬停可看完整错误
+            if (st.connected) {
+                el.classList.add('ok');
+                const viewers = st.viewers > 1 ? ` · ${st.viewers} 人观看` : '';
+                el.textContent = `🟢 拉流中 ${st.stream_width}×${st.stream_height} @ ${(st.process_fps || 0).toFixed(1)}fps${viewers}`;
+            } else if (st.last_error) {
+                el.classList.add('err');
+                el.textContent = `🔴 ${st.last_error}`;
+            } else {
+                el.classList.add('warn');
+                el.textContent = '🟡 正在连接视频流...';
+            }
+        }
+
+        async function pollConsumeStatus() {
+            try {
+                const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
+                const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/consume/status`);
+                if (!resp.ok) return;
+                const st = await resp.json();
+                renderConsumeStatus(st);
+                // 服务端已停止 (服务重启/他人停止) → 同步本页 UI
+                if (!st.running && consumeActive) {
+                    setConsumeUI(false);
+                    showToast('⚠️ 服务端拉流已停止', 'error', 5000);
+                }
+            } catch (e) { /* 网络抖动忽略, 下个周期重试 */ }
+        }
+
         function setConsumeUI(active) {
             consumeActive = active;
             if (consumeBtn) {
@@ -349,8 +438,17 @@
             }
             if (active) {
                 window.streamViewer.start();
+                pollConsumeStatus(); // 立即刷一次 (显示"连接中")
+                if (!consumeStatusTimer) {
+                    consumeStatusTimer = setInterval(pollConsumeStatus, 3000);
+                }
             } else {
                 window.streamViewer.stop();
+                if (consumeStatusTimer) {
+                    clearInterval(consumeStatusTimer);
+                    consumeStatusTimer = null;
+                }
+                renderConsumeStatus(null);
             }
         }
 

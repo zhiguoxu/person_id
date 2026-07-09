@@ -332,10 +332,10 @@ h1, h2, h3 {
     max-width: 720px;
 }
 
-/* 设备 SN 输入框: 固定宽度, 不参与伸缩 */
+/* 设备 SN 输入框: 设备号定长 17 字符, 按等宽字体刚好放下的宽度固定 */
 .device-sn-input {
-    flex: 0 0 170px;
-    width: 170px;
+    flex: 0 0 150px;
+    width: 150px;
 }
 
 /* 分裂按钮: 主按钮 + 右侧下拉箭头 */
@@ -348,6 +348,12 @@ h1, h2, h3 {
 .split-btn .split-btn-main {
     border-top-right-radius: 0;
     border-bottom-right-radius: 0;
+}
+
+/* 下拉箭头隐藏时 (如单摄像头), 主按钮恢复完整圆角 */
+.split-btn .split-btn-main:has(+ .split-btn-caret.hidden) {
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
 }
 
 .split-btn .split-btn-caret {
@@ -391,8 +397,19 @@ h1, h2, h3 {
 }
 
 .split-menu-item:hover {
+    background: var(--bg-panel-hover, rgba(255, 255, 255, 0.06));
+    color: var(--text-primary);
+}
+
+/* 危险操作项 (如停止推流) 悬停标红 */
+.split-menu-item.danger:hover {
     background: rgba(239, 68, 68, 0.12);
     color: #ef4444;
+}
+
+/* 当前选中的摄像头 */
+.split-menu-item.checked {
+    color: var(--accent-cyan, #00e5ff);
 }
 
 /* 流地址输入框加载态 (请求推流地址期间锁定) */
@@ -406,6 +423,40 @@ h1, h2, h3 {
 @keyframes loading-pulse {
     0%, 100% { box-shadow: 0 0 4px rgba(0, 229, 255, 0.15); }
     50% { box-shadow: 0 0 12px rgba(0, 229, 255, 0.4); }
+}
+
+/* 服务端拉流状态徽章 (页面顶栏) */
+.consume-status {
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 420px;
+    padding: 4px 12px;
+    border-radius: 14px;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border-glass);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.consume-status.hidden {
+    display: none;
+}
+
+.consume-status.ok {
+    border-color: rgba(0, 255, 136, 0.5);
+}
+
+.consume-status.warn {
+    border-color: rgba(255, 165, 0, 0.6);
+}
+
+.consume-status.err {
+    border-color: rgba(239, 68, 68, 0.7);
+    color: #ff9d9d;
 }
 
 /* 轻量 toast 提示 */

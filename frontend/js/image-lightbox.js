@@ -127,6 +127,8 @@
         // 排除某些容器中的图片 (如 confirm modal 的候选头像等不需要放大的)
         if (img.closest('#video-container')) return;
         if (img.closest('.candidate-card')) return;
+        // 画廊卡片头像: 点击应打开个人详情面板, 不弹图片预览
+        if (img.closest('.person-avatar')) return;
 
         e.stopPropagation();
 

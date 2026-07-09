@@ -37,7 +37,18 @@ class TrackingEngine:
         """初始化追踪引擎。"""
         self._trails: dict[int, list[tuple[float, float]]] = {}
         self._tracker = self._create_tracker()
+        self._frame_shape: tuple[int, int] | None = None
         logger.info("TrackingEngine 已初始化 — backend=BoT-SORT")
+
+    def reset(self) -> None:
+        """重建底层追踪器并清空轨迹。
+
+        输入源切换 (前端推流 ↔ 服务端拉流) 或流分辨率变化时调用:
+        BoT-SORT 的光流 GMC 要求前后帧同尺寸, 尺寸跳变会断言失败,
+        且失败后内部残留旧尺寸帧, 不重建无法自愈。
+        """
+        self._tracker = self._create_tracker()
+        self._trails.clear()
 
     # ------------------------------------------------------------------
     # Public API
@@ -57,6 +68,14 @@ class TrackingEngine:
         Returns:
             追踪后的 TrackedPerson 列表。
         """
+        # 0. 帧尺寸变化 (切换输入源/流分辨率) → 先重建追踪器, 防光流 GMC 断言崩溃
+        shape = (frame.shape[0], frame.shape[1])
+        if shape != self._frame_shape:
+            if self._frame_shape is not None:
+                logger.info("帧尺寸变化 {} → {}, 重建追踪器", self._frame_shape, shape)
+                self.reset()
+            self._frame_shape = shape
+
         # 1. Convert detections to (N, 6) array for tracker
         det_array = self._detections_to_array(detections)
 
@@ -64,7 +83,10 @@ class TrackingEngine:
         try:
             results = self._tracker.update(det_array, frame)
         except Exception:
-            logger.exception("Tracker 更新失败, 返回空结果")
+            # update 非事务性: 异常可能把内部状态留在半更新的不一致态, 且这种损坏
+            # 往往自持 (逐帧持续失败)。重建换回干净状态, with_reid=False 时代价极低。
+            logger.exception("Tracker 更新失败, 已重建追踪器, 本帧返回空结果")
+            self.reset()
             return []
 
         if results is None or len(results) == 0:

@@ -24,6 +24,7 @@
         </div>
         <div class="header-right">
             <div class="status-group">
+                <div id="consume-status" class="consume-status hidden"></div>
                 <div id="connection-status" class="status-badge disconnected">
                     <span class="status-dot"></span>
                     <span class="status-text">Disconnected</span>
@@ -52,12 +53,13 @@
             <div class="panel-header">
                 <h2>📹 Video Feed</h2>
                 <div class="video-controls">
-                    <button id="btn-toggle-camera" class="btn btn-primary">
-                        <span class="btn-icon">▶</span> Start Camera
-                    </button>
-                    <select id="camera-select" class="select-input">
-                        <option value="">Select Camera...</option>
-                    </select>
+                    <div class="split-btn">
+                        <button id="btn-toggle-camera" class="btn btn-primary split-btn-main">
+                            <span class="btn-icon">▶</span> Start Camera
+                        </button>
+                        <button id="btn-camera-menu" class="btn btn-primary split-btn-caret hidden" title="选择本地摄像头">▾</button>
+                        <div id="camera-menu" class="split-menu hidden"></div>
+                    </div>
                     <div id="stream-url-group" class="stream-url-group">
                         <input type="text" id="device-sn-input" class="text-input stream-url-input device-sn-input"
                                placeholder="设备 SN" title="设备号 (camera_id), 修改后回车切换设备">
@@ -65,7 +67,7 @@
                             <button id="btn-device-stream" class="btn split-btn-main" title="开启设备推流并获取直播地址 (ISS start_stream)">📡 设备推流</button>
                             <button id="btn-stream-menu" class="btn split-btn-caret" title="更多操作">▾</button>
                             <div id="stream-menu" class="split-menu hidden">
-                                <button id="btn-device-stream-stop" class="split-menu-item" title="停止设备推流 (ISS stop_stream)">⏹ 停止推流</button>
+                                <button id="btn-device-stream-stop" class="split-menu-item danger" title="停止设备推流 (ISS stop_stream)">⏹ 停止推流</button>
                             </div>
                         </div>
                         <input type="text" id="stream-url-input" class="text-input stream-url-input"
