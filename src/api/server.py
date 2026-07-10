@@ -16,6 +16,7 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, WebSocket, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -85,6 +86,19 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # --- 全局兜底异常处理 ---
+    # 未捕获异常默认返回纯文本 "Internal Server Error", 前端 toast 拿不到原因;
+    # 这里统一转成 JSON detail, 让所有错误都能展示在前端。
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request, exc: Exception) -> JSONResponse:
+        logger.exception("未捕获异常: {} {}", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"服务器内部错误: {type(exc).__name__}: {exc}"},
+            # 该响应在 CORSMiddleware 外层生成, 需自带 CORS 头
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
 
     # --- REST routes ---
     app.include_router(api_router)

@@ -62,6 +62,45 @@ router = APIRouter(prefix="/api", tags=["api"])
 # 设备推流 (ISS start/stop, device-sn = camera_id)
 # ==============================================================================
 
+async def _iss_post(action: str, camera_id: str) -> "httpx.Response":
+    """调用 ISS 接口, 把网络层错误转成对前端友好的提示。"""
+    import httpx
+
+    cfg = _get_config().server
+    base = cfg.iss_api_url.rstrip("/")
+    headers = {"device-sn": camera_id}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            return await client.post(f"{base}/iss/{action}", headers=headers)
+    except httpx.ConnectError as e:
+        logger.error("ISS 服务连接失败: {} ({})", base, e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"无法连接推流服务 (ISS: {base})，服务可能未启动或网络不通，请联系服务负责人",
+        )
+    except httpx.TimeoutException:
+        logger.error("ISS 服务请求超时: {}", base)
+        raise HTTPException(
+            status_code=504,
+            detail=f"推流服务 (ISS: {base}) 响应超时，请稍后重试",
+        )
+    except httpx.HTTPError as e:
+        logger.error("ISS 请求异常: {} ({})", base, e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"推流服务 (ISS) 请求异常: {e}",
+        )
+
+
+def _iss_fail_detail(prefix: str, resp: "httpx.Response") -> str:
+    """拼上 ISS 原始响应, 让前端能直接看到失败原因。"""
+    body = (resp.text or "").strip()
+    if len(body) > 300:
+        body = body[:300] + "..."
+    return f"{prefix} — ISS 响应 (HTTP {resp.status_code}): {body or '(空)'}"
+
+
 @router.post("/{camera_id}/device_stream/start")
 async def start_device_stream(camera_id: str) -> dict:
     """开启设备推流并返回 FLV 直播地址。
@@ -70,34 +109,36 @@ async def start_device_stream(camera_id: str) -> dict:
     1. POST {iss_api_url}/iss/start_stream, header device-sn: {camera_id}
     2. 返回 data.Flv
     """
-    import httpx
+    resp = await _iss_post("start_stream", camera_id)
+    # ISS 失败时 (含 HTTP 500) body 里通常带有 msg, 透传给前端便于定位
+    # (最常见: 设备号不存在 → "无法获取设备 DB ID")
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    if resp.status_code != 200 or data.get("code") != 0:
+        logger.warning(
+            "ISS start_stream 失败: device-sn={}, HTTP {}, body={}",
+            camera_id, resp.status_code, resp.text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=_iss_fail_detail(
+                f"设备推流开启失败 (device-sn={camera_id})，请确认设备号正确", resp,
+            ),
+        )
 
-    cfg = _get_config().server
-    base = cfg.iss_api_url.rstrip("/")
-    headers = {"device-sn": camera_id}
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(f"{base}/iss/start_stream", headers=headers)
-        # ISS 失败时 (含 HTTP 500) body 里通常带有 msg, 透传给前端便于定位
-        # (最常见: 设备号不存在 → "无法获取设备 DB ID")
-        try:
-            data = resp.json()
-        except Exception:
-            data = {}
-        if resp.status_code != 200 or data.get("code") != 0:
-            msg = data.get("msg") or f"HTTP {resp.status_code}"
-            logger.warning("ISS start_stream 失败: device-sn={}, {}", camera_id, msg)
-            raise HTTPException(
-                status_code=502,
-                detail=f"设备推流开启失败 (device-sn={camera_id}): {msg}。请确认设备号正确。",
-            )
-
-        flv_url = (data.get("data") or {}).get("Flv", "")
-        if not flv_url:
-            raise HTTPException(
-                status_code=502,
-                detail=f"ISS 未返回 FLV 地址 (device-sn={camera_id})",
-            )
+    flv_url = (data.get("data") or {}).get("Flv", "")
+    if not flv_url:
+        logger.warning(
+            "ISS 未返回 FLV 地址: device-sn={}, body={}", camera_id, resp.text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=_iss_fail_detail(
+                f"ISS 未返回 FLV 地址 (device-sn={camera_id})", resp,
+            ),
+        )
 
     logger.info("ISS 设备推流已启动: device-sn={}, flv={}", camera_id, flv_url)
     return {"flv_url": flv_url}
@@ -106,25 +147,22 @@ async def start_device_stream(camera_id: str) -> dict:
 @router.post("/{camera_id}/device_stream/stop")
 async def stop_device_stream(camera_id: str) -> dict:
     """停止设备推流 (ISS stop_stream, device-sn = camera_id)。"""
-    import httpx
-
-    cfg = _get_config().server
-    base = cfg.iss_api_url.rstrip("/")
-    headers = {"device-sn": camera_id}
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(f"{base}/iss/stop_stream", headers=headers)
-        try:
-            data = resp.json()
-        except Exception:
-            data = {}
-        if resp.status_code != 200 or data.get("code") != 0:
-            msg = data.get("msg") or f"HTTP {resp.status_code}"
-            logger.warning("ISS stop_stream 失败: device-sn={}, {}", camera_id, msg)
-            raise HTTPException(
-                status_code=502,
-                detail=f"停止设备推流失败 (device-sn={camera_id}): {msg}",
-            )
+    resp = await _iss_post("stop_stream", camera_id)
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    if resp.status_code != 200 or data.get("code") != 0:
+        logger.warning(
+            "ISS stop_stream 失败: device-sn={}, HTTP {}, body={}",
+            camera_id, resp.status_code, resp.text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=_iss_fail_detail(
+                f"停止设备推流失败 (device-sn={camera_id})", resp,
+            ),
+        )
 
     logger.info("ISS 设备推流已停止: device-sn={}", camera_id)
     return {"stopped": True}
