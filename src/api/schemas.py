@@ -84,6 +84,12 @@ class RegisterCurrentRequest(BaseModel):
     否则新建, 由端点内部自行推导。
     """
     name: str = Field(..., description="用户的称呼/姓名", min_length=1, max_length=100)
+    min_face_quality: float | None = Field(
+        None, ge=0.0, le=1.0,
+        description="人脸入库质量门槛下限(可选)。与服务端默认 enroll 阈值取较大值后生效, "
+                    "即只能提高、不能降低门槛 —— 供主动注册流程用更高标准采集底片; "
+                    "不给则用服务端默认阈值。",
+    )
 
 
 class RegisterCurrentResponse(BaseModel):

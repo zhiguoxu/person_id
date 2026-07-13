@@ -1002,6 +1002,7 @@ async def register_current(
             track_id=target_id,
             person_id=None,
             name=request.name,
+            min_face_quality=request.min_face_quality,
         )
     except ConfirmIdentityError as e:
         # 用结构化原因码区分各类失败, 让对话端针对性地引导用户。

@@ -228,7 +228,8 @@ class VisionOrchestrator(BaseModel):
     # ==================================================================
 
     async def confirm_identity(
-            self, track_id: int, person_id: str | None, name: str
+            self, track_id: int, person_id: str | None, name: str,
+            min_face_quality: float | None = None,
     ) -> None:
         """人工确认身份。
 
@@ -236,6 +237,8 @@ class VisionOrchestrator(BaseModel):
             track_id: 需要确认的轨迹 ID。
             person_id: 底库人物 ID（如不存在或为 None 则自动创建）。
             name: 显示名称。
+            min_face_quality: 人脸入库质量门槛下限(可选)。与配置的 enroll 阈值
+                取较大值生效(只提高不降低), 供主动注册流程用更高标准采集底片。
         """
         logger.info(
             "人工已确认: track_id={} → person_id={}, name={}",
@@ -279,7 +282,8 @@ class VisionOrchestrator(BaseModel):
         profile.display_name = name
 
         # 将当前 track 缓存的特征立即入库
-        changes = self._update_gallery_person(person_id, state)
+        changes = self._update_gallery_person(person_id, state,
+                                              min_face_quality=min_face_quality)
 
         # 新建用户必须真正写入至少一条人脸特征, 否则会产生"有 person 行但无人脸
         # 特征"的空人物 (embedding 存在但质量/尺寸未达入库门槛)。回滚并报质量不足。
@@ -376,8 +380,13 @@ class VisionOrchestrator(BaseModel):
             self,
             person_id: str,
             state: TrackState,
+            min_face_quality: float | None = None,
     ) -> GalleryUpdateResult:
         """统一的 Gallery 更新：从 QualityCache 写入特征到底库。
+
+        Args:
+            min_face_quality: 人脸入库质量门槛下限(可选), 与配置阈值取较大值
+                生效; 只作用于人脸, 人体门槛不受影响。
 
         Returns:
             GalleryUpdateResult: 包含了变动的特征和衣橱更新标记。
@@ -400,11 +409,14 @@ class VisionOrchestrator(BaseModel):
             (cache.face_pool, profile.enroll_face, True),
             (cache.body_pool, profile.enroll_body_feature, False),
         ]:
-            # 人脸与人体使用各自的入库质量门槛 (人脸要求更高)
-            quality_threshold = (
-                gallery_cfg.face_quality_enroll_threshold if with_face
-                else gallery_cfg.body_quality_enroll_threshold
-            )
+            # 人脸与人体使用各自的入库质量门槛 (人脸要求更高);
+            # 调用方可给人脸门槛下限(min_face_quality), 与配置阈值取较大值生效
+            if with_face:
+                quality_threshold = gallery_cfg.face_quality_enroll_threshold
+                if min_face_quality is not None:
+                    quality_threshold = max(quality_threshold, min_face_quality)
+            else:
+                quality_threshold = gallery_cfg.body_quality_enroll_threshold
             # 每个姿态桶选最高质量的未入库帧
             best_frames: dict[PoseBucket, tuple[CachedFrame, float]] = {}
             for cf in pool:
