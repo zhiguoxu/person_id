@@ -51,16 +51,25 @@ class RegisterFailureReason(str, Enum):
     UNKNOWN_PERSON_ID = "unknown_person_id"  # 指定了 person_id 但底库中不存在
 
 
-class ConfirmIdentityError(ValueError):
-    """confirm_identity 入库失败, 携带结构化原因码与可读信息。
+class ConfirmResult(BaseModel):
+    """confirm_identity 的结构化结果。
 
-    继承 ValueError 以兼容既有 ``except ValueError`` 处理 (仍返回可读 message)。
+    没看到人/没看清脸等属于预期内失败, 用返回值而非异常表达, 调用方看签名
+    即知全部出口。success=True 时 person_id 为最终入库的人物 ID (新建人物时
+    由此拿到自动生成的 ID); 失败时 reason 携带原因码, message 为可读信息。
     """
+    success: bool
+    person_id: str | None = None
+    reason: RegisterFailureReason | None = None
+    message: str = ""
 
-    def __init__(self, reason: RegisterFailureReason, message: str) -> None:
-        self.reason = reason
-        self.message = message
-        super().__init__(message)
+    @classmethod
+    def ok(cls, person_id: str) -> ConfirmResult:
+        return cls(success=True, person_id=person_id)
+
+    @classmethod
+    def fail(cls, reason: RegisterFailureReason, message: str) -> ConfirmResult:
+        return cls(success=False, reason=reason, message=message)
 
 
 class EventType(str, Enum):

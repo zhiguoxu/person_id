@@ -246,25 +246,30 @@ async def _handle_text(
     if msg_type == "confirm_identity":
         try:
             confirm = WSIdentityConfirm(**msg)
-            await orchestrator.confirm_identity(
+            result = await orchestrator.confirm_identity(
                 track_id=confirm.track_id,
                 person_id=confirm.person_id,
                 name=confirm.name,
-            )
-            await _send_json(
-                websocket,
-                {
-                    "type": "identity_confirmed",
-                    "track_id": confirm.track_id,
-                    "person_id": confirm.person_id,
-                    "name": confirm.name,
-                },
             )
         except Exception as e:
             logger.exception("身份确认失败")
             await _send_error(
                 websocket, "confirm_error", str(e) or "Identity confirmation failed"
             )
+            return
+        if not result.success:
+            # 预期内失败(没看清脸等), 前端按 confirm_error 弹窗提示可读 message
+            await _send_error(websocket, "confirm_error", result.message)
+            return
+        await _send_json(
+            websocket,
+            {
+                "type": "identity_confirmed",
+                "track_id": confirm.track_id,
+                "person_id": result.person_id,
+                "name": confirm.name,
+            },
+        )
 
     elif msg_type == "ping":
         await _send_json(websocket, {"type": "pong"})

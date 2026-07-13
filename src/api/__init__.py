@@ -7,7 +7,6 @@ from src.api.schemas import (
     ConfigResponse,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
-    ConfirmIdentityRequest,
     CurrentTargetResponse,
     PersonDetailResponse,
     PersonListResponse,
@@ -27,7 +26,6 @@ __all__ = [
     # Schemas
     "TrackedPersonResponse",
     "CurrentTargetResponse",
-    "ConfirmIdentityRequest",
     "ConfigResponse",
     "ConfigUpdateRequest",
     "ConfigUpdateResponse",

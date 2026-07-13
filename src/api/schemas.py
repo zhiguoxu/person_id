@@ -38,17 +38,6 @@ class CurrentTargetResponse(BaseModel):
 
 
 
-# ==============================================================================
-# Identity Confirmation
-# ==============================================================================
-
-class ConfirmIdentityRequest(BaseModel):
-    """人工确认身份请求。"""
-    track_id: int = Field(..., description="Track ID to confirm")
-    person_id: str | None = Field(None, description="Gallery person ID (None to create new)")
-    name: str = Field(..., description="Display name")
-
-
 class RenamePersonRequest(BaseModel):
     """重命名人物请求。"""
     display_name: str = Field(..., description="New display name", min_length=1, max_length=100)

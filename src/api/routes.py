@@ -5,7 +5,6 @@ REST API 路由 — 配置管理、底库查询、身份确认
 - GET/PUT /api/config — 全局配置（不分摄像头）
 - GET /api/{camera_id}/gallery/persons — 指定摄像头的人物列表
 - GET /api/{camera_id}/gallery/person/{person_id} — 人物详情
-- POST /api/{camera_id}/vision/confirm_identity — 人工确认身份
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ from src.api.schemas import (
     ConfigResponse,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
-    ConfirmIdentityRequest,
     CurrentIdentityResponse,
     FaceSimilarityFaceInfo,
     FaceSimilarityTestResponse,
@@ -42,7 +40,6 @@ from src.api.schemas import (
     TunableParam,
 )
 from src.pipeline.data_models import (
-    ConfirmIdentityError,
     IdentityStatus,
     RegisterFailureReason,
 )
@@ -838,44 +835,6 @@ async def clear_quality_cache(camera_id: str, track_id: int) -> dict:
     return {"status": "cleared", "track_id": track_id}
 
 
-@router.post("/{camera_id}/vision/confirm_identity")
-async def confirm_identity(
-        camera_id: str, request: ConfirmIdentityRequest
-) -> dict:
-    """
-    人工确认身份 (Human-in-the-loop)。
-
-    将指定 track_id 绑定到 person_id，更新底库和缓存。
-    """
-    orch = require_camera_orchestrator(camera_id)
-
-    try:
-        await orch.confirm_identity(
-            track_id=request.track_id,
-            person_id=request.person_id,
-            name=request.name,
-        )
-        return {
-            "status": "confirmed",
-            "camera_id": camera_id,
-            "track_id": request.track_id,
-            "person_id": request.person_id,
-            "name": request.name,
-        }
-    except ValueError as e:
-        logger.warning(f"confirm_identity 请求非法: {e}")
-        raise HTTPException(
-            status_code=400,
-            detail=str(e),
-        )
-    except Exception as e:
-        logger.exception("确认身份失败")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Confirmation failed: {str(e)}",
-        ) from e
-
-
 # ==============================================================================
 # Voice-agent integration (语音对话集成: 查询/注册当前对话对象)
 # ==============================================================================
@@ -884,9 +843,11 @@ async def confirm_identity(
 _KNOWN_STATUSES = {IdentityStatus.DEFINITE, IdentityStatus.CONFIDENT}
 
 # register_current 可能遇到的失败的用户可读引导语 (对话端可直接转述)。
-# 只列这条路径能真正触发的原因: target_person_id 由本服务从已匹配的 track 推导,
-# 不会传入未知 id, 故 UNKNOWN_PERSON_ID 在此不可达 (它是通用 confirm_identity API
-# 的校验)。未列出的原因走 .get() 兜底, 回落到 ConfirmIdentityError 自带 message。
+# 只列这条路径能真正触发的原因: NO_TARGET 由路由自己的前置检查触发;
+# NO_FACE / LOW_FACE_QUALITY 来自 confirm_identity 的返回。UNKNOWN_PERSON_ID
+# 在此不可达 —— 本路径固定传 person_id=None (新建), 该原因码只有 WS
+# confirm_identity 入口指定了不存在的 id 才会出现。
+# 未列出的原因走 .get() 兜底, 回落到 ConfirmResult 自带 message。
 _REGISTER_FAILURE_MESSAGES: dict[RegisterFailureReason, str] = {
     RegisterFailureReason.NO_TARGET: "现在镜头前没有看到人，请正对摄像头后再说一次。",
     RegisterFailureReason.NO_FACE: "还没看清你的脸，麻烦正对摄像头，我再记一次。",
@@ -998,31 +959,30 @@ async def register_current(
 
     # 走到这里说明目标尚未被识别, 一定是新建用户 (person_id=None)。
     try:
-        await orch.confirm_identity(
+        result = await orch.confirm_identity(
             track_id=target_id,
             person_id=None,
             name=request.name,
             min_face_quality=request.min_face_quality,
         )
-    except ConfirmIdentityError as e:
-        # 用结构化原因码区分各类失败, 让对话端针对性地引导用户。
-        message = _REGISTER_FAILURE_MESSAGES.get(e.reason, e.message)
-        return RegisterCurrentResponse(
-            status=e.reason.value,
-            success=False,
-            track_id=target_id,
-            message=message,
-        )
     except Exception as e:
         logger.exception("register_current 失败")
         raise HTTPException(status_code=500, detail=f"Register failed: {e}") from e
 
-    # confirm_identity 成功后, track 的 identity_result 已写入最终 person_id
-    final_pid = orch.tracks[target_id].identity_result.person_id
+    if not result.success:
+        # 用结构化原因码区分各类失败, 让对话端针对性地引导用户。
+        message = _REGISTER_FAILURE_MESSAGES.get(result.reason, result.message)
+        return RegisterCurrentResponse(
+            status=result.reason.value,
+            success=False,
+            track_id=target_id,
+            message=message,
+        )
+
     return RegisterCurrentResponse(
         status="registered",
         success=True,
-        person_id=final_pid,
+        person_id=result.person_id,
         track_id=target_id,
         message=f"已经记住你了，{request.name}。",
     )

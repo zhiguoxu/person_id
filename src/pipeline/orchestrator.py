@@ -24,7 +24,7 @@ from src.gallery.data_models import (
     PersonProfile, PoseBucket,
 )
 from src.pipeline.data_models import (
-    ConfirmIdentityError,
+    ConfirmResult,
     EventType,
     IdentityResult,
     IdentityStatus,
@@ -230,7 +230,7 @@ class VisionOrchestrator(BaseModel):
     async def confirm_identity(
             self, track_id: int, person_id: str | None, name: str,
             min_face_quality: float | None = None,
-    ) -> None:
+    ) -> ConfirmResult:
         """人工确认身份。
 
         Args:
@@ -239,6 +239,10 @@ class VisionOrchestrator(BaseModel):
             name: 显示名称。
             min_face_quality: 人脸入库质量门槛下限(可选)。与配置的 enroll 阈值
                 取较大值生效(只提高不降低), 供主动注册流程用更高标准采集底片。
+
+        Returns:
+            ConfirmResult: 成功时携带最终入库的 person_id; 预期内失败
+            (没看到人/没看清脸等) 时携带原因码与可读信息, 不抛异常。
         """
         logger.info(
             "人工已确认: track_id={} → person_id={}, name={}",
@@ -247,7 +251,7 @@ class VisionOrchestrator(BaseModel):
 
         state = self.tracks.get(track_id)
         if state is None:
-            raise ConfirmIdentityError(
+            return ConfirmResult.fail(
                 RegisterFailureReason.NO_TARGET,
                 f"Track {track_id} not found, cannot confirm",
             )
@@ -257,7 +261,7 @@ class VisionOrchestrator(BaseModel):
             cf.embedding is not None for cf in state.quality_cache.face_pool
         )
         if not has_face:
-            raise ConfirmIdentityError(
+            return ConfirmResult.fail(
                 RegisterFailureReason.NO_FACE,
                 "入库失败：没有人脸数据。请等待目标正面朝向摄像头后重试。",
             )
@@ -273,7 +277,7 @@ class VisionOrchestrator(BaseModel):
         elif person_id not in self.gallery:
             # 传了 ID 但库里没有，视为错误
             logger.error("gallery 中未找到 Person ID {}", person_id)
-            raise ConfirmIdentityError(
+            return ConfirmResult.fail(
                 RegisterFailureReason.UNKNOWN_PERSON_ID,
                 f"Person ID {person_id} not found in gallery",
             )
@@ -295,7 +299,7 @@ class VisionOrchestrator(BaseModel):
                 "(face quality/尺寸不足)",
                 person_id,
             )
-            raise ConfirmIdentityError(
+            return ConfirmResult.fail(
                 RegisterFailureReason.LOW_FACE_QUALITY,
                 "入库失败：人脸画面不够清晰 (可能太远或角度偏)，未能记录有效特征。"
                 "请正对摄像头并靠近一点后重试。",
@@ -331,6 +335,8 @@ class VisionOrchestrator(BaseModel):
             source="human",
             message=f"Human confirmed {name}",
         )
+
+        return ConfirmResult.ok(person_id)
 
     # ==================================================================
     # Properties
