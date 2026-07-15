@@ -63,6 +63,11 @@
                     <div id="stream-url-group" class="stream-url-group">
                         <input type="text" id="device-sn-input" class="text-input stream-url-input device-sn-input"
                                placeholder="设备 SN" title="设备号 (camera_id), 修改后回车切换设备">
+                        <select id="iss-env-select" class="select-input iss-env-select"
+                                title="推流服务 (ISS) 环境: test=测试环境, prod=生产环境">
+                            <option value="test">test</option>
+                            <option value="prod">prod</option>
+                        </select>
                         <div class="split-btn">
                             <button id="btn-device-stream" class="btn split-btn-main" title="开启设备推流并获取直播地址 (ISS start_stream)">📡 设备推流</button>
                             <button id="btn-stream-menu" class="btn split-btn-caret" title="更多操作">▾</button>

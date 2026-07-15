@@ -338,6 +338,11 @@ h1, h2, h3 {
     width: 150px;
 }
 
+/* ISS 环境切换下拉框 (test/prod) */
+.iss-env-select {
+    flex: 0 0 auto;
+}
+
 /* 分裂按钮: 主按钮 + 右侧下拉箭头 */
 .split-btn {
     position: relative;

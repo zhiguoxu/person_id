@@ -257,6 +257,16 @@ class WSError(BaseModel):
     code: str = "unknown"
 
 
+class DeviceStreamStartResponse(BaseModel):
+    """开启设备推流 (ISS start_stream) 的响应。"""
+    flv_url: str
+
+
+class DeviceStreamStopResponse(BaseModel):
+    """停止设备推流 (ISS stop_stream) 的响应。"""
+    stopped: bool
+
+
 class StreamStartRequest(BaseModel):
     """开启服务端拉流消费的请求。"""
     url: str

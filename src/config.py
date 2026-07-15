@@ -188,7 +188,15 @@ class ServerConfig(BaseModel):
     image_correction_enabled: bool = False  # 是否启用镜头畸变矫正
 
     # ISS 直播流 API (device-sn 由请求的 camera_id 动态传入, 不在此写死)
-    iss_api_url: str = "http://42.192.205.141:8999"  # ISS 服务地址
+    # test/prod 两套环境, 由前端界面选择、每次请求通过 env 参数指定
+    iss_api_url_test: str = "https://iss-test.joyin-ai.com"  # ISS 测试环境
+    iss_api_url_prod: str = "https://iss-prod.joyin-ai.com"  # ISS 生产环境
+
+    def iss_api_url(self, env: str) -> str:
+        """按环境名取 ISS 服务地址 (env: "test" | "prod")。"""
+        if env == "prod":
+            return self.iss_api_url_prod
+        return self.iss_api_url_test
 
     # 服务端拉流消费 (StreamConsumer)
     stream_max_fps: float = 15.0  # 处理帧率上限 (拉到的多余帧直接丢弃)

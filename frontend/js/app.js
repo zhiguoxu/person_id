@@ -283,6 +283,23 @@
             }, duration);
         }
 
+        // --- ISS 环境切换 (test/prod): 选择记住在 localStorage, 推流请求带 env 参数 ---
+        const issEnvSelect = document.getElementById('iss-env-select');
+        if (issEnvSelect) {
+            try {
+                const saved = localStorage.getItem('vision_iss_env');
+                if (saved === 'test' || saved === 'prod') issEnvSelect.value = saved;
+            } catch (err) { }
+            issEnvSelect.addEventListener('change', () => {
+                try { localStorage.setItem('vision_iss_env', issEnvSelect.value); } catch (err) { }
+            });
+        }
+
+        /** 当前选中的 ISS 环境 ("test" | "prod") */
+        function issEnv() {
+            return issEnvSelect?.value === 'prod' ? 'prod' : 'test';
+        }
+
         // --- 按钮 1: 开启设备推流 (ISS start_stream → FLV 地址填入输入框) ---
         const deviceStreamBtn = document.getElementById('btn-device-stream');
         if (deviceStreamBtn) {
@@ -304,7 +321,7 @@
                 let ok = false;
                 try {
                     const camId = encodeURIComponent(window.BACKEND_CONFIG.cameraId);
-                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/device_stream/start`, {
+                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/device_stream/start?env=${issEnv()}`, {
                         method: 'POST',
                     });
                     if (!resp.ok) {
@@ -317,7 +334,7 @@
                         ok = true;
                         streamUrlInput.value = data.flv_url;
                         localStorage.setItem('vision_stream_url', data.flv_url);
-                        showToast('✅ 设备推流已开启, 地址已填入。可点击「服务端拉流」开始识别');
+                        showToast(`✅ 设备推流已开启 (${issEnv()} 环境), 地址已填入。可点击「服务端拉流」开始识别`);
                     } else {
                         showToast('❌ 开启设备推流失败: 未返回直播地址', 'error', 6000);
                     }
@@ -364,7 +381,7 @@
                             .catch(() => { });
                         setConsumeUI(false);
                     }
-                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/device_stream/stop`, {
+                    const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/device_stream/stop?env=${issEnv()}`, {
                         method: 'POST',
                     });
                     if (!resp.ok) {
@@ -375,7 +392,7 @@
                     // 推流已停, 旧地址作废
                     if (streamUrlInput) streamUrlInput.value = '';
                     localStorage.removeItem('vision_stream_url');
-                    showToast('✅ 设备推流已停止');
+                    showToast(`✅ 设备推流已停止 (${issEnv()} 环境)`);
                 } catch (e) {
                     showToast(`❌ 停止推流失败: ${e.message}`, 'error', 6000);
                 } finally {

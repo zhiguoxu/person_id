@@ -9,6 +9,7 @@ REST API 路由 — 配置管理、底库查询、身份确认
 from __future__ import annotations
 
 import base64
+from typing import Literal
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from loguru import logger
@@ -23,6 +24,8 @@ from src.api.schemas import (
     ConfigUpdateRequest,
     ConfigUpdateResponse,
     CurrentIdentityResponse,
+    DeviceStreamStartResponse,
+    DeviceStreamStopResponse,
     FaceSimilarityFaceInfo,
     FaceSimilarityTestResponse,
     FeatureEntryInfo,
@@ -59,28 +62,59 @@ router = APIRouter(prefix="/api", tags=["api"])
 # 设备推流 (ISS start/stop, device-sn = camera_id)
 # ==============================================================================
 
-async def _iss_post(action: str, camera_id: str) -> "httpx.Response":
+ISSEnv = Literal["test", "prod"]
+
+
+def _is_dns_failure(exc: BaseException) -> bool:
+    """判断连接错误的根因是否为域名解析失败。
+
+    httpx.ConnectError 同时覆盖 DNS 解析失败与连接被拒等情况,
+    沿异常链找 socket.gaierror 才能区分出前者。
+    """
+    import socket
+
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, socket.gaierror):
+            return True
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+async def _iss_post(action: str, camera_id: str, env: ISSEnv) -> "httpx.Response":
     """调用 ISS 接口, 把网络层错误转成对前端友好的提示。"""
+    from urllib.parse import urlparse
+
     import httpx
 
     cfg = _get_config().server
-    base = cfg.iss_api_url.rstrip("/")
+    base = cfg.iss_api_url(env).rstrip("/")
     headers = {"device-sn": camera_id}
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             return await client.post(f"{base}/iss/{action}", headers=headers)
     except httpx.ConnectError as e:
+        if _is_dns_failure(e):
+            host = urlparse(base).hostname or base
+            logger.error("ISS 域名解析失败: {} ({})", base, e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"无法解析推流服务域名: {host} (ISS {env} 环境)，"
+                       f"该域名可能尚未配置 DNS 或地址写错，请联系服务负责人",
+            )
         logger.error("ISS 服务连接失败: {} ({})", base, e)
         raise HTTPException(
             status_code=502,
-            detail=f"无法连接推流服务 (ISS: {base})，服务可能未启动或网络不通，请联系服务负责人",
+            detail=f"无法连接推流服务 (ISS {env}: {base})，服务可能未启动或网络不通，请联系服务负责人",
         )
     except httpx.TimeoutException:
         logger.error("ISS 服务请求超时: {}", base)
         raise HTTPException(
             status_code=504,
-            detail=f"推流服务 (ISS: {base}) 响应超时，请稍后重试",
+            detail=f"推流服务 (ISS {env}: {base}) 响应超时，请稍后重试",
         )
     except httpx.HTTPError as e:
         logger.error("ISS 请求异常: {} ({})", base, e)
@@ -98,15 +132,18 @@ def _iss_fail_detail(prefix: str, resp: "httpx.Response") -> str:
     return f"{prefix} — ISS 响应 (HTTP {resp.status_code}): {body or '(空)'}"
 
 
-@router.post("/{camera_id}/device_stream/start")
-async def start_device_stream(camera_id: str) -> dict:
+@router.post("/{camera_id}/device_stream/start", response_model=DeviceStreamStartResponse)
+async def start_device_stream(
+    camera_id: str, env: ISSEnv = "test",
+) -> DeviceStreamStartResponse:
     """开启设备推流并返回 FLV 直播地址。
 
-    camera_id 即设备 device-sn (前端约定 camera_id = device_sn):
-    1. POST {iss_api_url}/iss/start_stream, header device-sn: {camera_id}
+    camera_id 即设备 device-sn (前端约定 camera_id = device_sn),
+    env 选择 ISS 环境 (test/prod, 前端界面切换):
+    1. POST {iss_api_url(env)}/iss/start_stream, header device-sn: {camera_id}
     2. 返回 data.Flv
     """
-    resp = await _iss_post("start_stream", camera_id)
+    resp = await _iss_post("start_stream", camera_id, env)
     # ISS 失败时 (含 HTTP 500) body 里通常带有 msg, 透传给前端便于定位
     # (最常见: 设备号不存在 → "无法获取设备 DB ID")
     try:
@@ -115,8 +152,8 @@ async def start_device_stream(camera_id: str) -> dict:
         data = {}
     if resp.status_code != 200 or data.get("code") != 0:
         logger.warning(
-            "ISS start_stream 失败: device-sn={}, HTTP {}, body={}",
-            camera_id, resp.status_code, resp.text,
+            "ISS start_stream 失败: env={}, device-sn={}, HTTP {}, body={}",
+            env, camera_id, resp.status_code, resp.text,
         )
         raise HTTPException(
             status_code=502,
@@ -137,22 +174,24 @@ async def start_device_stream(camera_id: str) -> dict:
             ),
         )
 
-    logger.info("ISS 设备推流已启动: device-sn={}, flv={}", camera_id, flv_url)
-    return {"flv_url": flv_url}
+    logger.info("ISS 设备推流已启动: env={}, device-sn={}, flv={}", env, camera_id, flv_url)
+    return DeviceStreamStartResponse(flv_url=flv_url)
 
 
-@router.post("/{camera_id}/device_stream/stop")
-async def stop_device_stream(camera_id: str) -> dict:
-    """停止设备推流 (ISS stop_stream, device-sn = camera_id)。"""
-    resp = await _iss_post("stop_stream", camera_id)
+@router.post("/{camera_id}/device_stream/stop", response_model=DeviceStreamStopResponse)
+async def stop_device_stream(
+    camera_id: str, env: ISSEnv = "test",
+) -> DeviceStreamStopResponse:
+    """停止设备推流 (ISS stop_stream, device-sn = camera_id, env 选择 ISS 环境)。"""
+    resp = await _iss_post("stop_stream", camera_id, env)
     try:
         data = resp.json()
     except Exception:
         data = {}
     if resp.status_code != 200 or data.get("code") != 0:
         logger.warning(
-            "ISS stop_stream 失败: device-sn={}, HTTP {}, body={}",
-            camera_id, resp.status_code, resp.text,
+            "ISS stop_stream 失败: env={}, device-sn={}, HTTP {}, body={}",
+            env, camera_id, resp.status_code, resp.text,
         )
         raise HTTPException(
             status_code=502,
@@ -161,8 +200,8 @@ async def stop_device_stream(camera_id: str) -> dict:
             ),
         )
 
-    logger.info("ISS 设备推流已停止: device-sn={}", camera_id)
-    return {"stopped": True}
+    logger.info("ISS 设备推流已停止: env={}, device-sn={}", env, camera_id)
+    return DeviceStreamStopResponse(stopped=True)
 
 
 # ==============================================================================
