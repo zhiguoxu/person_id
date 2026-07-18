@@ -87,6 +87,10 @@ class EDifFIQA:
         """当前使用的变体名。"""
         return self._variant
 
+    def warmup(self) -> None:
+        """跑一次全零输入推理, 把 CUDA kernel 编译/显存分配的首推开销提前付掉。"""
+        self.predict(np.zeros((112, 112, 3), dtype=np.uint8))
+
     def predict(self, aligned_face_112: np.ndarray) -> float:
         """评估对齐人脸的质量。
 

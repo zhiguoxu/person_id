@@ -40,6 +40,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     persistence = get_gallery_persistence()
     await persistence.initialize(get_config().server.gallery_db_path)
 
+    # enroll 质量评估模型(默认 large)只有注册路径用到, 懒加载会让进程启动后的
+    # 首次注册当场付 ONNX + CUDA EP 初始化(实测 ~1.2s), 几乎顶到对话端 1.5s
+    # 超时; 启动期加载并跑一次 dummy 推理, 把冷启动成本从用户请求里挪走。
+    import time
+    from src.tier2.features.ediffiqa import get_ediffiqa_enroll
+
+    t0 = time.perf_counter()
+    get_ediffiqa_enroll().warmup()
+    logger.info("enroll 质量评估模型预热完成 ({:.0f}ms)",
+                (time.perf_counter() - t0) * 1000)
+
     logger.info("应用已就绪 (摄像头将在首次连接时初始化)")
 
     yield  # ← 应用运行中
