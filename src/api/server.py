@@ -51,6 +51,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("enroll 质量评估模型预热完成 ({:.0f}ms)",
                 (time.perf_counter() - t0) * 1000)
 
+    # 声纹模型(第五识别模态): 启动期加载 + 预热, 同 ediffiqa 的理由——
+    # 首次请求付 CUDA EP 初始化会顶到对话端 1.5s 超时
+    from src.voice.embedder import get_voice_embed_extractor
+    get_voice_embed_extractor().warmup()
+
     logger.info("应用已就绪 (摄像头将在首次连接时初始化)")
 
     yield  # ← 应用运行中
@@ -113,6 +118,10 @@ def create_app() -> FastAPI:
 
     # --- REST routes ---
     app.include_router(api_router)
+
+    # 声纹 API (第五识别模态, voice_server 每轮调用)
+    from src.api.voice import router as voice_router
+    app.include_router(voice_router)
 
     # --- WebSocket endpoint ---
     @app.websocket("/ws/vision")

@@ -49,3 +49,5 @@ pytest-asyncio>=0.23.0
 
 # --- reid ---
 timm>=0.9.0                  # SOLIDER Swin Transformer backbone
+# 声纹识别 (第五识别模态): GPU 机需 +cuda 版 wheel, 见 install.sh / hf-mirror
+sherpa-onnx>=1.12

@@ -177,6 +177,24 @@ class VLMConfig(BaseModel):
     max_candidates: int = 3
 
 
+class VoiceEmbedExtractorConfig(BaseModel):
+    """声音 embedding 提取配置(VoiceEmbedExtractor 专用, 纯"信号→向量", 无身份决策)。
+
+    比对阈值/注册门控等决策参数在 agent_server 侧(声纹库与花名册同生命周期)。
+    配方依据 voice_agent/test/speaker_id/ 真实数据评测(recipe_findings.md)。
+    """
+    enabled: bool = True
+    # 说话人 embedding 模型(ONNX), 缺失时启动自动下载
+    model_path: str = str(
+        MODELS_DIR / "3dspeaker_speech_eres2net_base_200k_sv_zh-cn_16k-common.onnx")
+    provider: str = "cuda"      # 本机 H20 实测 6.8ms/次(CPU 37ms)
+    num_threads: int = 4        # 仅 provider=cpu 时生效
+
+    # 子段平均配方参数(评测锁定, 一般无需改动)
+    seg_window_sec: float = 3.0
+    seg_hop_sec: float = 1.5
+
+
 class ServerConfig(BaseModel):
     """服务配置"""
     host: str = "0.0.0.0"
@@ -230,6 +248,7 @@ class Config(BaseModel):
     tracking: TrackingConfig = Field(default_factory=TrackingConfig)
     multiframe: MultiFrameConfig = Field(default_factory=MultiFrameConfig)
     vlm: VLMConfig = Field(default_factory=VLMConfig)
+    voice_embed: VoiceEmbedExtractorConfig = Field(default_factory=VoiceEmbedExtractorConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
 
     def to_dict(self) -> dict:
