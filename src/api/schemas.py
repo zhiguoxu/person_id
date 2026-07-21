@@ -69,10 +69,22 @@ class CurrentIdentityResponse(BaseModel):
 class RegisterCurrentRequest(BaseModel):
     """把"当前镜头前的人"注册到底库并命名 (对应用户说"我是xxx")。
 
-    不接受调用方指定 person_id: 造 key 是本服务的职责 —— 当前目标若已识别则复用其 key、
-    否则新建, 由端点内部自行推导。
+    造新 key 是本服务的职责, 但"疑似确认"场景例外地接受调用方指定 person_id:
+    目标处于 SUSPECTED(疑似)时本服务无法自行断定复用还是新建 —— 断定依据是
+    "用户报的名字与疑似候选在花名册里的名字是否一致", 而花名册归对话端所有
+    (本服务的 display_name 仅调试用, 改名后不保证同步)。对话端核对一致后带上
+    候选 person_id, 本端点把本次人脸特征追加进该 person_id 的既有档案;
+    不带则维持原行为(DEFINITE/CONFIDENT→复用当前识别到的 person_id,
+    其余→新建一个 person_id)。
     """
     name: str = Field(..., description="用户的称呼/姓名", min_length=1, max_length=100)
+    person_id: str | None = Field(
+        None,
+        description="疑似确认场景由对话端指定: 把本次人脸特征追加进这个底库"
+                    "人物 ID 的既有档案(对话端已核对用户报的名字与该人物"
+                    "花名册名字一致)。不给则由端点自行推导: DEFINITE/"
+                    "CONFIDENT 复用当前识别到的 person_id, 否则新建。",
+    )
     min_face_quality: float | None = Field(
         None, ge=0.0, le=1.0,
         description="人脸入库质量门槛下限(可选)。与服务端默认 enroll 阈值取较大值后生效, "

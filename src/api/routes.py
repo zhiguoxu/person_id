@@ -884,8 +884,9 @@ _KNOWN_STATUSES = {IdentityStatus.DEFINITE, IdentityStatus.CONFIDENT}
 # register_current 可能遇到的失败的用户可读引导语 (对话端可直接转述)。
 # 只列这条路径能真正触发的原因: NO_TARGET 由路由自己的前置检查触发;
 # NO_FACE / LOW_FACE_QUALITY 来自 confirm_identity 的返回。UNKNOWN_PERSON_ID
-# 在此不可达 —— 本路径固定传 person_id=None (新建), 该原因码只有 WS
-# confirm_identity 入口指定了不存在的 id 才会出现。
+# 在疑似确认场景可达 —— 对话端重名检测查到某 person_id 之后、本请求被处理
+# 之前, 该人物可能刚被(控制台或对话)删除; 引导用户重说一次名字即可: 届时
+# 对话端重名检测也查不到该名字了, 会按不带 person_id 的新注册正常入库。
 # 未列出的原因走 .get() 兜底, 回落到 ConfirmResult 自带 message。
 _REGISTER_FAILURE_MESSAGES: dict[RegisterFailureReason, str] = {
     RegisterFailureReason.NO_TARGET: "现在镜头前没有看到人，请正对摄像头后再说一次。",
@@ -893,6 +894,9 @@ _REGISTER_FAILURE_MESSAGES: dict[RegisterFailureReason, str] = {
     RegisterFailureReason.LOW_FACE_QUALITY: (
         "看到你了，但画面不够清晰（可能太远或角度偏了），"
         "麻烦正对摄像头并靠近一点，我再记一次。"
+    ),
+    RegisterFailureReason.UNKNOWN_PERSON_ID: (
+        "我对你之前的印象好像丢了，麻烦再说一次名字，我重新记住你。"
     ),
 }
 
@@ -996,11 +1000,27 @@ async def register_current(
             message=f"我已经认识你了，{request.name}。",
         )
 
-    # 走到这里说明目标尚未被识别, 一定是新建用户 (person_id=None)。
+    # 走到这里说明目标识别状态不是 DEFINITE/CONFIDENT。疑似确认场景下对话端
+    # 会在请求里指定 person_id(它已核对用户报的名字与该 person 在花名册里的
+    # 名字一致): 把本次人脸特征追加进该 person_id 的既有档案。SUSPECTED 状态
+    # 若不指定 person_id 会走下方 confirm_identity 的新建分支, 同一个人在
+    # 底库里变成两条记录(2026-07-21 trace BikE41jg9q: 疑似候选
+    # person_4029035f 未被复用, 新建了 person_096efa50)。
+    if request.person_id and ir.person_id and ir.person_id != request.person_id:
+        # 对话端拿到识别结果到本请求进来隔着秒级时间, 其间注意力目标可能
+        # 切换(如另一人走进画面), 此时指定的 person_id 与当前候选已对不上。
+        # 仍按指定的 person_id 入库(对话端核对过名字); 记 warning: 如果之后
+        # 发现某人档案里混入了别人的人脸特征, 用这条日志可以定位到是这里
+        # 把切换后目标的特征写进了切换前那个人的档案。
+        logger.warning(
+            "register_current 指定复用的 person_id 与当前疑似候选不一致: "
+            "指定={}, 候选={}, status={}",
+            request.person_id, ir.person_id, ir.status.value,
+        )
     try:
         result = await orch.confirm_identity(
             track_id=target_id,
-            person_id=None,
+            person_id=request.person_id,
             name=request.name,
             min_face_quality=request.min_face_quality,
         )
