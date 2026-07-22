@@ -13,7 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from loguru import logger
-from src.api.registry import get_camera_orchestrator
+from src.api.registry import get_camera_orchestrator, get_stream_consumer
 from src.config import get_config as _get_config
 
 from src.api.schemas import (
@@ -911,10 +911,17 @@ async def current_identity(camera_id: str) -> CurrentIdentityResponse:
     读取该摄像头 orchestrator 实时维护的注意力目标(current_target)及其身份,
     把内部置信度状态归一化为 known / suspected / unknown 三档返回。
     摄像头未连接时返回 camera_online=False / recognition=unknown (不报错),
-    便于对话端在无视频流时安全降级为"不知道"。
+    便于对话端在无视频流时安全降级为"不知道"。"未连接"包括两种情况:
+    从未启动/已停止 (orchestrator 不存在), 以及拉流消费器在跑但流断了
+    (打不开或掉线重连中)——后者时 orchestrator 里可能还留着断流前的状态,
+    不能当作"现在镜头前的人"返回。
     """
     orch = get_camera_orchestrator(camera_id)
-    if orch is None:
+    consumer = get_stream_consumer(camera_id)
+    # consumer 为 None 是浏览器 WebSocket 上传帧的模式, 没有服务端拉流,
+    # 在线与否只能由 orchestrator 是否存在判断
+    stream_broken = consumer is not None and not consumer.connected
+    if orch is None or stream_broken:
         return CurrentIdentityResponse(
             camera_online=False,
             has_target=False,

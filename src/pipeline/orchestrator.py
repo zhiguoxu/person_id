@@ -119,6 +119,23 @@ class VisionOrchestrator(BaseModel):
         self.tracks.clear()
         logger.info("VisionOrchestrator 关闭完成")
 
+    def reset_attention(self) -> None:
+        """断流时清空运行时轨迹与注意力目标 (gallery 人物档案不动)。
+
+        轨迹清理与目标重选都只在 process_frame 里发生, 断流后不再有帧进来,
+        不清的话 current_identity 会一直返回最后一帧镜头前的人。轨迹 id 是
+        流内概念, 重连后 tracker 产生的是新轨迹, 旧轨迹不可能续上, 清掉无损。
+        """
+        if not self.tracks and self.current_target_id is None:
+            return
+        for state in self.tracks.values():
+            state.cancel_vlm()
+        self.tracks.clear()
+        self.current_target_id = None
+        logger.info(
+            "已清空运行时轨迹与注意力目标: camera={} (断流)", self.camera_id,
+        )
+
     # ==================================================================
     # Frame Processing
     # ==================================================================

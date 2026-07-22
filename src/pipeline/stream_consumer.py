@@ -198,6 +198,12 @@ class StreamConsumer:
                 frame = self._latest_frame
 
             if frame is None or seq == last_seq:
+                # 断流期间没有新帧, 帧驱动的轨迹清理不会再发生——在这里把
+                # 运行时轨迹/注意力目标清掉 (幂等), 避免身份查询读到断流前
+                # 最后一帧的残影。cancel_vlm 取消的是 asyncio 任务, 必须在
+                # 事件循环内做, 所以放处理协程而不是读流线程的重连分支。
+                if not self.connected:
+                    self.orchestrator.reset_attention()
                 await asyncio.sleep(0.01)
                 continue
             last_seq = seq
