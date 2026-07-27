@@ -14,6 +14,11 @@ boxmot>=11.0.0              # BoT-SORT 追踪器
 
 # --- 人脸识别 ---
 insightface>=0.7.3          # SCRFD 人脸检测 (det_10g.onnx)
+# 注意: 只能装 onnxruntime-gpu, 绝不能再装纯 CPU 的 onnxruntime 包 ——
+# 两者共享安装路径, CPU 版会把 CUDA EP 顶掉, 人脸全栈静默跌回 CPU
+# (Tier1 60-80ms/帧, Tier2 尖峰数百 ms; GPU 下 Tier2 仅 ~65ms)。
+# pip 依赖解析可能自动拉入 onnxruntime, 装完依赖后务必检查:
+#   python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 onnxruntime-gpu>=1.18.0     # ONNX 推理 (ArcFace/AdaFace + eDifFIQA)
 onnxscript>=0.1.0           # torch.onnx.export 依赖 (AdaFace ONNX 转换)
 

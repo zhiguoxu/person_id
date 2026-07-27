@@ -344,10 +344,14 @@ class StreamConsumer:
                 ],
             })
 
-            # 帧率上限节流
+            # 帧率上限节流 + 强制让出事件循环。
+            # process_frame 是 async 但内部全是同步 GPU 推理 (Tier1 ~60-80ms,
+            # Tier2 尖峰数百 ms), 没有真正的 await 点; 处理耗时超过 min_interval
+            # 时若不 sleep 直接进下一轮, 本循环会独占事件循环 —— viewer 推帧
+            # 协程与 REST 全被饿死 (实测观看端只发得出 ~1fps 且 TCP app_limited,
+            # 状态接口要 2-4s 才响应)。每帧至少让出 10ms 保证其他协程被调度。
             elapsed = time.perf_counter() - t0
-            if elapsed < min_interval:
-                await asyncio.sleep(min_interval - elapsed)
+            await asyncio.sleep(max(min_interval - elapsed, 0.01))
 
     # ------------------------------------------------------------------
     # Helpers

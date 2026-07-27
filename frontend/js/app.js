@@ -108,6 +108,11 @@
             // 同步服务端拉流状态 (刷新页面 / 重连后恢复观看模式)
             window.app?.syncConsumeState?.();
         };
+
+        // 服务端预览帧成功上屏 → 刷新角标 FPS (真实绘制速率)
+        if (window.streamViewer) {
+            window.streamViewer.onDraw = () => window.wsManager.refreshFpsFromViewer();
+        }
     }
 
     // =========================================================================
@@ -465,16 +470,28 @@
             if (active) {
                 window.streamViewer.start();
                 pollConsumeStatus(); // 立即刷一次 (显示"连接中")
-                if (!consumeStatusTimer) {
-                    consumeStatusTimer = setInterval(pollConsumeStatus, 3000);
-                }
             } else {
                 window.streamViewer.stop();
-                if (consumeStatusTimer) {
-                    clearInterval(consumeStatusTimer);
-                    consumeStatusTimer = null;
-                }
                 renderConsumeStatus(null);
+            }
+            // 常驻轮询: 拉流也可能从 web 控制台 / 服务重启恢复开启,
+            // 本页没点按钮也要能切到观看模式, 否则 JPEG 被丢、角标空转、画面卡死
+            if (!consumeStatusTimer) {
+                consumeStatusTimer = setInterval(pollConsumeStatus, 3000);
+            }
+        }
+
+        /** StreamViewer 因收到服务端帧而自动 start 时同步按钮/轮询状态 */
+        function onServerStreamFrames() {
+            if (consumeActive) return;
+            consumeActive = true;
+            if (consumeBtn) {
+                consumeBtn.innerHTML = '<span class="btn-icon">⏹</span> 停止拉流';
+                consumeBtn.classList.add('active');
+            }
+            pollConsumeStatus();
+            if (!consumeStatusTimer) {
+                consumeStatusTimer = setInterval(pollConsumeStatus, 3000);
             }
         }
 
@@ -545,8 +562,14 @@
             }
         }
 
-        // 暴露给 websocket.js / onConnected 回调使用
-        window.app = { resetCameraButton, syncConsumeState };
+        // 暴露给 websocket.js / onConnected / StreamViewer 回调使用
+        window.app = { resetCameraButton, syncConsumeState, onServerStreamFrames };
+
+        // 页面加载后立即同步一次, 并常驻轮询 (覆盖「别处开流」场景)
+        syncConsumeState();
+        if (!consumeStatusTimer) {
+            consumeStatusTimer = setInterval(pollConsumeStatus, 3000);
+        }
 
         // --- 镜头畸变矫正开关 ---
         const correctionToggle = document.getElementById('toggle-correction');

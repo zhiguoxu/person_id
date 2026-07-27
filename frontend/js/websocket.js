@@ -27,6 +27,8 @@ class WebSocketManager {
         this.onConnected = null;   // () => void
 
         // 统计
+        // - 服务端拉流观看: FPS 由 StreamViewer 上屏回调刷新 (见 refreshFpsFromViewer)
+        // - 本地上传: 仍按 frame_result 到达间隔
         this.lastResultTime = 0;
         this.fpsHistory = [];
         this.latencyHistory = [];
@@ -69,6 +71,7 @@ class WebSocketManager {
                 this._handleTextMessage(event.data);
             } else if (event.data instanceof ArrayBuffer) {
                 // 服务端拉流模式: 后端推送的 JPEG 帧 → StreamViewer 渲染
+                // (onFrame 内会在未激活时自动 start, 避免画面卡死而角标空转)
                 window.streamViewer?.onFrame(event.data);
             }
         };
@@ -181,22 +184,27 @@ class WebSocketManager {
     }
 
     /**
-     * 自适应帧率调整
+     * 更新延迟 / 本地采集自适应帧率; 服务端拉流时 FPS 由 StreamViewer 负责
      */
     _updateStats(result) {
-        const now = performance.now();
-        if (this.lastResultTime > 0) {
-            const dt = now - this.lastResultTime;
-            this.fpsHistory.push(1000 / dt);
-            if (this.fpsHistory.length > 30) this.fpsHistory.shift();
+        // 本地上传模式才用收包间隔计 FPS; 拉流观看时收包突发会虚高到上百
+        if (!window.streamViewer?.active) {
+            const now = performance.now();
+            if (this.lastResultTime > 0) {
+                const dt = now - this.lastResultTime;
+                if (dt >= 8 && dt < 5000) {
+                    this.fpsHistory.push(1000 / dt);
+                    if (this.fpsHistory.length > 30) this.fpsHistory.shift();
+                }
+            }
+            this.lastResultTime = now;
         }
-        this.lastResultTime = now;
 
         if (result.processing_ms) {
             this.latencyHistory.push(result.processing_ms);
             if (this.latencyHistory.length > 30) this.latencyHistory.shift();
 
-            // 自适应帧率
+            // 自适应帧率 (仅本地上传模式用 frameInterval)
             if (result.processing_ms < 50) {
                 this.frameInterval = Math.max(this.frameInterval - 5, this.minInterval);
             } else if (result.processing_ms > 100) {
@@ -207,7 +215,15 @@ class WebSocketManager {
         this._updateCounters();
     }
 
+    /** 服务端拉流观看: 按 canvas 实际绘制间隔刷新角标 */
+    refreshFpsFromViewer() {
+        this._updateCounters();
+    }
+
     get currentFPS() {
+        if (window.streamViewer?.active) {
+            return window.streamViewer.currentFPS || 0;
+        }
         if (this.fpsHistory.length === 0) return 0;
         return this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
     }

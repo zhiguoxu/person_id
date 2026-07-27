@@ -26,6 +26,11 @@ class StreamViewer {
         // 解码背压: 解码中收到新帧则只保留最新的
         this._decoding = false;
         this._pendingBuf = null;
+
+        // 绘制帧率 (角标用真实上屏速率, 不用 WS 收包间隔 — 收包突发会虚高到上百)
+        this._lastDrawTime = 0;
+        this._fpsHistory = [];
+        this.onDraw = null; // () => void, 每成功画一帧回调
     }
 
     /**
@@ -33,6 +38,7 @@ class StreamViewer {
      */
     start() {
         if (!this.canvas) return;
+        if (this.active) return;
         this.active = true;
         this.canvas.classList.remove('hidden');
         document.getElementById('webcam')?.classList.add('hidden');
@@ -45,6 +51,9 @@ class StreamViewer {
      */
     stop() {
         this.active = false;
+        this._pendingBuf = null;
+        this._fpsHistory = [];
+        this._lastDrawTime = 0;
         if (this.canvas) {
             this.canvas.classList.add('hidden');
             if (this.canvas.width) {
@@ -70,14 +79,24 @@ class StreamViewer {
         }
     }
 
+    get currentFPS() {
+        if (this._fpsHistory.length === 0) return 0;
+        return this._fpsHistory.reduce((a, b) => a + b, 0) / this._fpsHistory.length;
+    }
+
     /**
      * 收到服务端推送的二进制 JPEG 帧
      * @param {ArrayBuffer} buf
      */
     onFrame(buf) {
-        if (!this.active || !this.canvas) return;
+        if (!this.canvas) return;
+        // 只要服务端在推预览帧就进入观看模式 — 避免「别处开了拉流 / 重启恢复后」
+        // 本页还没点按钮, active=false 把 JPEG 全丢了, 只剩 JSON 把角标刷到上百 FPS、画面卡死。
+        if (!this.active) {
+            this.start();
+            window.app?.onServerStreamFrames?.();
+        }
         if (this._decoding) {
-            // 解码没跟上 → 只保留最新帧
             this._pendingBuf = buf;
             return;
         }
@@ -98,6 +117,18 @@ class StreamViewer {
             }
             this.ctx.drawImage(bitmap, 0, 0);
             bitmap.close();
+
+            const now = performance.now();
+            if (this._lastDrawTime > 0) {
+                const dt = now - this._lastDrawTime;
+                // 过滤异常突发 (<8ms ≈ >125fps, 多半是积压连画), 避免角标虚高
+                if (dt >= 8 && dt < 5000) {
+                    this._fpsHistory.push(1000 / dt);
+                    if (this._fpsHistory.length > 30) this._fpsHistory.shift();
+                }
+            }
+            this._lastDrawTime = now;
+            if (this.onDraw) this.onDraw();
         } catch (e) {
             console.error('[StreamViewer] Frame decode failed:', e);
         } finally {
@@ -105,7 +136,8 @@ class StreamViewer {
             if (this._pendingBuf) {
                 const next = this._pendingBuf;
                 this._pendingBuf = null;
-                this._decodeAndDraw(next);
+                // 必须 await, 否则 finally 里同步间隙会与新的 onFrame 并发解码
+                await this._decodeAndDraw(next);
             }
         }
     }

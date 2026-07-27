@@ -239,6 +239,7 @@ class ServerConfig(BaseModel):
     # ---- 前端预览帧 (下面两项只影响网页观看的带宽/清晰度) ----
     # 识别用的是解码原帧, 与预览参数无关; 识别结果坐标随 frame_w/frame_h 下发,
     # 预览图缩放不会导致框偏移。
+    # 1280/q80 约 90KB/帧, 12fps 约 9Mbps; 链路窄时可在 Controls 面板调小。
     stream_preview_max_width: int = 1280  # 预览帧最大宽度, 0 = 原生分辨率
     stream_preview_jpeg_quality: int = 80  # 预览帧 JPEG 质量 (1-100)
     stream_reconnect_delay: float = 2.0  # 拉流断开后的重连间隔 (秒)
@@ -320,6 +321,9 @@ class Config(BaseModel):
         "AGG_MIN_BODY_QUALITY": ("multiframe", "agg_min_body_quality", 0, 1, 0.05, "quality", "人体聚合最低质量"),
         "OUTFIT_MATCH_THRESHOLD": ("gallery", "outfit_match_threshold", 0, 1, 0.01, "matching", "衣橱匹配阈值"),
         "STREAM_RESTREAM_FAIL_THRESHOLD": ("server", "stream_restream_fail_threshold", 1, 20, 1, "stream", "自动重推流失败次数阈值"),
+        # 预览带宽 (只影响网页观看, 不影响识别): 观看卡顿调小, 网速好调大
+        "STREAM_PREVIEW_MAX_WIDTH": ("server", "stream_preview_max_width", 320, 1920, 160, "stream", "预览帧最大宽度(px)"),
+        "STREAM_PREVIEW_JPEG_QUALITY": ("server", "stream_preview_jpeg_quality", 30, 95, 5, "stream", "预览帧 JPEG 质量"),
     }
 
     def get_tunable_params(self) -> dict:
