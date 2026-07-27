@@ -132,6 +132,12 @@ class StreamConsumer:
             self._reader_thread = None
 
         self.connected = False
+        # 清空运行时轨迹与注意力目标: 停止后 orchestrator 可能因为还有观看端
+        # WebSocket 而不被回收(registry.maybe_release_orchestrator), 轨迹清理
+        # 又只在 process_frame 里帧驱动地发生——不清的话 current_identity 会
+        # 一直返回停流前最后一帧镜头前的人(身份"残影")。断流重连场景已由
+        # _process_loop 的 reset_attention 覆盖, 这里补上显式停止这条路。
+        self.orchestrator.reset_attention()
         logger.info("StreamConsumer 已停止: camera={}", self.camera_id)
 
     def status(self) -> StreamStatusResponse:
