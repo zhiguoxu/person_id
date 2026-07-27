@@ -37,6 +37,7 @@ openai>=1.14.0
 # --- 持久化 ---
 aiosqlite>=0.20.0
 sqlmodel>=0.0.22
+redis>=5.0.0                # 拉流期望状态 (重启恢复, pipeline/stream_state.py)
 
 # --- 工具 ---
 pillow>=10.2.0

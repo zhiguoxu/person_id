@@ -150,6 +150,11 @@ async def start_consume(
     )
     consumer.start()
     consumer_registry[camera_id] = consumer
+    # 期望状态写入 Redis: 服务重启后按它自动恢复拉流 (见 pipeline/stream_state.py)
+    from src.pipeline import stream_state
+    await stream_state.record_desired(
+        camera_id, url, request.env, request.auto_restream,
+    )
     return consumer.status()
 
 
@@ -157,6 +162,11 @@ async def start_consume(
 async def stop_consume(camera_id: str) -> StreamStatusResponse:
     """停止服务端拉流消费。无活跃 WebSocket 时顺带回收 orchestrator。"""
     from src.api.registry import consumer_registry, maybe_release_orchestrator
+    from src.pipeline import stream_state
+
+    # 显式停止 = 不再期望拉流, 移除 Redis 中的期望状态(重启后不复活)。
+    # 无论 consumer 是否存在都移除: 崩溃后条目可能残留而消费器已不在。
+    await stream_state.remove_desired(camera_id)
 
     consumer = consumer_registry.pop(camera_id, None)
     if consumer is None:

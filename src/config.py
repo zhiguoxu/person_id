@@ -195,6 +195,21 @@ class VoiceEmbedExtractorConfig(BaseModel):
     seg_hop_sec: float = 1.5
 
 
+class RedisSettings(BaseModel):
+    """Redis 连接 (拉流期望状态持久化用, 见 pipeline/stream_state.py)。
+
+    host 为空 = 未配置: 拉流期望状态不持久化, 重启后不恢复拉流
+    (只记警告, 不影响其他功能)。连接参数经 .env / 环境变量注入:
+    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD / REDIS_DB。
+    """
+    host: str = ""
+    port: int = 6379
+    password: str = ""
+    db: int = 0
+    socket_connect_timeout: int = 5
+    socket_timeout: int = 5
+
+
 class ServerConfig(BaseModel):
     """服务配置"""
     host: str = "0.0.0.0"
@@ -257,6 +272,7 @@ class Config(BaseModel):
     multiframe: MultiFrameConfig = Field(default_factory=MultiFrameConfig)
     vlm: VLMConfig = Field(default_factory=VLMConfig)
     voice_embed: VoiceEmbedExtractorConfig = Field(default_factory=VoiceEmbedExtractorConfig)
+    redis: RedisSettings = Field(default_factory=RedisSettings)
     server: ServerConfig = Field(default_factory=ServerConfig)
 
     def to_dict(self) -> dict:
@@ -354,6 +370,16 @@ def load_config() -> Config:
         config.server.host = host
     if port := os.environ.get("SERVER_PORT"):
         config.server.port = int(port)
+
+    # Redis (拉流期望状态持久化; 不配置则该功能停用)
+    if redis_host := os.environ.get("REDIS_HOST"):
+        config.redis.host = redis_host
+    if redis_port := os.environ.get("REDIS_PORT"):
+        config.redis.port = int(redis_port)
+    if redis_password := os.environ.get("REDIS_PASSWORD"):
+        config.redis.password = redis_password
+    if redis_db := os.environ.get("REDIS_DB"):
+        config.redis.db = int(redis_db)
 
     _set_instance(config)
     return config

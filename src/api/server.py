@@ -56,6 +56,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from src.voice.embedder import get_voice_embed_extractor
     get_voice_embed_extractor().warmup()
 
+    # 恢复重启前的拉流: 期望状态(哪些摄像头该在拉流)在 consume/start|stop 时
+    # 写入 Redis, 这里按它重建消费器——部署/崩溃重启后拉流自动续上, 不用手工
+    # 再开。存的地址若已失效, 拉流失败会走 auto_restream 自愈换新地址。
+    from src.pipeline.stream_state import restore_streams
+    await restore_streams()
+
     logger.info("应用已就绪 (摄像头将在首次连接时初始化)")
 
     yield  # ← 应用运行中
@@ -76,6 +82,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("正在关闭摄像头: {}", cam_id)
         await orch.shutdown()
     camera_registry.clear()
+
+    # 注意: 不删 Redis 里的拉流期望状态——关停≠用户想停止拉流,
+    # 正是下次启动 restore_streams 恢复的依据
+    from src.pipeline import stream_state
+    await stream_state.close()
 
     await get_gallery_persistence().close()
     logger.info("应用关闭完成")

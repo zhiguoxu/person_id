@@ -268,6 +268,9 @@ class StreamConsumer:
                 self.restream_count += 1
                 self.url = attempt.new_url  # 读流线程下个循环用新地址
                 self.last_error = "已自动重推流, 正在连接新直播地址..."
+                # 期望状态里的地址同步换新, 服务重启恢复时直连可用地址
+                from src.pipeline import stream_state
+                await stream_state.update_url(self.camera_id, attempt.new_url)
             elif outcome == "device_offline":
                 self.last_error = "设备不在线, 暂不重推流 (等设备上线后自动重试)"
             else:
