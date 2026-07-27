@@ -2431,3 +2431,130 @@ h1, h2, h3 {
     font-size: 13px;
     color: var(--accent-green);
 }
+
+/* ==========================================================================
+   自动重推流日志 (restream-log-modal)
+   ========================================================================== */
+
+.restream-log-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.restream-log-summary {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.restream-log-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.restream-log-empty {
+    padding: 24px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.restream-attempt {
+    background: var(--bg-glass);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+
+.restream-attempt summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 13px;
+}
+
+.restream-attempt summary::-webkit-details-marker { display: none; }
+
+.restream-attempt-time {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.restream-badge {
+    font-size: 12px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+.restream-badge.ok   { color: var(--accent-green);  background: rgba(0, 255, 136, 0.1); }
+.restream-badge.warn { color: var(--accent-orange); background: rgba(245, 158, 11, 0.12); }
+.restream-badge.err  { color: var(--accent-red);    background: rgba(239, 68, 68, 0.12); }
+
+.restream-attempt-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.restream-attempt-detail {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.restream-kv {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    align-items: baseline;
+}
+
+.restream-kv > span {
+    flex: 0 0 60px;
+    color: var(--text-secondary);
+}
+
+.restream-kv > code {
+    word-break: break-all;
+    color: inherit;
+}
+
+.restream-log-lines {
+    margin-top: 4px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.restream-log-line {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+
+.restream-log-line-time {
+    font-family: monospace;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.restream-log-warning { color: var(--accent-orange); }
+.restream-log-error   { color: var(--accent-red); }

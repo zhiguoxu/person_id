@@ -437,6 +437,15 @@
                 if (!resp.ok) return;
                 const st = await resp.json();
                 renderConsumeStatus(st);
+                // 自动重推流后服务端换了直播地址 → 实时同步到输入框
+                // (输入框获得焦点时不覆盖, 避免打断用户手动编辑)
+                if (st.running && st.url && streamUrlInput
+                    && streamUrlInput.value !== st.url
+                    && document.activeElement !== streamUrlInput) {
+                    streamUrlInput.value = st.url;
+                    localStorage.setItem('vision_stream_url', st.url);
+                    showToast('📡 拉流失败已自动重推流，新直播地址已同步到输入框');
+                }
                 // 服务端已停止 (服务重启/他人停止) → 同步本页 UI
                 if (!st.running && consumeActive) {
                     setConsumeUI(false);
@@ -487,10 +496,11 @@
                             resetCameraButton();
                         }
                         localStorage.setItem('vision_stream_url', url);
+                        // env: 拉流失败自动重推流时沿用当前选择的 ISS 环境
                         const resp = await fetch(`${window.BACKEND_CONFIG.apiUrl}/${camId}/consume/start`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ url }),
+                            body: JSON.stringify({ url, env: issEnv(), auto_restream: true }),
                         });
                         if (!resp.ok) {
                             const err = await resp.json().catch(() => ({}));

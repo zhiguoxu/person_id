@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from src.gallery.data_models import BodyProportions
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from src.pipeline.data_models import IdentityResult, TrackedPerson
+from src.pipeline.restream_models import RestreamAttempt
 
 # JSON 兼容值类型
 JsonValue = Any
@@ -282,6 +283,14 @@ class DeviceStreamStopResponse(BaseModel):
 class StreamStartRequest(BaseModel):
     """开启服务端拉流消费的请求。"""
     url: str
+    env: Literal["test", "prod"] = Field(
+        "test",
+        description="设备推流所在的 ISS 环境; 自动重推流时沿用",
+    )
+    auto_restream: bool = Field(
+        True,
+        description="拉流连续失败达到阈值后是否自动重新开启设备推流",
+    )
 
 
 class StreamStatusResponse(BaseModel):
@@ -298,6 +307,20 @@ class StreamStatusResponse(BaseModel):
     process_fps: float = 0.0
     viewers: int = 0
     last_error: str | None = None
+    # ---- 拉流自动恢复 ----
+    env: str = "test"                        # ISS 环境 (test | prod)
+    auto_restream: bool = True               # 自动重推流开关
+    recovering: bool = False                 # 恢复流程 (在线检查/ISS 重推) 进行中
+    restream_count: int = 0                  # 本次消费器生命周期内成功重推流次数
+    last_restream_at: float | None = None    # 最近一次重推尝试完成时间 (epoch 秒)
+    last_restream_outcome: str | None = None # restreamed | device_offline | iss_start_failed | error
+
+
+class RestreamLogResponse(BaseModel):
+    """自动重推流历史记录查询响应 (新的在前)。"""
+    camera_id: str
+    attempts: list[RestreamAttempt] = Field(default_factory=list)
+    total_returned: int = 0
 
 
 def build_frame_result(result: dict) -> WSFrameResult:

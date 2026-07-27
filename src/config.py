@@ -228,6 +228,14 @@ class ServerConfig(BaseModel):
     stream_preview_jpeg_quality: int = 80  # 预览帧 JPEG 质量 (1-100)
     stream_reconnect_delay: float = 2.0  # 拉流断开后的重连间隔 (秒)
 
+    # ---- 拉流自动恢复 (pipeline/restream.py) ----
+    # 连续拉流失败 (打开失败/连上但读不到几帧就断) 达到该次数后, 自动重新
+    # 开启设备推流并切换到新地址。控制台 Controls 面板可调。
+    stream_restream_fail_threshold: int = 3
+    # 重推流前经 voice_server 查设备是否在线 (设备关机后无法推流, 不在线则跳过)。
+    # 指向设备实际连接的 voice_server (生产部署机)。
+    voice_server_api_url: str = "http://124.220.147.121:8017"
+
     # WebSocket
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小
 
@@ -295,6 +303,7 @@ class Config(BaseModel):
         "AGG_MIN_FACE_QUALITY": ("multiframe", "agg_min_face_quality", 0, 1, 0.05, "quality", "人脸聚合最低质量"),
         "AGG_MIN_BODY_QUALITY": ("multiframe", "agg_min_body_quality", 0, 1, 0.05, "quality", "人体聚合最低质量"),
         "OUTFIT_MATCH_THRESHOLD": ("gallery", "outfit_match_threshold", 0, 1, 0.01, "matching", "衣橱匹配阈值"),
+        "STREAM_RESTREAM_FAIL_THRESHOLD": ("server", "stream_restream_fail_threshold", 1, 20, 1, "stream", "自动重推流失败次数阈值"),
     }
 
     def get_tunable_params(self) -> dict:

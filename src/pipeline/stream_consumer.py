@@ -12,6 +12,12 @@ StreamConsumer — 服务端后台拉流消费
 
 帧节流策略: 读流线程全速消费 (避免解码器积压导致延迟), 处理协程按
 stream_max_fps 上限取"最新帧"处理, 中间帧直接丢弃。
+
+拉流自动恢复: ISS 设备推流偶发损坏后, 单纯对旧地址重连永远失败。读流线程
+统计连续失败次数 (打开失败 / 连上但没读到几帧就断), 达到阈值
+(server.stream_restream_fail_threshold, 控制台可调) 时调度
+pipeline/restream.run_restream_recovery(): 查设备在线 → ISS 重新推流 →
+切换到新 FLV 地址继续拉。全过程记录在 data/restream_log/, 前端可查。
 """
 from __future__ import annotations
 
@@ -23,6 +29,7 @@ import cv2
 import numpy as np
 from loguru import logger
 
+from src.api.iss_client import ISSEnv
 from src.api.schemas import (
     StreamStatusResponse,
     build_frame_result,
@@ -35,15 +42,24 @@ from src.pipeline.orchestrator import VisionOrchestrator
 class StreamConsumer:
     """单摄像头的后台拉流消费器。"""
 
+    # 一次连接读到这么多帧即视为"健康会话", 连续失败计数清零
+    # (真实流 15fps 下 1 秒内就能达到; 损坏的流通常一帧都读不到或只吐少量残帧)
+    _HEALTHY_SESSION_FRAMES = 10
+
     def __init__(
         self,
         camera_id: str,
         url: str,
         orchestrator: VisionOrchestrator,
+        env: ISSEnv = "test",
+        auto_restream: bool = True,
     ) -> None:
         self.camera_id = camera_id
         self.url = url
         self.orchestrator = orchestrator
+        # ISS 环境 (test/prod, 自动重推流时沿用) 与自动恢复开关
+        self.env = env
+        self.auto_restream = auto_restream
 
         # 最新帧 (读流线程写, 处理协程读)
         self._latest_frame: np.ndarray | None = None
@@ -65,6 +81,14 @@ class StreamConsumer:
         self.stream_width = 0
         self.stream_height = 0
 
+        # 拉流自动恢复状态
+        self._loop: asyncio.AbstractEventLoop | None = None  # 读流线程回调恢复协程用
+        self._consecutive_pull_failures = 0
+        self._recovering = False            # 恢复协程进行中 (防重复调度)
+        self.restream_count = 0             # 本次消费器生命周期内成功重推流次数
+        self.last_restream_at: float | None = None
+        self.last_restream_outcome: str | None = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -74,6 +98,7 @@ class StreamConsumer:
         if self.running:
             return
         self.running = True
+        self._loop = asyncio.get_running_loop()
         self._stop_event.clear()
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
@@ -125,6 +150,12 @@ class StreamConsumer:
             process_fps=round(self.process_fps, 1),
             viewers=viewer_count(self.camera_id),
             last_error=self.last_error,
+            env=self.env,
+            auto_restream=self.auto_restream,
+            recovering=self._recovering,
+            restream_count=self.restream_count,
+            last_restream_at=self.last_restream_at,
+            last_restream_outcome=self.last_restream_outcome,
         )
 
     # ------------------------------------------------------------------
@@ -144,6 +175,7 @@ class StreamConsumer:
                     "拉流打开失败: camera={}, url={}, {}s 后重试",
                     self.camera_id, self.url, reconnect_delay,
                 )
+                self._note_pull_failure()
                 self._stop_event.wait(reconnect_delay)
                 continue
 
@@ -154,10 +186,15 @@ class StreamConsumer:
             self.last_error = None
             logger.info("拉流已连接: camera={}, url={}", self.camera_id, self.url)
 
+            session_frames = 0  # 本次连接读到的帧数 (区分健康会话与假连接)
             while not self._stop_event.is_set():
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     break
+                session_frames += 1
+                if session_frames == self._HEALTHY_SESSION_FRAMES:
+                    # 流真正跑起来了, 之前的失败不再连续
+                    self._consecutive_pull_failures = 0
                 with self._frame_lock:
                     self._latest_frame = frame
                     self._latest_seq += 1
@@ -174,10 +211,63 @@ class StreamConsumer:
             if not self._stop_event.is_set():
                 self.last_error = "视频流中断, 正在重连"
                 logger.warning(
-                    "拉流中断: camera={}, {}s 后重连",
-                    self.camera_id, reconnect_delay,
+                    "拉流中断: camera={}, 本次连接读到 {} 帧, {}s 后重连",
+                    self.camera_id, session_frames, reconnect_delay,
                 )
+                self._note_pull_failure()
                 self._stop_event.wait(reconnect_delay)
+
+    def _note_pull_failure(self) -> None:
+        """(读流线程) 记一次拉流失败; 连续失败达到阈值时调度自动重推流。"""
+        self._consecutive_pull_failures += 1
+        if not self.auto_restream or self._recovering:
+            return
+        threshold = get_config().server.stream_restream_fail_threshold
+        if self._consecutive_pull_failures < threshold:
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        # 先置位再调度: 读流线程是唯一写入方, 恢复协程结束时复位
+        self._recovering = True
+        asyncio.run_coroutine_threadsafe(self._run_recovery(), loop)
+
+    async def _run_recovery(self) -> None:
+        """(事件循环) 执行自动重推流恢复并按结果切换拉流地址。"""
+        from src.pipeline.restream import run_restream_recovery
+
+        try:
+            if not self.running:
+                return
+            fail_count = self._consecutive_pull_failures
+            trigger_error = self.last_error or ""
+            self.last_error = f"连续拉流失败 {fail_count} 次, 正在自动重推流..."
+
+            attempt = await run_restream_recovery(
+                camera_id=self.camera_id,
+                env=self.env,
+                current_url=self.url,
+                fail_count=fail_count,
+                last_error=trigger_error,
+            )
+
+            outcome = attempt.outcome
+            self.last_restream_at = attempt.finished_at
+            self.last_restream_outcome = outcome
+            # 无论成败都清零计数: 失败时等再攒满一个阈值周期后重试,
+            # 避免每次重连失败都打一遍 ISS / voice_server
+            self._consecutive_pull_failures = 0
+
+            if outcome == "restreamed":
+                self.restream_count += 1
+                self.url = attempt.new_url  # 读流线程下个循环用新地址
+                self.last_error = "已自动重推流, 正在连接新直播地址..."
+            elif outcome == "device_offline":
+                self.last_error = "设备不在线, 暂不重推流 (等设备上线后自动重试)"
+            else:
+                self.last_error = f"自动重推流失败 ({outcome}), 稍后自动重试"
+        finally:
+            self._recovering = False
 
     # ------------------------------------------------------------------
     # 处理协程 (event loop)

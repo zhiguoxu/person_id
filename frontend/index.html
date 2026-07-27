@@ -72,6 +72,7 @@
                             <button id="btn-device-stream" class="btn split-btn-main" title="开启设备推流并获取直播地址 (ISS start_stream)">📡 设备推流</button>
                             <button id="btn-stream-menu" class="btn split-btn-caret" title="更多操作">▾</button>
                             <div id="stream-menu" class="split-menu hidden">
+                                <button id="btn-restream-log" class="split-menu-item" title="查看拉流失败自动重推流的历史记录与错误日志">🧾 重推日志</button>
                                 <button id="btn-device-stream-stop" class="split-menu-item danger" title="停止设备推流 (ISS stop_stream)">⏹ 停止推流</button>
                             </div>
                         </div>
@@ -410,6 +411,26 @@
     <!-- SCRIPTS -->
     <!-- ================================================================== -->
     <!-- FLV.js for FLV live stream playback -->
+    <!-- ================================================================== -->
+    <!-- MODAL: 自动重推流日志 -->
+    <!-- ================================================================== -->
+    <div id="restream-log-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content" style="max-width: 860px;">
+            <div class="modal-header">
+                <h3>🧾 自动重推流日志</h3>
+                <button class="modal-close" id="restream-log-modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="restream-log-modal-body">
+                <div class="restream-log-toolbar">
+                    <span id="restream-log-summary" class="restream-log-summary"></span>
+                    <button id="btn-restream-log-refresh" class="btn btn-xs">🔄 刷新</button>
+                </div>
+                <div id="restream-log-list" class="restream-log-list"></div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
     <script src="js/config.js"></script>
     <script src="js/websocket.js"></script>
@@ -424,6 +445,7 @@
     <script src="js/test-body-quality.js"></script>
     <script src="js/test-face-similarity.js"></script>
     <script src="js/test-body-similarity.js"></script>
+    <script src="js/restream-log.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>
