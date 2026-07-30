@@ -85,8 +85,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 注意: 不删 Redis 里的拉流期望状态——关停≠用户想停止拉流,
     # 正是下次启动 restore_streams 恢复的依据
-    from src.pipeline import stream_state
+    from src.pipeline import restream, stream_state
     await stream_state.close()
+    await restream.close()
 
     await get_gallery_persistence().close()
     logger.info("应用关闭完成")

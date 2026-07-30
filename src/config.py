@@ -248,9 +248,13 @@ class ServerConfig(BaseModel):
     # 连续拉流失败 (打开失败/连上但读不到几帧就断) 达到该次数后, 自动重新
     # 开启设备推流并切换到新地址。控制台 Controls 面板可调。
     stream_restream_fail_threshold: int = 3
-    # 重推流前经 voice_server 查设备是否在线 (设备关机后无法推流, 不在线则跳过)。
-    # 指向设备实际连接的 voice_server (生产部署机)。
-    voice_server_api_url: str = "http://124.220.147.121:8017"
+    # 重推流前查设备是否在线 (设备关机后无法推流, 不在线则跳过): 直读
+    # voice_server 写入 Redis 的 ws:online 在线标记 (key 格式的事实源:
+    # packages/common/voice_agent_common/utils/live_events.py)。
+    # 连接复用 config.redis 的 host/密码; 标记在 voice_server 的主库,
+    # db 与 namespace 须与其配置一致 (redis.db / live_namespace)
+    voice_online_redis_db: int = 2
+    voice_live_namespace: str = "default"
 
     # WebSocket
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小
@@ -384,6 +388,11 @@ def load_config() -> Config:
         config.redis.password = redis_password
     if redis_db := os.environ.get("REDIS_DB"):
         config.redis.db = int(redis_db)
+    # voice_server 在线标记所在的 db 与命名空间 (设备在线检查, pipeline/restream.py)
+    if online_db := os.environ.get("VOICE_ONLINE_REDIS_DB"):
+        config.server.voice_online_redis_db = int(online_db)
+    if live_ns := os.environ.get("VOICE_LIVE_NAMESPACE"):
+        config.server.voice_live_namespace = live_ns
 
     _set_instance(config)
     return config

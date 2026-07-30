@@ -33,52 +33,29 @@ from __future__ import annotations
 import json
 import time
 
-import redis.asyncio as redis
 from loguru import logger
 
-from src.config import get_config
+from src.utils.redis_conn import LazyRedis
 
 # Redis hash: field=camera_id, value=期望状态 JSON
 STATE_KEY = "person_id:stream_state"
 
 _VALID_ENVS = ("test", "prod")
 
-_client: redis.Redis | None = None
-_warned_unconfigured = False
+_state_redis = LazyRedis(
+    db_of=lambda cfg: cfg.redis.db,
+    unconfigured_hint="Redis 未配置(REDIS_HOST 为空), 拉流期望状态不持久化, "
+                      "服务重启后不会自动恢复拉流")
 
 
-def _get_client() -> redis.Redis | None:
-    """懒建 Redis 连接池; 未配置(host 为空)返回 None 并只警告一次。"""
-    global _client, _warned_unconfigured
-    cfg = get_config().redis
-    if not cfg.host:
-        if not _warned_unconfigured:
-            _warned_unconfigured = True
-            logger.warning(
-                "Redis 未配置(REDIS_HOST 为空), 拉流期望状态不持久化, "
-                "服务重启后不会自动恢复拉流")
-        return None
-    if _client is None:
-        # protocol=2 兼容老版本 Redis 服务端(与 voice_agent_common 口径一致)
-        _client = redis.Redis(
-            host=cfg.host,
-            port=cfg.port,
-            password=cfg.password or None,
-            db=cfg.db,
-            decode_responses=True,
-            protocol=2,
-            socket_connect_timeout=cfg.socket_connect_timeout,
-            socket_timeout=cfg.socket_timeout,
-        )
-    return _client
+def _get_client():
+    """本模块各函数的取连接入口(未配置时返回 None, 各函数空操作)。"""
+    return _state_redis.get()
 
 
 async def close() -> None:
     """关闭连接池(lifespan shutdown 调用)。"""
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    await _state_redis.close()
 
 
 async def record_desired(camera_id: str, url: str, env: str,

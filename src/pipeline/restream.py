@@ -6,7 +6,8 @@
 
 1. StreamConsumer 连续拉流失败达到阈值 (server.stream_restream_fail_threshold,
    web 控制台可调) 时调用 run_restream_recovery()
-2. 先经 voice_server 查设备是否在线 (设备关机后无法推流, 不在线则跳过重推)
+2. 先查设备是否在线 (设备关机后无法推流, 不在线则跳过重推): 直读
+   voice_server 写入 Redis 的 ws:online 在线标记
 3. 在线则调 ISS stop_stream + start_stream 重新推流, 拿到新 FLV 地址
 4. StreamConsumer 切换到新地址继续拉流; 新地址经 consume/status 同步到前端
 
@@ -18,39 +19,52 @@ from __future__ import annotations
 
 import time
 
-import httpx
 from loguru import logger
 from pydantic import ValidationError
 
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream
 from src.config import DATA_DIR, get_config
 from src.pipeline.restream_models import RestreamAttempt, RestreamLogLine
+from src.utils.redis_conn import LazyRedis
 
 RESTREAM_LOG_DIR = DATA_DIR / "restream_log"
 
+# 在线标记专用连接: 标记在 voice_server 的主库, db 与 stream_state 的
+# (config.redis.db) 不同, 不能共用其连接池
+_online_redis = LazyRedis(
+    db_of=lambda cfg: cfg.server.voice_online_redis_db,
+    unconfigured_hint="Redis 未配置(REDIS_HOST 为空), 重推流前无法确认设备在线状态, "
+                      "将始终按'无法确认'降级(继续尝试重推)")
+
+
+async def close() -> None:
+    """关闭在线标记连接池(lifespan shutdown 调用)。"""
+    await _online_redis.close()
+
 
 async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
-    """经 voice_server 查设备是否在线。
+    """直读 voice_server 的 ws:online 在线标记判断设备是否在线。
 
-    设备与 voice_server 之间保持 WebSocket 长连接, 有活跃会话即设备开机在网。
-    返回 (在线状态, 描述); voice_server 不可达/响应异常时状态为 None,
-    由调用方决定如何降级。
+    标记由持有设备 WebSocket 的 voice 实例写入并心跳续期(TTL 120s), 设备
+    正常断开即删。key 格式(ws:online:{namespace}:{device_sn})的事实源:
+    packages/common/voice_agent_common/utils/live_events.py。
+
+    这是 TTL 级近似值: voice 实例崩溃后的残留窗口内会误判在线, 代价只是
+    多一次注定失败的 ISS 重推, 符合"宁可多试也不卡死恢复"的既有取舍。
+    返回 (在线状态, 描述); Redis 未配置/不可达时状态为 None, 由调用方降级。
     """
-    base = get_config().server.voice_server_api_url.rstrip("/")
-    url = f"{base}/api/device/{device_sn}/online"
+    r = _online_redis.get()
+    if r is None:
+        return None, "Redis 未配置, 无法确认设备在线状态"
+    cfg = get_config()
+    key = f"ws:online:{cfg.server.voice_live_namespace}:{device_sn}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
-    except httpx.HTTPError as e:
-        return None, f"voice_server 在线检查请求失败: {url} ({e})"
-    if resp.status_code != 200:
-        return None, f"voice_server 在线检查异常: HTTP {resp.status_code}, body={resp.text[:200]}"
-    try:
-        data = resp.json()
-        online = bool(data["online"])
+        value = await r.get(key)
     except Exception as e:
-        return None, f"voice_server 在线检查响应无法解析: {resp.text[:200]} ({e})"
-    return online, "设备在线" if online else "设备不在线 (无活跃 WebSocket 会话, 可能已关机/断网)"
+        return None, f"设备在线标记读取失败: {key} ({e})"
+    if value:
+        return True, "设备在线"
+    return False, "设备不在线 (无在线标记, 可能已关机/断网)"
 
 
 async def run_restream_recovery(
