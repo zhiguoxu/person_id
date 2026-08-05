@@ -58,13 +58,21 @@ async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
         return None, "Redis 未配置, 无法确认设备在线状态"
     cfg = get_config()
     key = f"ws:online:{cfg.server.voice_live_namespace}:{device_sn}"
+    # 标记所在位置写进日志: 误判"不在线"几乎都是 person_id 连的 Redis 与
+    # voice_server 写标记的不是同一个(host/db/namespace 错位), 光说"无标记"
+    # 排查不动, 必须能从重推日志直接看出实际查的是哪里的哪个 key
+    where = (f"{cfg.redis.host}:{cfg.redis.port}"
+             f"/db{cfg.server.voice_online_redis_db} key={key}")
     try:
         value = await r.get(key)
     except Exception as e:
-        return None, f"设备在线标记读取失败: {key} ({e})"
+        return None, f"设备在线标记读取失败: {where} ({e})"
     if value:
-        return True, "设备在线"
-    return False, "设备不在线 (无在线标记, 可能已关机/断网)"
+        return True, f"设备在线 (标记值: {value})"
+    return False, (f"设备不在线 (在线标记不存在: {where}; 设备可能已关机/断网, "
+                   f"若设备实际在线, 请核对 person_id 的 REDIS_HOST/"
+                   f"VOICE_ONLINE_REDIS_DB/VOICE_LIVE_NAMESPACE 是否与 "
+                   f"voice_server 的 redis.db/live_namespace 一致)")
 
 
 async def run_restream_recovery(
