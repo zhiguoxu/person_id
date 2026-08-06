@@ -1,41 +1,17 @@
 /**
  * Controls Panel — 阈值控制面板
- * 
+ *
  * 动态创建滑块，实时发送配置更新到后端。
- * 支持预设（保守/均衡/激进）。
+ * 「恢复默认」回落到服务端初始下发的值 (即 yaml/config 的启动值),
+ * 前端不硬编码任何阈值, 避免与服务端默认漂移。
  */
 class ControlsPanel {
     constructor() {
         this.container = document.getElementById('threshold-sliders');
         this.params = {};
-        this.presets = {
-            conservative: {
-                A_THRESHOLD: 0.85,
-                B_THRESHOLD: 0.75,
-                C_THRESHOLD: 0.60,
-                FACE_QUALITY_ENROLL_THRESHOLD: 0.65,
-                BODY_QUALITY_ENROLL_THRESHOLD: 0.55,
-                OUTFIT_MATCH_THRESHOLD: 0.90,
-            },
-            balanced: {
-                A_THRESHOLD: 0.78,
-                B_THRESHOLD: 0.68,
-                C_THRESHOLD: 0.50,
-                FACE_QUALITY_ENROLL_THRESHOLD: 0.55,
-                BODY_QUALITY_ENROLL_THRESHOLD: 0.40,
-                OUTFIT_MATCH_THRESHOLD: 0.85,
-            },
-            aggressive: {
-                A_THRESHOLD: 0.70,
-                B_THRESHOLD: 0.60,
-                C_THRESHOLD: 0.40,
-                FACE_QUALITY_ENROLL_THRESHOLD: 0.45,
-                BODY_QUALITY_ENROLL_THRESHOLD: 0.30,
-                OUTFIT_MATCH_THRESHOLD: 0.75,
-            },
-        };
+        this.defaults = {};   // 服务端初始值快照 (key → value), 供「恢复默认」使用
 
-        this._bindPresets();
+        this._bindReset();
     }
 
     /**
@@ -43,6 +19,9 @@ class ControlsPanel {
      */
     initialize(tunableParams) {
         this.params = tunableParams || this._defaultParams();
+        this.defaults = Object.fromEntries(
+            Object.entries(this.params).map(([key, param]) => [key, param.value])
+        );
         this._render();
     }
 
@@ -148,35 +127,27 @@ class ControlsPanel {
         window.wsManager.sendConfigUpdate({ [key]: value });
     }
 
-    _bindPresets() {
-        document.querySelectorAll('[data-preset]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const presetName = btn.dataset.preset;
-                this.applyPreset(presetName);
-
-                // 切换 active 样式
-                document.querySelectorAll('[data-preset]').forEach(b => b.classList.remove('btn-active'));
-                btn.classList.add('btn-active');
-            });
-        });
+    _bindReset() {
+        const btn = document.getElementById('btn-reset-defaults');
+        if (!btn) return;
+        btn.addEventListener('click', () => this.resetToDefaults());
     }
 
-    applyPreset(name) {
-        const preset = this.presets[name];
-        if (!preset) return;
+    resetToDefaults() {
+        if (!Object.keys(this.defaults).length) return;
 
-        Object.entries(preset).forEach(([key, value]) => {
+        Object.entries(this.defaults).forEach(([key, value]) => {
             const slider = document.getElementById(`slider-${key}`);
             const display = document.getElementById(`value-${key}`);
             if (slider) {
                 slider.value = value;
-                if (display) display.textContent = value.toFixed(2);
+                if (display) display.textContent = parseFloat(value).toFixed(2);
                 if (this.params[key]) this.params[key].value = value;
             }
         });
 
         // 批量发送
-        window.wsManager.sendConfigUpdate(preset);
+        window.wsManager.sendConfigUpdate(this.defaults);
     }
 }
 
