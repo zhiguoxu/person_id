@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config import get_config
+from src.configs.config import config
 from src.pipeline.data_models import TrackedPerson
 
 
@@ -54,7 +54,7 @@ class RecentBuffer(BaseModel):
         last = self.frames[-1]
         elapsed = entry.timestamp - last.timestamp
 
-        if elapsed >= get_config().multiframe.recent_min_interval:
+        if elapsed >= config.multiframe.recent_min_interval:
             # 新时间窗口 → 追加
             self.frames.append(entry)
             return True
@@ -104,11 +104,11 @@ class QualityCache(BaseModel):
 
     def try_add_face(self, frame: CachedFrame) -> bool:
         """尝试加入 face_pool, 返回 True 表示新入缓存"""
-        return self._try_add(self.face_pool, get_config().multiframe.face_pool_size, frame)
+        return self._try_add(self.face_pool, config.multiframe.face_pool_size, frame)
 
     def try_add_body(self, frame: CachedFrame) -> bool:
         """尝试加入 body_pool, 返回 True 表示新入缓存"""
-        return self._try_add(self.body_pool, get_config().multiframe.body_pool_size, frame)
+        return self._try_add(self.body_pool, config.multiframe.body_pool_size, frame)
 
     @staticmethod
     def _try_add(pool: list[CachedFrame], max_size: int, frame: CachedFrame) -> bool:

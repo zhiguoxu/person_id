@@ -16,7 +16,7 @@ except ImportError:
     from boxmot import BoTSORT as BotSort  # type: ignore[import-untyped]
 from loguru import logger
 
-from src.config import get_config
+from src.configs.config import config
 from src.pipeline.data_models import (
     Detection,
     TrackedPerson,
@@ -153,7 +153,6 @@ class TrackingEngine:
     @staticmethod
     def _create_tracker() -> BotSort:
         """Create the BoT-SORT tracker backend."""
-        config = get_config()
         tracker = BotSort(
             reid_model=None,
             track_high_thresh=config.tracking.track_high_thresh,

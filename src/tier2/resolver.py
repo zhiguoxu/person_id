@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from src.config import get_config
+from src.configs.config import config
 from src.pipeline.data_models import IdentityStatus, MatchResult
 
 
@@ -25,7 +25,7 @@ def resolve_reid(match_result: MatchResult) -> MatchResult:
 
     top = match_result.top_score
     margin = match_result.margin
-    cfg = get_config().matching
+    cfg = config.matching
 
     # A 级: 笃定 — 唯一终态
     if top >= cfg.A_threshold and margin >= cfg.A_margin:

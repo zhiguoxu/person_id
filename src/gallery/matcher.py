@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from src.config import get_config
+from src.configs.config import config
 from src.gallery.data_models import (
     BodyProportions,
     PersonProfile,
@@ -81,10 +81,10 @@ def match_body(query_bodies: dict[PoseBucket, tuple[np.ndarray, float]],
     if not query_bodies or not gallery:
         return []
 
-    config = get_config().matching
-    blend_alpha = config.blend_alpha
-    cross_pose = config.cross_pose_discount
-    gamma = config.wardrobe_boost_gamma
+    cfg = config.matching
+    blend_alpha = cfg.blend_alpha
+    cross_pose = cfg.cross_pose_discount
+    gamma = cfg.wardrobe_boost_gamma
     candidates = []
 
     for person_id, profile in gallery.items():

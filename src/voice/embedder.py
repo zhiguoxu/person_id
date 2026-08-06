@@ -18,7 +18,7 @@ from functools import cache
 import numpy as np
 from loguru import logger
 
-from src.config import get_config
+from src.configs.config import config
 
 SR = 16000
 
@@ -109,7 +109,7 @@ class VoiceEmbedExtractor:
     sherpa stream 非线程安全, 一把锁串行(GPU 单次 ~7ms)。"""
 
     def __init__(self) -> None:
-        cfg = get_config().voice_embed
+        cfg = config.voice_embed
         self._lock = threading.Lock()
         self._extractor: _Extractor | None = None
         if not cfg.enabled:

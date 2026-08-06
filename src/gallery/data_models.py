@@ -23,7 +23,7 @@ import numpy as np
 from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict
 
-from src.config import get_config
+from src.configs.config import config
 
 
 # ==============================================================================
@@ -319,7 +319,7 @@ class PersonProfile(BaseModel):
             return self._face_centroids
 
         now = time.time()
-        half_life = get_config().gallery.face_match_half_life_days
+        half_life = config.gallery.face_match_half_life_days
 
         centroids: dict[PoseBucket, np.ndarray] = {}
         for bucket, entries in self.face_features.items():
@@ -381,7 +381,7 @@ class PersonProfile(BaseModel):
         """入库人脸特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
         if entry.pose_bucket == PoseBucket.UNKNOWN:
             return None
-        gallery_cfg = get_config().gallery
+        gallery_cfg = config.gallery
         if entry.quality_score < gallery_cfg.face_quality_enroll_threshold:
             logger.debug(
                 "face quality {:.3f} 低于 threshold {:.3f} ({})",
@@ -406,7 +406,7 @@ class PersonProfile(BaseModel):
         """入库人体特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
         if entry.pose_bucket == PoseBucket.UNKNOWN:
             return None
-        gallery_cfg = get_config().gallery
+        gallery_cfg = config.gallery
         if entry.quality_score < gallery_cfg.body_quality_enroll_threshold:
             logger.debug(
                 "body feature quality {:.3f} 低于 threshold {:.3f} ({})",
@@ -428,7 +428,7 @@ class PersonProfile(BaseModel):
 
     def enroll_outfit(self, body_embedding: np.ndarray, quality: float) -> OutfitEnrollResult | None:
         """入库/更新衣橱记录 — 质量门槛 + EMA 更新。失败返回 None。"""
-        gallery_cfg = get_config().gallery
+        gallery_cfg = config.gallery
         if quality < gallery_cfg.body_quality_enroll_threshold:
             logger.debug(
                 "outfit body quality {:.3f} 低于 threshold {:.3f} ({})",

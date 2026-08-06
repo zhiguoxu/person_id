@@ -10,14 +10,33 @@
 
 # --- 核心检测与追踪 ---
 ultralytics>=8.3.0          # YOLO11-pose
-boxmot>=11.0.0              # BoT-SORT 追踪器
+# boxmot (BoT-SORT 追踪器): 故意不写在本文件 —— 它把 torch/torchvision 钉死到
+# 具体版本, 直接 pip install 会把 CUDA 版 torch 降级/替换。必须 --no-deps 安装
+# (install.sh Step 4 / deploy_mac.sh setup person 均已处理):
+#   pip install --no-deps "boxmot>=11.0.0"
+# 它的运行时依赖手动列在这里, 保证 -r 本文件后 import boxmot 可用:
+filterpy>=1.4.5             # boxmot 运行时依赖 (以下 6 行同)
+ftfy>=6.1.0
+gitpython>=3.1.0
+lapx>=0.5.5
+pandas>=2.0.0
+regex>=2023.0.0
+yacs>=0.1.8
 
 # --- 人脸识别 ---
-insightface>=0.7.3          # SCRFD 人脸检测 (det_10g.onnx)
+# insightface (SCRFD 人脸检测): 故意不写在本文件 —— 它的包元数据声明依赖纯 CPU 的
+# onnxruntime, pip 会自动拉入并把 onnxruntime-gpu 的文件覆盖掉, CUDA EP 消失,
+# 人脸全栈静默跌回 CPU (Tier1 60-80ms/帧, Tier2 尖峰数百 ms; GPU 下 Tier2 仅 ~65ms)。
+# 2026-08-05 线上已实际踩坑 (pip install -r 本文件时被拉入)。必须 --no-deps 安装
+# (install.sh Step 3 / deploy_mac.sh setup person 均已处理):
+#   pip install --no-deps "insightface>=0.7.3"
+# 它的运行时依赖 (除 onnxruntime 外) 手动列在这里:
+onnx>=1.16.0                # insightface 运行时依赖 (以下 3 行同; numpy/opencv/scipy 已在别处)
+scikit-image>=0.22.0
+tqdm>=4.66.0
+requests>=2.31.0
 # 注意: 只能装 onnxruntime-gpu, 绝不能再装纯 CPU 的 onnxruntime 包 ——
-# 两者共享安装路径, CPU 版会把 CUDA EP 顶掉, 人脸全栈静默跌回 CPU
-# (Tier1 60-80ms/帧, Tier2 尖峰数百 ms; GPU 下 Tier2 仅 ~65ms)。
-# pip 依赖解析可能自动拉入 onnxruntime, 装完依赖后务必检查:
+# 两者共享安装路径, CPU 版会把 CUDA EP 顶掉。装完依赖后务必检查:
 #   python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 onnxruntime-gpu>=1.18.0     # ONNX 推理 (ArcFace/AdaFace + eDifFIQA)
 onnxscript>=0.1.0           # torch.onnx.export 依赖 (AdaFace ONNX 转换)
@@ -31,6 +50,8 @@ scipy>=1.12.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.6.0
+pydantic-settings>=2.12.0   # 配置加载 (yaml 基底+环境覆盖, 与 voice_server 同风格; deep_merge 需 >=2.12)
+PyYAML>=6.0                 # pydantic-settings 的 yaml 配置源依赖
 websockets>=12.0
 python-multipart>=0.0.9
 

@@ -1,0 +1,40 @@
+# ==============================================================================
+# 基底配置 (所有环境共享), 会被 config_{APP_ENV}.yaml 深合并覆盖
+# (APP_ENV 默认 dev; APP_ 前缀环境变量可再覆盖顶层字段)。
+# 各字段的默认值与说明见 src/configs/config.py, 这里只放需要区别于
+# 代码默认值、且各环境一致的项。
+# ==============================================================================
+
+# 匹配与融合 (MatchingConfig): 调参最频繁的一组, 集中放 yaml 便于管理。
+# 值与 config.py 默认一致; 改这里重启生效 (控制台 Controls 在线调的是内存值,
+# 重启后回落到本文件)。字段名须与 config.py 完全一致 (大小写敏感)。
+matching:
+  # 四级置信度阈值 (A > B > C, 无 D)
+  A_threshold: 0.85          # 笃定 (唯一终态)
+  A_margin: 0.20             # 笃定所需最小 margin
+  B_threshold: 0.72          # 确定
+  B_margin: 0.10             # 确定所需最小 margin
+  C_threshold: 0.55          # 怀疑/陌生 分界线
+  # Body Top-K Blend
+  blend_alpha: 0.7           # peak 权重 (1-α 为 depth 权重)
+  cross_pose_discount: 0.7   # 跨姿态投票权折扣 (同姿态=1.0)
+  wardrobe_boost_gamma: 0.2  # wardrobe 提升因子 (贝叶斯 lift ≈ 1.5×)
+  # 多模态融合基础权重
+  face_base_weight: 0.7      # 人脸
+  body_base_weight: 0.2      # 全身
+  proportion_base_weight: 0.1  # 体型比例
+  # Sigmoid 门控 (各模态独立校准)
+  face_gate_q0: 0.3          # 人脸质量翻转点
+  face_gate_k: 10.0          # 人脸质量门控斜率
+  body_gate_q0: 0.5          # 人体质量翻转点
+  body_gate_k: 10.0          # 人体质量门控斜率
+
+# VLM 仲裁 (Tier3): 基底安全禁用, 启用的环境在自己的 yaml 里覆盖并配 api_key
+vlm:
+  enabled: false
+  api_key: ""
+
+# Redis (拉流期望状态持久化 + 设备在线检查): host 为空 = 未配置,
+# 相关功能降级为空操作(只记警告)。启用的环境在自己的 yaml 里覆盖。
+redis:
+  host: ""

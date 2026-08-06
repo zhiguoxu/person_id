@@ -15,7 +15,7 @@ from loguru import logger
 
 from src.pipeline.data_models import Detection
 from src.tier1.detection.pose_classifier import classify_pose, has_visible_face
-from src.config import get_config
+from src.configs.config import config
 
 
 class YoloPoseDetector:
@@ -45,8 +45,8 @@ class YoloPoseDetector:
             from ultralytics import YOLO
             self.model = YOLO(model_path)
             # Warm up the model on the target device
-            cfg = get_config().detection
-            hw_cfg = get_config().hardware
+            cfg = config.detection
+            hw_cfg = config.hardware
 
             # 必须传入 torch.device 对象以防止 Ultralytics 内部偷偷修改 CUDA_VISIBLE_DEVICES
             import torch
@@ -71,8 +71,8 @@ class YoloPoseDetector:
             检测结果列表, 按置信度降序排列。
             过滤掉高度小于 min_person_height 的检测。
         """
-        cfg = get_config().detection
-        hw_cfg = get_config().hardware
+        cfg = config.detection
+        hw_cfg = config.hardware
 
         import torch
         device_obj = torch.device(hw_cfg.device)
@@ -127,7 +127,7 @@ class YoloPoseDetector:
 
                 # Filter by minimum person height
                 person_height = bbox[3] - bbox[1]
-                if person_height < get_config().detection.min_person_height_px:
+                if person_height < config.detection.min_person_height_px:
                     continue
 
                 # Detection confidence

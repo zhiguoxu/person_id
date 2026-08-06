@@ -25,7 +25,7 @@ from src.pipeline.data_models import (
     MatchResult,
 )
 from src.pipeline.frame_buffer import QualityCache
-from src.config import get_config
+from src.configs.config import config
 
 
 class Tier3VLMProcessor:
@@ -118,7 +118,7 @@ class Tier3VLMProcessor:
         query_bytes: bytes = query_jpeg.tobytes()
 
         # 3. 收集候选人图片
-        cfg = get_config()
+        cfg = config
         candidate_images: list[tuple[str, bytes]] = Tier3VLMProcessor.collect_candidate_images(
             match_result.candidates, gallery, max_candidates=cfg.vlm.max_candidates
         )

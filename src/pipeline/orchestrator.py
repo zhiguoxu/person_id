@@ -17,7 +17,7 @@ import cv2
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config import get_config
+from src.configs.config import config
 from src.gallery.data_models import (
     FeatureEntry,
     GalleryUpdateResult,
@@ -421,8 +421,8 @@ class VisionOrchestrator(BaseModel):
             return changes
 
         cache = state.quality_cache
-        gallery_cfg = get_config().gallery
-        min_face_size = get_config().face.min_face_size
+        gallery_cfg = config.gallery
+        min_face_size = config.face.min_face_size
 
         # --- 人脸 / 人体特征入库 ---
         body_best: dict[PoseBucket, tuple[CachedFrame, float]] = {}

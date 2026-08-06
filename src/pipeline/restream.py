@@ -23,7 +23,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream
-from src.config import DATA_DIR, get_config
+from src.configs.config import DATA_DIR, config
 from src.pipeline.restream_models import RestreamAttempt, RestreamLogLine
 from src.utils.redis_conn import LazyRedis
 
@@ -33,7 +33,7 @@ RESTREAM_LOG_DIR = DATA_DIR / "restream_log"
 # (config.redis.db) 不同, 不能共用其连接池
 _online_redis = LazyRedis(
     db_of=lambda cfg: cfg.server.voice_online_redis_db,
-    unconfigured_hint="Redis 未配置(REDIS_HOST 为空), 重推流前无法确认设备在线状态, "
+    unconfigured_hint="Redis 未配置(redis.host 为空), 重推流前无法确认设备在线状态, "
                       "将始终按'无法确认'降级(继续尝试重推)")
 
 
@@ -56,7 +56,7 @@ async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
     r = _online_redis.get()
     if r is None:
         return None, "Redis 未配置, 无法确认设备在线状态"
-    cfg = get_config()
+    cfg = config
     key = f"ws:online:{cfg.server.voice_live_namespace}:{device_sn}"
     # 标记所在位置写进日志: 误判"不在线"几乎都是 person_id 连的 Redis 与
     # voice_server 写标记的不是同一个(host/db/namespace 错位), 光说"无标记"
@@ -70,9 +70,9 @@ async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
     if value:
         return True, f"设备在线 (标记值: {value})"
     return False, (f"设备不在线 (在线标记不存在: {where}; 设备可能已关机/断网, "
-                   f"若设备实际在线, 请核对 person_id 的 REDIS_HOST/"
-                   f"VOICE_ONLINE_REDIS_DB/VOICE_LIVE_NAMESPACE 是否与 "
-                   f"voice_server 的 redis.db/live_namespace 一致)")
+                   f"若设备实际在线, 请核对 person_id yaml 的 redis.host/"
+                   f"server.voice_online_redis_db/server.voice_live_namespace "
+                   f"是否与 voice_server 的 redis.db/live_namespace 一致)")
 
 
 async def run_restream_recovery(

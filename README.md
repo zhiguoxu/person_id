@@ -81,7 +81,7 @@ person_id/
 │   ├── frontend_design.md  # 前端设计
 │   └── implementation_plan.md # 实施方案
 ├── src/                    # 后端源码
-│   ├── config.py           # 全局配置
+│   ├── configs/            # 全局配置 (config.py + config_files/*.yaml, 风格同 voice_server)
 │   ├── detection/          # YOLO11-Pose 检测
 │   ├── features/           # 特征提取 (人脸/全身/体型)
 │   ├── gallery/            # 特征底库 + SQLite

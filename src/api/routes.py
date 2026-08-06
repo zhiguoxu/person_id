@@ -14,7 +14,7 @@ from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from loguru import logger
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream
 from src.api.registry import get_camera_orchestrator, get_stream_consumer
-from src.config import get_config as _get_config
+from src.configs.config import config
 
 from src.api.schemas import (
     BodyQualityTestResponse,
@@ -212,7 +212,6 @@ def require_camera_orchestrator(camera_id: str):
 @router.get("/config", response_model=ConfigResponse)
 async def get_config_endpoint() -> ConfigResponse:
     """获取所有可调参数及其当前值、范围。"""
-    config = _get_config()
     tunable = config.get_tunable_params()
     params = {
         key: TunableParam(**info) for key, info in tunable.items()
@@ -227,7 +226,7 @@ async def get_config_endpoint() -> ConfigResponse:
 @router.put("/config", response_model=ConfigUpdateResponse)
 async def update_config_endpoint(request: ConfigUpdateRequest) -> ConfigUpdateResponse:
     """更新可调参数。"""
-    updated = _get_config().update_from_dict(request.updates)
+    updated = config.update_from_dict(request.updates)
     if updated:
         logger.info("通过 REST 更新 config: {}", updated)
     return ConfigUpdateResponse(updated_keys=updated)
@@ -522,7 +521,7 @@ def _get_osnet_extractor():
     global _osnet_extractor
     if _osnet_extractor is None:
         from src.tier2.features.osnet_extractor import OSNetExtractor
-        hw_config = _get_config().hardware
+        hw_config = config.hardware
         _osnet_extractor = OSNetExtractor(device=hw_config.device)
     return _osnet_extractor
 

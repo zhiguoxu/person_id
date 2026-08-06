@@ -31,7 +31,7 @@ from src.api.schemas import (
     build_frame_result,
     build_ws_event,
 )
-from src.config import Config, get_config
+from src.configs.config import Config, config
 from src.pipeline.orchestrator import VisionOrchestrator
 
 
@@ -66,7 +66,6 @@ async def handle_ws_connection(
         len(orchestrator.gallery),
     )
 
-    config = get_config()
     client_id = id(websocket)
 
     # 注册为观看端: 服务端拉流模式下由 sender 任务把处理结果推给本连接。

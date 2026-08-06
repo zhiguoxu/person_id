@@ -12,7 +12,7 @@ import math
 
 from loguru import logger
 
-from src.config import get_config
+from src.configs.config import config
 from src.pipeline.data_models import MatchCandidate
 
 
@@ -43,7 +43,7 @@ def fuse(
     if not face_candidates and not body_candidates and not proportion_candidates:
         return []
 
-    cfg = get_config().matching
+    cfg = config.matching
 
     # 合并所有候选人
     candidate_map: dict[str, MatchCandidate] = {}

@@ -23,7 +23,7 @@ from loguru import logger
 from src.api.registry import camera_registry
 from src.api.routes import router as api_router
 from src.api.websocket import handle_ws_connection
-from src.config import FRONTEND_DIR, load_config
+from src.configs.config import FRONTEND_DIR, config
 
 
 # ==============================================================================
@@ -34,11 +34,10 @@ from src.config import FRONTEND_DIR, load_config
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期。"""
     # --- startup ---
-    from src.config import get_config
     from src.gallery.persistence import get_gallery_persistence
 
     persistence = get_gallery_persistence()
-    await persistence.initialize(get_config().server.gallery_db_path)
+    await persistence.initialize(config.server.gallery_db_path)
 
     # enroll 质量评估模型(默认 large)只有注册路径用到, 懒加载会让进程启动后的
     # 首次注册当场付 ONNX + CUDA EP 初始化(实测 ~1.2s), 几乎顶到对话端 1.5s
@@ -167,8 +166,6 @@ def create_app() -> FastAPI:
 def main() -> None:
     """直接运行时的入口点。在远程 CUDA 服务器上运行。"""
     import asyncio
-
-    config = load_config()
 
     logger.info(
         "服务器启动于 {}:{}",

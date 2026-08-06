@@ -246,7 +246,7 @@ class SOLIDERReID(nn.Module):
         Returns:
             权重文件路径, 未找到返回 None
         """
-        from src.config import MODELS_DIR
+        from src.configs.config import MODELS_DIR
 
         possible_names = [
             f"{model_name}_reid.pth",

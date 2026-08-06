@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from loguru import logger
 
-from src.config import get_config
+from src.configs.config import config
 
 
 class BodyExtractor:
@@ -36,7 +36,7 @@ class BodyExtractor:
 
     def __init__(self) -> None:
         """初始化 SOLIDER ReID 特征提取器。"""
-        hw_config = get_config().hardware
+        hw_config = config.hardware
         self.device = torch.device(hw_config.device)
         self._model = None
         self._pixel_mean = None
@@ -48,12 +48,12 @@ class BodyExtractor:
         """加载 SOLIDER ReID 模型。"""
         from src.tier2.features.solider.solider_model import SOLIDERReID
 
-        config = get_config().reid
+        reid_cfg = config.reid
 
         # 查找权重文件
-        weights_path = config.reid_model_weights
+        weights_path = reid_cfg.reid_model_weights
         if not weights_path:
-            weights_path = SOLIDERReID.find_checkpoint(config.reid_model_name)
+            weights_path = SOLIDERReID.find_checkpoint(reid_cfg.reid_model_name)
 
         if not weights_path:
             raise RuntimeError(
@@ -67,7 +67,7 @@ class BodyExtractor:
 
         self._model = SOLIDERReID.from_checkpoint(
             checkpoint_path=weights_path,
-            model_name=config.reid_model_name,
+            model_name=reid_cfg.reid_model_name,
             device=str(self.device),
         )
 
@@ -75,16 +75,16 @@ class BodyExtractor:
 
         # 预计算归一化参数 (转为 tensor, 用于批量预处理)
         self._pixel_mean = torch.tensor(
-            config.reid_pixel_mean, dtype=torch.float32, device=self.device,
+            reid_cfg.reid_pixel_mean, dtype=torch.float32, device=self.device,
         ).view(1, 3, 1, 1)
         self._pixel_std = torch.tensor(
-            config.reid_pixel_std, dtype=torch.float32, device=self.device,
+            reid_cfg.reid_pixel_std, dtype=torch.float32, device=self.device,
         ).view(1, 3, 1, 1)
 
         logger.info(
             "BodyExtractor 已加载: model={}, device={}, dim={}",
-            config.reid_model_name,
-            get_config().hardware.device,
+            reid_cfg.reid_model_name,
+            config.hardware.device,
             self.EMBEDDING_DIM,
         )
 
@@ -97,8 +97,7 @@ class BodyExtractor:
         Returns:
             预处理后的 tensor, shape (N, 3, H, W)
         """
-        config = get_config().reid
-        input_h, input_w = config.reid_input_size
+        input_h, input_w = config.reid.reid_input_size
 
         batch = []
         for crop in crops:
@@ -131,10 +130,8 @@ class BodyExtractor:
         if not crops:
             return []
 
-        config = get_config().reid
-
         try:
-            if config.use_flip_test:
+            if config.reid.use_flip_test:
                 # 原图 + 水平翻转图
                 flipped_crops = [cv2.flip(c, 1) for c in crops]
                 all_crops = crops + flipped_crops

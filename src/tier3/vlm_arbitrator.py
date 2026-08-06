@@ -18,7 +18,7 @@ import openai
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from src.config import get_config
+from src.configs.config import config
 
 
 class VLMResponse(BaseModel):
@@ -62,7 +62,7 @@ class VLMArbitrator:
     """
 
     def __init__(self) -> None:
-        self._config = get_config().vlm
+        self._config = config.vlm
         self._client = openai.AsyncOpenAI(
             api_key=self._config.api_key,
             base_url=self._config.base_url,

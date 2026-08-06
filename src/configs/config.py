@@ -1,19 +1,32 @@
 """
 机器人视觉人物识别系统 - 全局配置
 
-所有可调参数集中管理。支持通过 WebSocket 实时更新阈值参数。
+加载风格与 voice_server 对齐 (pydantic-settings):
+- 基底 config_files/config.yaml + 环境覆盖 config_files/config_{APP_ENV}.yaml
+  (APP_ENV 默认 dev, 两层 yaml 深合并)
+- APP_ 前缀环境变量可覆盖顶层字段, 优先级高于 yaml
+- 模块级单例 ``config``, 使用方直接 ``from src.configs.config import config``
+
+所有可调参数集中管理。阈值参数支持通过 WebSocket 实时更新。
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
 
 # ==============================================================================
 # 项目路径
 # ==============================================================================
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
 DATA_DIR = PROJECT_ROOT / "data"
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
@@ -199,8 +212,8 @@ class RedisSettings(BaseModel):
     """Redis 连接 (拉流期望状态持久化用, 见 pipeline/stream_state.py)。
 
     host 为空 = 未配置: 拉流期望状态不持久化, 重启后不恢复拉流
-    (只记警告, 不影响其他功能)。连接参数经 .env / 环境变量注入:
-    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD / REDIS_DB。
+    (只记警告, 不影响其他功能)。连接参数在 config_files 的 yaml 中
+    配置 (redis.host / redis.port / redis.password / redis.db)。
     """
     host: str = ""
     port: int = 6379
@@ -260,25 +273,54 @@ class ServerConfig(BaseModel):
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小
 
 
-class Config(BaseModel):
+class Config(BaseSettings):
     """
     系统总配置
-    
-    所有模块的配置参数集中管理。
+
+    所有模块的配置参数集中管理, 加载机制与 voice_server 一致:
+    yaml(基底 + 环境覆盖) + APP_ 前缀环境变量。
     阈值参数支持通过 WebSocket 实时更新。
     """
-    hardware: HardwareConfig = Field(default_factory=HardwareConfig)
-    detection: DetectionConfig = Field(default_factory=DetectionConfig)
-    face: FaceConfig = Field(default_factory=FaceConfig)
-    reid: ReIDConfig = Field(default_factory=ReIDConfig)
-    gallery: GalleryConfig = Field(default_factory=GalleryConfig)
-    matching: MatchingConfig = Field(default_factory=MatchingConfig)
-    tracking: TrackingConfig = Field(default_factory=TrackingConfig)
-    multiframe: MultiFrameConfig = Field(default_factory=MultiFrameConfig)
-    vlm: VLMConfig = Field(default_factory=VLMConfig)
-    voice_embed: VoiceEmbedExtractorConfig = Field(default_factory=VoiceEmbedExtractorConfig)
-    redis: RedisSettings = Field(default_factory=RedisSettings)
-    server: ServerConfig = Field(default_factory=ServerConfig)
+    hardware: HardwareConfig = HardwareConfig()
+    detection: DetectionConfig = DetectionConfig()
+    face: FaceConfig = FaceConfig()
+    reid: ReIDConfig = ReIDConfig()
+    gallery: GalleryConfig = GalleryConfig()
+    matching: MatchingConfig = MatchingConfig()
+    tracking: TrackingConfig = TrackingConfig()
+    multiframe: MultiFrameConfig = MultiFrameConfig()
+    vlm: VLMConfig = VLMConfig()
+    voice_embed: VoiceEmbedExtractorConfig = VoiceEmbedExtractorConfig()
+    redis: RedisSettings = RedisSettings()
+    server: ServerConfig = ServerConfig()
+
+    model_config = SettingsConfigDict(
+        yaml_file_encoding='utf-8',
+        env_prefix="APP_"
+    )
+
+    @classmethod
+    def settings_customise_sources(
+            cls,
+            settings_cls: Type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        run_env = os.getenv("APP_ENV", "dev")
+        current_path = os.path.dirname(__file__)
+        path_prefix = f"{current_path}/config_files/"
+        base_yaml = path_prefix + "config.yaml"
+        env_yaml = path_prefix + f"config_{run_env}.yaml"
+
+        # 优先级: 靠前的源更高。env 必须排在 yaml 前, 否则 APP_* 环境变量
+        # 盖不过 yaml 里已写的字段(与 voice_server 口径一致)
+        return (
+            init_settings,
+            env_settings,
+            YamlConfigSettingsSource(settings_cls, yaml_file=[base_yaml, env_yaml], deep_merge=True),
+        )
 
     def to_dict(self) -> dict:
         """序列化为字典 (用于 API 返回)"""
@@ -287,7 +329,7 @@ class Config(BaseModel):
     def update_from_dict(self, updates: dict[str, float | bool]) -> list[str]:
         """
         从扁平化的 key-value 字典更新配置。
-        
+
         支持格式: {"REID_CONFIDENT_THRESHOLD": 0.72, "YOLO_CONFIDENCE": 0.5}
         返回成功更新的 key 列表。
         """
@@ -352,76 +394,4 @@ class Config(BaseModel):
         return mapping
 
 
-def load_config() -> Config:
-    """
-    加载配置并设为全局单例。
-    优先级: 环境变量 > .env 文件 > 默认值
-    """
-    # 从项目根目录加载 .env 文件
-    from dotenv import load_dotenv
-    load_dotenv(PROJECT_ROOT / ".env")
-
-    config = Config()
-
-    # 从环境变量覆盖关键配置
-    if api_key := os.environ.get("VLM_API_KEY"):
-        config.vlm.api_key = api_key
-    if base_url := os.environ.get("VLM_BASE_URL"):
-        config.vlm.base_url = base_url
-    if device := os.environ.get("CUDA_DEVICE"):
-        config.hardware.device = device
-    if db_path := os.environ.get("GALLERY_DB_PATH"):
-        config.server.gallery_db_path = db_path
-
-    # 服务器配置
-    if host := os.environ.get("SERVER_HOST"):
-        config.server.host = host
-    if port := os.environ.get("SERVER_PORT"):
-        config.server.port = int(port)
-
-    # Redis (拉流期望状态持久化; 不配置则该功能停用)
-    if redis_host := os.environ.get("REDIS_HOST"):
-        config.redis.host = redis_host
-    if redis_port := os.environ.get("REDIS_PORT"):
-        config.redis.port = int(redis_port)
-    if redis_password := os.environ.get("REDIS_PASSWORD"):
-        config.redis.password = redis_password
-    if redis_db := os.environ.get("REDIS_DB"):
-        config.redis.db = int(redis_db)
-    # voice_server 在线标记所在的 db 与命名空间 (设备在线检查, pipeline/restream.py)
-    if online_db := os.environ.get("VOICE_ONLINE_REDIS_DB"):
-        config.server.voice_online_redis_db = int(online_db)
-    if live_ns := os.environ.get("VOICE_LIVE_NAMESPACE"):
-        config.server.voice_live_namespace = live_ns
-
-    _set_instance(config)
-    return config
-
-
-# ==============================================================================
-# 全局单例
-# ==============================================================================
-
-_instance: Config | None = None
-
-
-def _set_instance(config: Config) -> None:
-    """设置全局 Config 单例（仅供 load_config 调用）。"""
-    global _instance
-    _instance = config
-
-
-def get_config() -> Config:
-    """获取全局 Config 单例。
-
-    必须先调用 ``load_config()`` 初始化。
-
-    Returns:
-        全局 Config 实例。
-
-    Raises:
-        RuntimeError: 如果 ``load_config()`` 未被调用。
-    """
-    if _instance is None:
-        raise RuntimeError("Config not initialized. Call load_config() first.")
-    return _instance
+config = Config()

@@ -94,9 +94,16 @@ pip uninstall onnxruntime onnxruntime-gpu -y 2>/dev/null || true
 pip install "onnxruntime-gpu>=1.18.0" \
     --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 
+# insightface 必须 --no-deps: 它声明依赖纯 CPU 的 onnxruntime, 会把上面刚装的
+# GPU 版覆盖掉 (CUDA EP 消失, 静默跌回 CPU)。其余依赖在下面的大列表里补齐。
+pip install $PIP_MIRROR --no-deps "insightface>=0.7.3"
+
 pip install $PIP_MIRROR \
     "ultralytics>=8.3.0" \
-    "insightface>=0.7.3" \
+    "onnx>=1.16.0" \
+    "scikit-image>=0.22.0" \
+    "tqdm>=4.66.0" \
+    "requests>=2.31.0" \
     "opencv-python>=4.9.0" \
     "numpy>=1.26.0" \
     "scipy>=1.12.0" \
@@ -157,6 +164,13 @@ try: import insightface; print(f'  insightface:  {insightface.__version__}')
 except Exception as e: print(f'  insightface:  ⚠ {e}')
 try: import torchreid; print(f'  torchreid:    OK')
 except Exception as e: print(f'  torchreid:    ⚠ {e}')
+import onnxruntime as ort
+providers = ort.get_available_providers()
+if 'CUDAExecutionProvider' in providers:
+    print(f'  onnxruntime:  {ort.__version__}  CUDA EP OK')
+else:
+    print(f'  onnxruntime:  ⚠ 无 CUDAExecutionProvider ({providers}) — 纯 CPU 版 onnxruntime 覆盖了 GPU 版?')
+    print('    修复: pip uninstall -y onnxruntime && pip install --force-reinstall --no-deps onnxruntime-gpu')
 "
 
 echo ""

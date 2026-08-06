@@ -13,7 +13,7 @@ import time
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from src.config import get_config
+from src.configs.config import config
 from src.pipeline.data_models import IdentityStatus
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ def should_trigger_tier2(state: TrackState) -> Tier2Action:
 
     前置条件: caller 已保证 RecentBuffer 中有数据
     """
-    config = get_config().multiframe
+    cfg = config.multiframe
     now = time.monotonic()
     status = state.identity_result.status
 
@@ -43,21 +43,21 @@ def should_trigger_tier2(state: TrackState) -> Tier2Action:
     # DEFINITE: 唯一终态, 仅做后台富化
     if status == IdentityStatus.DEFINITE:
         elapsed = now - state.last_tier2_time
-        scale = 1.0 if state.is_current_target else config.non_attention_factor
-        if elapsed >= config.definite_enrich_interval * scale:
+        scale = 1.0 if state.is_current_target else cfg.non_attention_factor
+        if elapsed >= cfg.definite_enrich_interval * scale:
             return Tier2Action.TRIGGER_ENRICH
         return Tier2Action.SKIP
 
     # 计算基准间隔
     if status in (IdentityStatus.IDENTIFYING, IdentityStatus.SUSPECTED,
                   IdentityStatus.CONFLICT):
-        base_interval = config.tier2_fast_interval  # 1s
+        base_interval = cfg.tier2_fast_interval  # 1s
     else:
         # CONFIDENT, STRANGER
-        base_interval = config.tier2_slow_interval  # 5s
+        base_interval = cfg.tier2_slow_interval  # 5s
 
     # 非注意力目标: 间隔 × 2
-    scale = 1.0 if state.is_current_target else config.non_attention_factor
+    scale = 1.0 if state.is_current_target else cfg.non_attention_factor
     interval = base_interval * scale
 
     elapsed = now - state.last_tier2_time
@@ -75,14 +75,14 @@ def should_trigger_vlm(state: TrackState) -> bool:
     2. 当前状态为 SUSPECTED 或 CONFLICT
     3. VLM 冷却期已过
     """
-    if not get_config().vlm.enabled:
+    if not config.vlm.enabled:
         return False
 
     if state.identity_result.status not in (IdentityStatus.SUSPECTED, IdentityStatus.CONFLICT):
         return False
 
-    config = get_config().multiframe
+    cfg = config.multiframe
     now = time.monotonic()
-    scale = 1.0 if state.is_current_target else config.non_attention_factor
+    scale = 1.0 if state.is_current_target else cfg.non_attention_factor
     elapsed = now - state.last_vlm_time
-    return elapsed >= config.vlm_cooldown * scale
+    return elapsed >= cfg.vlm_cooldown * scale

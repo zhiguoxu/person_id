@@ -13,7 +13,7 @@ consumer_registry 是纯内存状态: person_id 进程重启(部署/崩溃)后�
 
 存 Redis 而非本地文件: data/ 目录只给 sqlite 用; Redis 是项目统一的运行态
 存储(voice_server 同款实例), 换机部署/多实例时状态也不落在单机磁盘上。
-连接参数在 config.redis(.env 注入), 未配置时本模块全部空操作(记警告),
+连接参数在 config.redis(configs/config_files 的 yaml 配置), 未配置时本模块全部空操作(记警告),
 Redis 故障也只影响"下次重启的恢复", 不阻断本次启停操作。
 
 恢复时严格校验: url/env/auto_restream 缺失或非法(如 env 不是 test|prod)的
@@ -44,7 +44,7 @@ _VALID_ENVS = ("test", "prod")
 
 _state_redis = LazyRedis(
     db_of=lambda cfg: cfg.redis.db,
-    unconfigured_hint="Redis 未配置(REDIS_HOST 为空), 拉流期望状态不持久化, "
+    unconfigured_hint="Redis 未配置(redis.host 为空), 拉流期望状态不持久化, "
                       "服务重启后不会自动恢复拉流")
 
 

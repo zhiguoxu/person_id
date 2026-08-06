@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 from loguru import logger
 
-from src.config import get_config, MODELS_DIR
+from src.configs.config import config, MODELS_DIR
 
 
 class FaceExtractor:
@@ -34,14 +34,14 @@ class FaceExtractor:
 
     def __init__(self) -> None:
         """初始化人脸嵌入提取器。"""
-        config = get_config().face
-        self._backend = config.recognition_backend
+        face_cfg = config.face
+        self._backend = face_cfg.recognition_backend
 
         # 选择模型文件
         if self._backend == "arcface":
-            model_file = config.arcface_model
+            model_file = face_cfg.arcface_model
         elif self._backend == "adaface":
-            model_file = config.adaface_model
+            model_file = face_cfg.adaface_model
         else:
             raise ValueError(
                 f"Unknown recognition_backend: '{self._backend}'. "
@@ -58,7 +58,7 @@ class FaceExtractor:
         try:
             import onnxruntime as ort
 
-            ctx_id = get_config().hardware.insightface_ctx_id
+            ctx_id = config.hardware.insightface_ctx_id
             providers = self._get_providers(ctx_id)
 
             self._session = ort.InferenceSession(

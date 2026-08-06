@@ -35,7 +35,7 @@ from src.api.schemas import (
     build_frame_result,
     build_ws_event,
 )
-from src.config import get_config
+from src.configs.config import config
 from src.pipeline.orchestrator import VisionOrchestrator
 
 
@@ -169,7 +169,7 @@ class StreamConsumer:
     # ------------------------------------------------------------------
 
     def _reader_loop(self) -> None:
-        reconnect_delay = get_config().server.stream_reconnect_delay
+        reconnect_delay = config.server.stream_reconnect_delay
 
         while not self._stop_event.is_set():
             cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
@@ -228,7 +228,7 @@ class StreamConsumer:
         self._consecutive_pull_failures += 1
         if not self.auto_restream or self._recovering:
             return
-        threshold = get_config().server.stream_restream_fail_threshold
+        threshold = config.server.stream_restream_fail_threshold
         if self._consecutive_pull_failures < threshold:
             return
         loop = self._loop
@@ -289,7 +289,7 @@ class StreamConsumer:
         last_done = time.perf_counter()
 
         while not self._stop_event.is_set():
-            cfg = get_config().server
+            cfg = config.server
             min_interval = 1.0 / max(cfg.stream_max_fps, 1.0)
 
             with self._frame_lock:

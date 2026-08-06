@@ -17,7 +17,7 @@ import numpy as np
 from insightface.utils import face_align
 from loguru import logger
 
-from src.config import get_config
+from src.configs.config import config
 
 
 class FaceDetectorLight:
@@ -39,9 +39,8 @@ class FaceDetectorLight:
                 "Run: bash download_models.sh"
             )
 
-        config = get_config().face
-        hw_config = get_config().hardware
-        ctx_id = hw_config.insightface_ctx_id
+        face_cfg = config.face
+        ctx_id = config.hardware.insightface_ctx_id
         providers = (
             [("CUDAExecutionProvider", {"device_id": ctx_id}), "CPUExecutionProvider"]
             if ctx_id >= 0
@@ -51,8 +50,8 @@ class FaceDetectorLight:
         self._detector = insightface.model_zoo.get_model(
             str(model_path), providers=providers,
         )
-        self._detector.prepare(ctx_id=ctx_id, input_size=config.det_size)
-        logger.info("FaceDetectorLight 已加载: model=det_10g (SCRFD_10G), ctx_id={}, det_size={}", ctx_id, config.det_size)
+        self._detector.prepare(ctx_id=ctx_id, input_size=face_cfg.det_size)
+        logger.info("FaceDetectorLight 已加载: model=det_10g (SCRFD_10G), ctx_id={}, det_size={}", ctx_id, face_cfg.det_size)
 
     def detect(self, crop: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
         """检测最大人脸。

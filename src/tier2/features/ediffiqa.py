@@ -24,7 +24,7 @@ import numpy as np
 import onnxruntime as ort
 from loguru import logger
 
-from src.config import get_config, MODELS_DIR
+from src.configs.config import config, MODELS_DIR
 
 # 变体名 → ONNX 文件名映射
 _VARIANT_TO_FILE = {
@@ -68,7 +68,7 @@ class EDifFIQA:
                 f"  Small/Med/L: https://github.com/yakhyo/face-image-quality-assessment/releases"
             )
 
-        ctx_id = get_config().hardware.insightface_ctx_id
+        ctx_id = config.hardware.insightface_ctx_id
         providers = (
             [("CUDAExecutionProvider", {"device_id": ctx_id}), "CPUExecutionProvider"]
             if ctx_id >= 0
@@ -122,7 +122,7 @@ def get_ediffiqa() -> EDifFIQA:
 
     变体由 config.face.ediffiqa_variant 决定。
     """
-    variant = get_config().face.ediffiqa_variant
+    variant = config.face.ediffiqa_variant
     return EDifFIQA(variant=variant)
 
 
@@ -133,5 +133,5 @@ def get_ediffiqa_enroll() -> EDifFIQA:
     变体由 config.gallery.ediffiqa_enroll_variant 决定, 默认 large。
     如果与 Tier1 变体相同, 返回的是不同实例但加载相同模型。
     """
-    variant = get_config().gallery.ediffiqa_enroll_variant
+    variant = config.gallery.ediffiqa_enroll_variant
     return EDifFIQA(variant=variant)

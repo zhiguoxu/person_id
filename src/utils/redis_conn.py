@@ -4,7 +4,7 @@
 config.redis.db, voice_server 在线标记在其主库), 但"未配置即降级 +
 懒建 + 统一连接参数"的行为是一致的, 收敛在这里:
 
-- host 未配置(REDIS_HOST 为空)时 get() 返回 None 并只警告一次,
+- host 未配置(redis.host 为空)时 get() 返回 None 并只警告一次,
   由调用方按各自语义降级, 不阻断业务
 - 连接参数(protocol=2 兼容老版本服务端、超时口径)与
   voice_agent_common 保持一致, 只在这一处维护
@@ -16,7 +16,7 @@ from typing import Callable
 import redis.asyncio as redis
 from loguru import logger
 
-from src.config import Config, get_config
+from src.configs.config import Config, config
 
 
 class LazyRedis:
@@ -35,7 +35,7 @@ class LazyRedis:
 
     def get(self) -> redis.Redis | None:
         """取连接; 未配置(host 为空)返回 None 并只警告一次。"""
-        cfg = get_config()
+        cfg = config
         if not cfg.redis.host:
             if not self._warned_unconfigured:
                 self._warned_unconfigured = True

@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 import httpx
 from loguru import logger
 
-from src.config import get_config
+from src.configs.config import config
 
 ISSEnv = Literal["test", "prod"]
 
@@ -62,7 +62,7 @@ def _fail_detail(prefix: str, resp: httpx.Response) -> str:
 
 async def _iss_post(action: str, camera_id: str, env: ISSEnv) -> httpx.Response | ISSCallResult:
     """调用 ISS 接口; 网络层失败时直接返回带可读 error 的 ISSCallResult。"""
-    cfg = get_config().server
+    cfg = config.server
     base = cfg.iss_api_url(env).rstrip("/")
     headers = {"device-sn": camera_id}
 
