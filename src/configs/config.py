@@ -183,7 +183,10 @@ class VLMConfig(BaseModel):
     """VLM 仲裁配置"""
     enabled: bool = False  # 是否启用 Tier3 VLM 仲裁
     model: str = "qwen-vl-max"
-    api_key: str = ""
+    # 必填、无代码默认 (与 voice_server 口径一致): 密钥只放环境 yaml
+    # (config_{APP_ENV}.yaml), 不进代码、不进基底 config.yaml。
+    # 不启用 VLM 的环境也须显式写 api_key: "" (fail-fast, 缺配置起不来)
+    api_key: str
     base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     timeout_sec: float = 30.0
     max_retries: int = 2
@@ -211,11 +214,12 @@ class VoiceEmbedExtractorConfig(BaseModel):
 class RedisSettings(BaseModel):
     """Redis 连接 (拉流期望状态持久化用, 见 pipeline/stream_state.py)。
 
-    host 为空 = 未配置: 拉流期望状态不持久化, 重启后不恢复拉流
-    (只记警告, 不影响其他功能)。连接参数在 config_files 的 yaml 中
-    配置 (redis.host / redis.port / redis.password / redis.db)。
+    host 必填、无代码默认 (与 voice_server 口径一致): 连接参数只放环境 yaml
+    (config_{APP_ENV}.yaml), 不进代码、不进基底 config.yaml, 缺配置起不来。
+    不启用的环境显式写 host: "": 拉流期望状态不持久化, 重启后不恢复拉流
+    (只记警告, 不影响其他功能)。
     """
-    host: str = ""
+    host: str
     port: int = 6379
     password: str = ""
     db: int = 0
@@ -289,9 +293,11 @@ class Config(BaseSettings):
     matching: MatchingConfig = MatchingConfig()
     tracking: TrackingConfig = TrackingConfig()
     multiframe: MultiFrameConfig = MultiFrameConfig()
-    vlm: VLMConfig = VLMConfig()
+    # vlm/redis 为必填块 (无代码默认): 含密钥/连接地址, 只在环境 yaml 里配置,
+    # 缺失则启动直接失败 (fail-fast); 不启用的环境显式写空值 (见各类 docstring)
+    vlm: VLMConfig
     voice_embed: VoiceEmbedExtractorConfig = VoiceEmbedExtractorConfig()
-    redis: RedisSettings = RedisSettings()
+    redis: RedisSettings
     server: ServerConfig = ServerConfig()
 
     model_config = SettingsConfigDict(

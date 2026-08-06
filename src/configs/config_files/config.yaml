@@ -29,12 +29,8 @@ matching:
   body_gate_q0: 0.5          # 人体质量翻转点
   body_gate_k: 10.0          # 人体质量门控斜率
 
-# VLM 仲裁 (Tier3): 基底安全禁用, 启用的环境在自己的 yaml 里覆盖并配 api_key
-vlm:
-  enabled: false
-  api_key: ""
-
-# Redis (拉流期望状态持久化 + 设备在线检查): host 为空 = 未配置,
-# 相关功能降级为空操作(只记警告)。启用的环境在自己的 yaml 里覆盖。
-redis:
-  host: ""
+# ── 必填块 (不在本基底文件): vlm / redis ──
+# 密钥与连接地址只放各环境的 config_{APP_ENV}.yaml, 代码亦无默认值,
+# 环境 yaml 缺这两块服务直接起不来 (fail-fast, 与 voice_server 口径一致)。
+#   vlm:   api_key 必填; 不启用 VLM 的环境显式写 api_key: ""
+#   redis: host 必填; 不启用的环境显式写 host: "" (拉流状态持久化降级为空操作)
