@@ -25,7 +25,10 @@ redis:
   host: 172.17.16.82
   port: 6379
   password: joyinai_2025
-  db: 0
+  db: 1
+  socket_connect_timeout: 5
+  socket_timeout: 5
+  max_connections: 20
 
 server:
   # voice_server 在线标记所在 db 与命名空间, 须与 voice_server 的

@@ -34,3 +34,8 @@ matching:
 # 环境 yaml 缺这两块服务直接起不来 (fail-fast, 与 voice_server 口径一致)。
 #   vlm:   api_key 必填; 不启用 VLM 的环境显式写 api_key: ""
 #   redis: host 必填; 不启用的环境显式写 host: "" (拉流状态持久化降级为空操作)
+
+log_stream:
+  stream_key: "voice_agent:logs:stream"
+  db: 1
+  maxlen: 100000

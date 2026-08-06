@@ -14,7 +14,7 @@ try:
 except ImportError:
     # Legacy boxmot (<v18) exported BoTSORT from root
     from boxmot import BoTSORT as BotSort  # type: ignore[import-untyped]
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
 from src.pipeline.data_models import (

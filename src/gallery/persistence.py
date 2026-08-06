@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from functools import cache
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
 from sqlmodel import SQLModel, select
 

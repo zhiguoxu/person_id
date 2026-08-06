@@ -9,6 +9,7 @@ FastAPI 应用入口 — 服务器初始化与生命周期管理
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -16,19 +17,27 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from loguru import logger
+
+from src.configs.config import config
+from voice_agent_common.utils.logger import LogManager, intercept_standard_loggers
+
+# 日志与 voice/agent 统一走公共链路 (voice_agent_common.utils.logger):
+# 打补丁 logger 给每条日志注入 {extra[device_sn]}/{extra[trace_id]} 列
+# (person_id 的 device_sn = camera_id, 由 WS/REST/拉流入口写入 ContextVar)。
+# 文件日志用本服务独享目录 (共写同一 server.log 会因 rotation 互删, 见 logger.py)
+logger = LogManager.setup(log_dir="logs/person", level=config.server.log_level)
+intercept_standard_loggers(config.server.log_level)
+
+# 在导入期就标记日志来源，使 bind_loop 之前（启动早期）的日志也带上正确 source。
+from voice_agent_common.utils.log_stream import log_broadcaster, make_stream_forwarder
+
+log_broadcaster.set_source("person")
 
 from src import deps
 from src.api.registry import camera_registry
 from src.api.routes import router as api_router
 from src.api.websocket import handle_ws_connection
-from src.configs.config import config
 from src.configs.override import config_override_manager
-from src.utils.log_setup import setup_logging
-
-# configs.override 的 import 链会触发 voice_agent_common 的公共日志 sink
-# (格式依赖 person_id 没有的 extra 字段), 必须在 import 完成后重建自己的 sink
-setup_logging(config.server.log_level)
 
 
 # ==============================================================================
@@ -39,6 +48,8 @@ setup_logging(config.server.log_level)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期。"""
     # --- startup ---
+    log_broadcaster.bind_loop(asyncio.get_running_loop())
+
     from voice_agent_common.utils.clock import now_cst
     deps.started_at = now_cst()
 
@@ -46,6 +57,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from voice_agent_common.utils.config_dump import format_config_for_log
     logger.info("👁️ person_id 启动，版本 v{}（common v{}）",
                 config.version, _common.__version__)
+
+    # 本进程日志 XADD 到 Redis Stream, 由 console_server 统一消费入库/推前端
+    # (与 voice/agent 同一条聚合流)。日志走独立连接(独立 db); set_forwarder 会
+    # 补发 forwarder 就绪之前的启动期日志
+    from voice_agent_common.infra.redis_client import RedisClient
+    deps.log_redis_client = RedisClient(
+        config.redis.model_copy(update={"db": config.log_stream.db}))
+    await deps.log_redis_client.connect()
+    log_broadcaster.set_forwarder(make_stream_forwarder(
+        deps.log_redis_client, config.log_stream.stream_key, config.log_stream.maxlen))
 
     # 把 web 控制台在线改过的配置(DB 覆盖层)套到内存配置单例上。
     # 需在底库初始化/模型预热/拉流恢复等后续组件消费 config 之前执行。
@@ -112,10 +133,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await get_gallery_persistence().close()
 
-    # 配置覆盖层的 DB 引擎 (session_store, 启动时 init_db 创建) 最后关
+    # 配置覆盖层的 DB 引擎 (session_store, 启动时 init_db 创建)
     from session_store.database import close_db
     await close_db()
     logger.info("应用关闭完成")
+
+    # 日志连接最后关: 之前的关闭日志还要经它转发到聚合 Stream
+    await deps.log_redis_client.disconnect()
 
 
 # ==============================================================================
@@ -189,8 +213,6 @@ def create_app() -> FastAPI:
 
 def main() -> None:
     """直接运行时的入口点。在远程 CUDA 服务器上运行。"""
-    import asyncio
-
     logger.info(
         "服务器启动于 {}:{}",
         config.server.host, config.server.port,
@@ -205,6 +227,9 @@ def main() -> None:
         app,
         host=config.server.host,
         port=config.server.port,
+        # uvicorn 自带 logging 配置不装 (置 None): 生命周期日志经
+        # intercept_standard_loggers 进 loguru → 文件/聚合流, 避免双份输出
+        log_config=None,
         log_level=config.server.log_level.lower(),
         ws_max_size=config.server.ws_max_frame_size,
         # current_identity 在对话首字延迟的关键路径上, 闲置连接保得久一点,

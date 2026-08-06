@@ -19,7 +19,7 @@ import os
 
 import torch
 import torch.nn as nn
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from .swin_transformer import (
     swin_tiny_patch4_window7_224,

@@ -23,6 +23,9 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from voice_agent_common.config_models.log_stream_config import LogStreamConfig
+from voice_agent_common.config_models.redis_config import RedisConfig
+
 # ==============================================================================
 # 项目路径
 # ==============================================================================
@@ -210,22 +213,6 @@ class VoiceEmbedExtractorConfig(BaseModel):
     seg_hop_sec: float = 1.5
 
 
-class RedisSettings(BaseModel):
-    """Redis 连接 (拉流期望状态持久化用, 见 pipeline/stream_state.py)。
-
-    host 必填、无代码默认 (与 voice_server 口径一致): 连接参数只放环境 yaml
-    (config_{APP_ENV}.yaml), 不进代码、不进基底 config.yaml, 缺配置起不来。
-    不启用的环境显式写 host: "": 拉流期望状态不持久化, 重启后不恢复拉流
-    (只记警告, 不影响其他功能)。
-    """
-    host: str
-    port: int = 6379
-    password: str = ""
-    db: int = 0
-    socket_connect_timeout: int = 5
-    socket_timeout: int = 5
-
-
 class ServerConfig(BaseModel):
     """服务配置"""
     host: str = "0.0.0.0"
@@ -302,7 +289,14 @@ class Config(BaseSettings):
     # 缺失则启动直接失败 (fail-fast); 不启用的环境显式写空值 (见各类 docstring)
     vlm: VLMConfig
     voice_embed: VoiceEmbedExtractorConfig = VoiceEmbedExtractorConfig()
-    redis: RedisSettings
+    # Redis 连接 (拉流期望状态持久化 + 日志聚合 Stream, 共用连接参数)。
+    # 复用 common 的 RedisConfig(全字段必填、无代码默认, 与 voice/agent 同款):
+    # 连接参数只放环境 yaml, 缺配置起不来; 日志聚合转发无条件建连, 连不上
+    # 启动即失败——与 voice/agent 口径一致
+    redis: RedisConfig
+    # 日志聚合 Stream(独立连接/独立 db): 本进程日志 XADD 到 Redis Stream,
+    # 由 console_server 统一消费入库, 配置须与 voice/agent/console 一致
+    log_stream: LogStreamConfig = LogStreamConfig()
     server: ServerConfig = ServerConfig()
 
     model_config = SettingsConfigDict(

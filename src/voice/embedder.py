@@ -16,7 +16,7 @@ import time
 from functools import cache
 
 import numpy as np
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
 

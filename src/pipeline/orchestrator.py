@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 import cv2
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.configs.config import config

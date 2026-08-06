@@ -16,7 +16,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 import httpx
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
 

@@ -11,7 +11,7 @@ YOLO11 Pose 检测器封装
 from __future__ import annotations
 
 import numpy as np
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.pipeline.data_models import Detection
 from src.tier1.detection.pose_classifier import classify_pose, has_visible_face

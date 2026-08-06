@@ -16,7 +16,7 @@ Tier1 SCRFD 已完成人脸检测 + 对齐 (aligned_face 112×112),
 from __future__ import annotations
 
 import numpy as np
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config, MODELS_DIR
 

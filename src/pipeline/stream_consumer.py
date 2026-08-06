@@ -27,7 +27,8 @@ import time
 
 import cv2
 import numpy as np
-from loguru import logger
+from voice_agent_common.utils.context import set_device_sn
+from voice_agent_common.utils.logger import logger
 
 from src.api.iss_client import ISSEnv
 from src.api.schemas import (
@@ -169,6 +170,8 @@ class StreamConsumer:
     # ------------------------------------------------------------------
 
     def _reader_loop(self) -> None:
+        # 独立线程有自己的 context: 补写 device_sn(= camera_id), 日志才带该列
+        set_device_sn(self.camera_id)
         reconnect_delay = config.server.stream_reconnect_delay
 
         while not self._stop_event.is_set():
@@ -242,6 +245,9 @@ class StreamConsumer:
         """(事件循环) 执行自动重推流恢复并按结果切换拉流地址。"""
         from src.pipeline.restream import run_restream_recovery
 
+        # 经 run_coroutine_threadsafe 从读流线程调度而来, 不继承其 context
+        set_device_sn(self.camera_id)
+
         try:
             if not self.running:
                 return
@@ -285,6 +291,8 @@ class StreamConsumer:
     async def _process_loop(self) -> None:
         from src.api.registry import publish_to_viewers
 
+        # 后台常驻任务: 显式绑定 device_sn, 不依赖创建方(REST 请求/启动恢复)的 context
+        set_device_sn(self.camera_id)
         last_seq = 0
         last_done = time.perf_counter()
 

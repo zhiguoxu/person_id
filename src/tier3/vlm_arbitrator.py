@@ -15,7 +15,7 @@ import json
 import re
 
 import openai
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 from pydantic import BaseModel, Field
 
 from src.configs.config import config

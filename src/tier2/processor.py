@@ -11,7 +11,7 @@ Tier 2 流水线 — 深度身份识别（异步）
 """
 from __future__ import annotations
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.gallery.data_models import PersonProfile
 from src.pipeline.data_models import (

@@ -21,7 +21,7 @@ from typing import AsyncIterator
 import cv2
 import numpy as np
 from fastapi import WebSocket
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.api import registry
 from src.api.schemas import (
@@ -45,6 +45,10 @@ async def handle_ws_connection(
         websocket: FastAPI WebSocket 连接。
         camera_id: 摄像头标识。
     """
+    # camera_id 即设备 device-sn: 本连接(含期间创建的子任务)的日志自动带该列
+    from voice_agent_common.utils.context import set_device_sn
+    set_device_sn(camera_id)
+
     await websocket.accept()
 
     # 初始化涉及 GPU 模型加载，失败时用 1011 干净关闭，

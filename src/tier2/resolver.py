@@ -10,7 +10,7 @@ Ambiguity Resolver (Tier 2) — ReID 阶段歧义消解
 """
 from __future__ import annotations
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
 from src.pipeline.data_models import IdentityStatus, MatchResult

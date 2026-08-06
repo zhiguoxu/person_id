@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 from pydantic import ValidationError
 
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream

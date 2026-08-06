@@ -7,10 +7,7 @@ Tier2 批量质量评估与增量特征提取
 """
 from __future__ import annotations
 
-
-import numpy as np
-from loguru import logger
-
+from voice_agent_common.utils.logger import logger
 
 from src.pipeline.frame_buffer import CachedFrame, QualityCache
 from src.pipeline.data_models import TrackedPerson
@@ -49,7 +46,6 @@ class BatchExtractor:
                 face_cf = CachedFrame(entry=entry)
                 face_cf.quality = entry.face_quality
                 quality_cache.try_add_face(face_cf)
-
 
     @staticmethod
     def extract_new_embeddings(cache: QualityCache) -> int:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.pipeline.orchestrator import VisionOrchestrator
 

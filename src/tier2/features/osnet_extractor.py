@@ -12,7 +12,7 @@ import glob
 import cv2
 import numpy as np
 import torch
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 
 class OSNetExtractor:

@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 import uuid
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 from enum import Enum
 import numpy as np
 

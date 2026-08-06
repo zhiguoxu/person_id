@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.gallery.data_models import PersonProfile

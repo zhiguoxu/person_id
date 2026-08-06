@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Callable
 
 import redis.asyncio as redis
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import Config, config
 

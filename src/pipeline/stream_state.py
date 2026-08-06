@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import time
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.utils.redis_conn import LazyRedis
 

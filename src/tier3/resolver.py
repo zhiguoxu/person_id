@@ -7,7 +7,7 @@ VLM 直接输出离散等级 (DEFINITE/CONFIDENT/SUSPECTED/STRANGER),
 """
 from __future__ import annotations
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.pipeline.data_models import IdentityStatus, MatchResult
 from src.tier3.vlm_arbitrator import VLMResponse

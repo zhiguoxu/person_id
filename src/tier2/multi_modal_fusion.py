@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
 from src.pipeline.data_models import MatchCandidate

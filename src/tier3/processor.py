@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.tier3 import resolver, get_vlm_arbitrator
 

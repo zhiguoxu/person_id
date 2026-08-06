@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import base64
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile, File
-from loguru import logger
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
+from voice_agent_common.utils.context import set_device_sn
+from voice_agent_common.utils.logger import logger
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream
 from src.api.registry import get_camera_orchestrator, get_stream_consumer
 from src.configs.config import config
@@ -56,7 +57,16 @@ from src.pipeline.quality_utils import compute_quality_hint, compute_sharpness
 import cv2
 import numpy as np
 
-router = APIRouter(prefix="/api", tags=["api"])
+async def _bind_camera_context(request: Request) -> None:
+    """camera_id 即设备 device-sn: 写入 ContextVar 后, 本请求链路上的日志
+    自动带上 device_sn 列(公共日志格式, 见 voice_agent_common.utils.logger)。"""
+    camera_id = request.path_params.get("camera_id")
+    if camera_id:
+        set_device_sn(camera_id)
+
+
+router = APIRouter(prefix="/api", tags=["api"],
+                   dependencies=[Depends(_bind_camera_context)])
 
 
 # ==============================================================================

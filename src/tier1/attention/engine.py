@@ -13,7 +13,7 @@ from __future__ import annotations
 
 
 import numpy as np
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.gallery.data_models import PoseBucket
 from src.pipeline.data_models import TrackedPerson, Detection

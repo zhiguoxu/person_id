@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.gallery.data_models import PoseBucket
 from src.tier1.attention import AttentionEngine

@@ -13,7 +13,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 import torch
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
 

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 from insightface.utils import face_align
-from loguru import logger
+from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
 
