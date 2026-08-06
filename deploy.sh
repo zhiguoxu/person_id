@@ -97,8 +97,7 @@ printf "  ${CYAN}═════════════════════
 printf "  ${CYAN}  Backend API: http://0.0.0.0:10003${NC}\n"
 printf "  ${CYAN}  WebSocket:   ws://1.15.11.133:10003/ws/vision${NC}\n"
 printf "  ${CYAN}${NC}\n"
-printf "  ${CYAN}  Frontend: 在本地浏览器打开 frontend/index.html${NC}\n"
-printf "  ${CYAN}  (摄像头在本地采集, JPEG 帧通过 WebSocket 发到此服务器处理)${NC}\n"
+printf "  ${CYAN}  Frontend: web 控制台「视觉识别」页 (web/src/vision, 经 /vision 代理访问)${NC}\n"
 printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
 echo ""
 echo "  Press Ctrl+C to stop"
@@ -108,5 +107,9 @@ echo ""
 CONDA_LIB="${CONDA_PREFIX:-$CONDA_BASE/envs/$CONDA_ENV}/lib"
 export LD_LIBRARY_PATH="$CONDA_LIB:${LD_LIBRARY_PATH:-}"
 
-export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
+# voice_agent_common + session_store 以 PYTHONPATH 源码副本方式引入
+# (配置在线编辑等共享逻辑及其 DB 存储): 远端部署时 deploy_mac.sh 把
+# packages/{common,session_store} 同步进本目录; 从工程仓库直跑时它们在
+# 上级 packages/ 下, 两组路径都挂上, 不存在的目录 Python 会自动忽略。
+export PYTHONPATH="$SCRIPT_DIR/packages/common:$SCRIPT_DIR/packages/session_store:$SCRIPT_DIR/../packages/common:$SCRIPT_DIR/../packages/session_store:$SCRIPT_DIR:$PYTHONPATH"
 exec $PYTHON -m src.api.server

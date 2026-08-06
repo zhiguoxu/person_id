@@ -3,6 +3,11 @@
 # 深合并在 config.yaml 之上; APP_ 前缀环境变量优先级更高。
 # ==============================================================================
 
+# 配置在线编辑(DB 覆盖层)的存储, 与 voice/agent 同款 session_store 表结构。
+# 相对路径 = 相对服务启动目录(项目根)。切共享 MySQL 时只改这一行:
+#   db_url: "mysql+aiomysql://user:pass@host:3306/dbname"
+db_url: "sqlite+aiosqlite:///./data/person_id_store.db"
+
 # GPU 服务机只有 2 张卡 (H20 ×2), 代码默认的 cuda:2 是训练机口径, 在此无效;
 # GPU0 已被其他服务占约 60G, 用 GPU1。必须写在 yaml 里: config.py 不读 .env,
 # 远端手改 config.py 会被部署覆盖 (2026-08-05 曾因此全线 invalid device ordinal)

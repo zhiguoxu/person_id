@@ -29,7 +29,6 @@ from pydantic_settings import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
 DATA_DIR = PROJECT_ROOT / "data"
-FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 
 class HardwareConfig(BaseModel):
@@ -285,6 +284,12 @@ class Config(BaseSettings):
     yaml(基底 + 环境覆盖) + APP_ 前缀环境变量。
     阈值参数支持通过 WebSocket 实时更新。
     """
+    # 服务版本号 (web 控制台「系统配置」页展示; 在线编辑锁定, 见 editable_fields)
+    version: str = "0.2.0"
+    # 配置在线编辑(DB 覆盖层)的存储, 与 voice/agent 同款 session_store 表结构。
+    # 必填、无代码默认 (与 voice_server 口径一致), 只放环境 yaml: dev 先落本地
+    # SQLite, 切共享 MySQL 时改成 mysql+aiomysql://... 即可, 代码零改动
+    db_url: str
     hardware: HardwareConfig = HardwareConfig()
     detection: DetectionConfig = DetectionConfig()
     face: FaceConfig = FaceConfig()

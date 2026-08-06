@@ -35,9 +35,11 @@ bash deploy.sh
 
 ### 2. 打开前端
 
-直接用浏览器打开 `frontend/index.html` 即可。摄像头在本地采集，帧通过 WebSocket 发送到服务器处理。
+前端统一在 web 控制台的「视觉识别」页（`web/src/vision`，React 版），经 `/vision` 前缀代理访问本服务
+（代理规则见 `web/vite.config.ts` 与 `web_dist/nginx.conf`）。摄像头可在浏览器本地采集经 WebSocket
+上传，也可走服务端拉流（推荐，见下）。
 
-> 后端地址配置在 `frontend/js/config.js`。如果在本地运行，会自动连接 `localhost:10003`；如果连接远程服务器，可修改对应的 IP 地址。
+> 旧的自带静态前端（`frontend/index.html`）已于 2026-08-06 下线，备份在 `frontend_backup_20260806.tar.gz`。
 
 ### 3. 视频来源的三种模式
 
@@ -91,10 +93,7 @@ person_id/
 │   ├── perception/         # 主动感知建议
 │   ├── pipeline/           # Tier 1/2 流水线
 │   └── api/                # FastAPI + WebSocket
-├── frontend/               # 前端可视化
-│   ├── index.html
-│   ├── css/style.css
-│   └── js/                 # 模块化 JS (视频采集/Canvas叠加层/通信)
+├── frontend_backup_20260806.tar.gz  # 旧静态前端备份 (已下线, 现用 web/src/vision)
 ├── deploy.sh               # 运行启动脚本
 ├── install.sh              # 依赖安装脚本
 └── tests/                  # 测试

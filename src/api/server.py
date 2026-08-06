@@ -10,20 +10,25 @@ FastAPI 应用入口 — 服务器初始化与生命周期管理
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from src import deps
 from src.api.registry import camera_registry
 from src.api.routes import router as api_router
 from src.api.websocket import handle_ws_connection
-from src.configs.config import FRONTEND_DIR, config
+from src.configs.config import config
+from src.configs.override import config_override_manager
+from src.utils.log_setup import setup_logging
+
+# configs.override 的 import 链会触发 voice_agent_common 的公共日志 sink
+# (格式依赖 person_id 没有的 extra 字段), 必须在 import 完成后重建自己的 sink
+setup_logging(config.server.log_level)
 
 
 # ==============================================================================
@@ -34,6 +39,23 @@ from src.configs.config import FRONTEND_DIR, config
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期。"""
     # --- startup ---
+    from voice_agent_common.utils.clock import now_cst
+    deps.started_at = now_cst()
+
+    import voice_agent_common as _common
+    from voice_agent_common.utils.config_dump import format_config_for_log
+    logger.info("👁️ person_id 启动，版本 v{}（common v{}）",
+                config.version, _common.__version__)
+
+    # 把 web 控制台在线改过的配置(DB 覆盖层)套到内存配置单例上。
+    # 需在底库初始化/模型预热/拉流恢复等后续组件消费 config 之前执行。
+    # 存储与 voice/agent 同款 session_store, 连接由 config.db_url 决定
+    from session_store.database import init_db
+    await init_db(config.db_url)
+    await config_override_manager.load_and_apply()
+    # 配置转储放在覆盖套用之后, 日志里看到的才是真正生效的值
+    logger.info("person_id 配置:\n{}", format_config_for_log(config))
+
     from src.gallery.persistence import get_gallery_persistence
 
     persistence = get_gallery_persistence()
@@ -89,6 +111,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await restream.close()
 
     await get_gallery_persistence().close()
+
+    # 配置覆盖层的 DB 引擎 (session_store, 启动时 init_db 创建) 最后关
+    from session_store.database import close_db
+    await close_db()
     logger.info("应用关闭完成")
 
 
@@ -101,7 +127,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Person ID — Robot Vision System",
         description="实时多摄像头人物识别与追踪系统 API",
-        version="0.2.0",
+        version=config.version,
         lifespan=lifespan,
     )
 
@@ -134,6 +160,16 @@ def create_app() -> FastAPI:
     from src.api.voice import router as voice_router
     app.include_router(voice_router)
 
+    # 全量脱敏配置 dump: GET /api/config (控制台「系统配置」页展示)
+    from src.api.config_api import config_router
+    app.include_router(config_router)
+
+    # 配置在线编辑端点: GET/PUT/DELETE /api/config/editable[/{key_path}]
+    # (web 控制台经 /vision 代理以 /vision/api/config/editable 访问, 编辑需口令)
+    from voice_agent_common.config_override_api import build_config_override_router
+    app.include_router(build_config_override_router(
+        config_override_manager, prefix="/api/config"))
+
     # --- WebSocket endpoint ---
     @app.websocket("/ws/vision")
     async def ws_vision(
@@ -146,20 +182,8 @@ def create_app() -> FastAPI:
         """
         await handle_ws_connection(websocket, camera_id)
 
-    # --- Static files (frontend) ---
-    frontend_path = Path(FRONTEND_DIR)
-    if frontend_path.exists() and frontend_path.is_dir():
-        app.mount(
-            "/",
-            StaticFiles(directory=str(frontend_path), html=True),
-            name="frontend",
-        )
-        logger.info("已从 {} 挂载前端", frontend_path)
-    else:
-        logger.warning(
-            "未找到前端目录: {}", frontend_path
-        )
-
+    # 前端统一在 web 控制台的 vision 页 (web/src/vision, 经 /vision 代理访问本服务);
+    # 旧的自带静态前端已下线 (备份见 frontend_backup_20260806.tar.gz), 不再挂载静态目录
     return app
 
 

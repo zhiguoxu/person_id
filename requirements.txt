@@ -69,6 +69,13 @@ redis>=5.0.0                # 拉流期望状态 (重启恢复, pipeline/stream_
 pillow>=10.2.0
 scikit-learn>=1.4.0
 loguru>=0.7.0
+# voice_agent_common + session_store (配置在线编辑等共享逻辑及其 DB 存储) 以
+# PYTHONPATH 源码副本方式引入 (deploy_mac.sh 同步 packages/{common,session_store}
+# → 本目录 packages/, 启动脚本挂 PYTHONPATH), 不走 pip; 它们 import 期用到的
+# 依赖里, 本清单缺的在此补上 (sqlalchemy 经 sqlmodel 已有, aiosqlite 已有):
+nanoid>=2.0.0
+cos-python-sdk-v5>=1.9.0    # qcloud_cos (session_store.store 顶层 import CosClient)
+aiomysql>=0.2.0             # db_url 切共享 MySQL 时的驱动 (dev 的 sqlite 用 aiosqlite)
 
 # --- 测试 ---
 pytest>=8.0.0

@@ -2,7 +2,7 @@
 REST API 路由 — 配置管理、底库查询、身份确认
 
 多摄像头架构:
-- GET/PUT /api/config — 全局配置（不分摄像头）
+- GET/PUT /api/params — 滑块可调参数（全局, 不分摄像头; /api/config 留给全量配置 dump, 见 config_api.py）
 - GET /api/{camera_id}/gallery/persons — 指定摄像头的人物列表
 - GET /api/{camera_id}/gallery/person/{person_id} — 人物详情
 """
@@ -206,10 +206,11 @@ def require_camera_orchestrator(camera_id: str):
 
 
 # ==============================================================================
-# Config endpoints (全局, 不分摄像头)
+# 滑块可调参数 (全局, 不分摄像头)。原路径 /config, 2026-08 改名 /params:
+# 把 /api/config 让给全量脱敏配置 dump (config_api.py), 与 voice/agent 路径统一
 # ==============================================================================
 
-@router.get("/config", response_model=ConfigResponse)
+@router.get("/params", response_model=ConfigResponse)
 async def get_config_endpoint() -> ConfigResponse:
     """获取所有可调参数及其当前值、范围。"""
     tunable = config.get_tunable_params()
@@ -223,7 +224,7 @@ async def get_config_endpoint() -> ConfigResponse:
     return ConfigResponse(params=params, flags=flags)
 
 
-@router.put("/config", response_model=ConfigUpdateResponse)
+@router.put("/params", response_model=ConfigUpdateResponse)
 async def update_config_endpoint(request: ConfigUpdateRequest) -> ConfigUpdateResponse:
     """更新可调参数。"""
     updated = config.update_from_dict(request.updates)
