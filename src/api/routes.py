@@ -229,7 +229,7 @@ async def get_config_endpoint() -> ConfigResponse:
     }
     # AGG_MIN_FACE/BODY_QUALITY 已升级为可调滑块 (见 _TUNABLE_DEFS), 不再放在只读 flags 里
     flags = {
-        "IMAGE_CORRECTION_ENABLED": config.server.image_correction_enabled,
+        "IMAGE_CORRECTION_ENABLED": config.image_correction_enabled,
     }
     return ConfigResponse(params=params, flags=flags)
 

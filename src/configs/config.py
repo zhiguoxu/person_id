@@ -36,7 +36,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 class HardwareConfig(BaseModel):
     """硬件与计算设备配置"""
-    device: str = "cuda:2"  # 统一计算设备，替代原有的 yolo_device, reid_device 等
+    device: str = "cuda:0"  # 统一计算设备，替代原有的 yolo_device, reid_device 等
 
     @property
     def insightface_ctx_id(self) -> int:
@@ -213,8 +213,20 @@ class VoiceEmbedExtractorConfig(BaseModel):
     seg_hop_sec: float = 1.5
 
 
-class ServerConfig(BaseModel):
-    """服务配置"""
+class Config(BaseSettings):
+    """
+    系统总配置
+
+    所有模块的配置参数集中管理, 加载机制与 voice_server 一致:
+    yaml(基底 + 环境覆盖) + APP_ 前缀环境变量。
+    阈值参数支持通过 WebSocket 实时更新。
+    服务自身参数 (host/port/拉流等, 原 ServerConfig) 扁平在顶层,
+    与 voice/agent server 的配置结构保持一致。
+    """
+    # 服务版本号 (web 控制台「系统配置」页展示; 在线编辑锁定, 见 editable_fields)
+    version: str = "0.2.0"
+
+    # ── 服务自身 (原 ServerConfig, 顶层扁平) ──
     host: str = "0.0.0.0"
     port: int = 10003  # 远程 CUDA 服务器端口
     log_level: str = "INFO"
@@ -227,12 +239,6 @@ class ServerConfig(BaseModel):
     # test/prod 两套环境, 由前端界面选择、每次请求通过 env 参数指定
     iss_api_url_test: str = "https://iss-test.joyin-ai.com"  # ISS 测试环境
     iss_api_url_prod: str = "https://iss-prod.joyin-ai.com"  # ISS 生产环境
-
-    def iss_api_url(self, env: str) -> str:
-        """按环境名取 ISS 服务地址 (env: "test" | "prod")。"""
-        if env == "prod":
-            return self.iss_api_url_prod
-        return self.iss_api_url_test
 
     # 服务端拉流消费 (StreamConsumer)
     stream_max_fps: float = 15.0  # 处理帧率上限 (拉到的多余帧直接丢弃)
@@ -261,18 +267,6 @@ class ServerConfig(BaseModel):
 
     # WebSocket
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小
-
-
-class Config(BaseSettings):
-    """
-    系统总配置
-
-    所有模块的配置参数集中管理, 加载机制与 voice_server 一致:
-    yaml(基底 + 环境覆盖) + APP_ 前缀环境变量。
-    阈值参数支持通过 WebSocket 实时更新。
-    """
-    # 服务版本号 (web 控制台「系统配置」页展示; 在线编辑锁定, 见 editable_fields)
-    version: str = "0.2.0"
     # 配置在线编辑(DB 覆盖层)的存储, 与 voice/agent 同款 session_store 表结构。
     # 必填、无代码默认 (与 voice_server 口径一致), 只放环境 yaml: dev 先落本地
     # SQLite, 切共享 MySQL 时改成 mysql+aiomysql://... 即可, 代码零改动
@@ -297,7 +291,6 @@ class Config(BaseSettings):
     # 日志聚合 Stream(独立连接/独立 db): 本进程日志 XADD 到 Redis Stream,
     # 由 console_server 统一消费入库, 配置须与 voice/agent/console 一致
     log_stream: LogStreamConfig = LogStreamConfig()
-    server: ServerConfig = ServerConfig()
 
     model_config = SettingsConfigDict(
         yaml_file_encoding='utf-8',
@@ -358,8 +351,15 @@ class Config(BaseSettings):
 
         return updated_keys
 
+    def iss_api_url(self, env: str) -> str:
+        """按环境名取 ISS 服务地址 (env: "test" | "prod")。"""
+        if env == "prod":
+            return self.iss_api_url_prod
+        return self.iss_api_url_test
+
     # 可调参数定义 (单一来源)
     # key → (config_section_name, attr_name, min, max, step, group, label)
+    # section 为空串 = 顶层字段 (原 ServerConfig, 已扁平到 Config 顶层)
     _TUNABLE_DEFS: dict = {
         "A_THRESHOLD": ("matching", "A_threshold", 0, 1, 0.01, "reid", "A Threshold (笃定)"),
         "B_THRESHOLD": ("matching", "B_threshold", 0, 1, 0.01, "reid", "B Threshold (确定)"),
@@ -371,17 +371,17 @@ class Config(BaseSettings):
         "AGG_MIN_FACE_QUALITY": ("multiframe", "agg_min_face_quality", 0, 1, 0.05, "quality", "人脸聚合最低质量"),
         "AGG_MIN_BODY_QUALITY": ("multiframe", "agg_min_body_quality", 0, 1, 0.05, "quality", "人体聚合最低质量"),
         "OUTFIT_MATCH_THRESHOLD": ("gallery", "outfit_match_threshold", 0, 1, 0.01, "matching", "衣橱匹配阈值"),
-        "STREAM_RESTREAM_FAIL_THRESHOLD": ("server", "stream_restream_fail_threshold", 1, 20, 1, "stream", "自动重推流失败次数阈值"),
+        "STREAM_RESTREAM_FAIL_THRESHOLD": ("", "stream_restream_fail_threshold", 1, 20, 1, "stream", "自动重推流失败次数阈值"),
         # 预览带宽 (只影响网页观看, 不影响识别): 观看卡顿调小, 网速好调大
-        "STREAM_PREVIEW_MAX_WIDTH": ("server", "stream_preview_max_width", 320, 1920, 160, "stream", "预览帧最大宽度(px)"),
-        "STREAM_PREVIEW_JPEG_QUALITY": ("server", "stream_preview_jpeg_quality", 30, 95, 5, "stream", "预览帧 JPEG 质量"),
+        "STREAM_PREVIEW_MAX_WIDTH": ("", "stream_preview_max_width", 320, 1920, 160, "stream", "预览帧最大宽度(px)"),
+        "STREAM_PREVIEW_JPEG_QUALITY": ("", "stream_preview_jpeg_quality", 30, 95, 5, "stream", "预览帧 JPEG 质量"),
     }
 
     def get_tunable_params(self) -> dict:
         """获取可调参数当前值及元数据 (供前端滑块渲染)。"""
         result = {}
         for key, (section, attr, mn, mx, step, group, label) in self._TUNABLE_DEFS.items():
-            cfg_section = getattr(self, section)
+            cfg_section = getattr(self, section) if section else self
             result[key] = {
                 "value": getattr(cfg_section, attr),
                 "min": mn, "max": mx, "step": step,
@@ -393,9 +393,9 @@ class Config(BaseSettings):
         """构建扁平化键名 → (子配置, 属性名) 映射 (供 update_from_dict 写入)。"""
         mapping: dict[str, tuple[BaseModel, str]] = {}
         for key, (section, attr, *_) in self._TUNABLE_DEFS.items():
-            mapping[key] = (getattr(self, section), attr)
+            mapping[key] = (getattr(self, section) if section else self, attr)
         # 仅通过顶部按钮控制, 不在 Controls 面板显示
-        mapping["IMAGE_CORRECTION_ENABLED"] = (self.server, "image_correction_enabled")
+        mapping["IMAGE_CORRECTION_ENABLED"] = (self, "image_correction_enabled")
         return mapping
 
 

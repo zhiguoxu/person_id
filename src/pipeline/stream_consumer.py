@@ -15,7 +15,7 @@ stream_max_fps 上限取"最新帧"处理, 中间帧直接丢弃。
 
 拉流自动恢复: ISS 设备推流偶发损坏后, 单纯对旧地址重连永远失败。读流线程
 统计连续失败次数 (打开失败 / 连上但没读到几帧就断), 达到阈值
-(server.stream_restream_fail_threshold, 控制台可调) 时调度
+(stream_restream_fail_threshold, 控制台可调) 时调度
 pipeline/restream.run_restream_recovery(): 查设备在线 → ISS 重新推流 →
 切换到新 FLV 地址继续拉。全过程记录在 data/restream_log/, 前端可查。
 """
@@ -172,7 +172,7 @@ class StreamConsumer:
     def _reader_loop(self) -> None:
         # 独立线程有自己的 context: 补写 device_sn(= camera_id), 日志才带该列
         set_device_sn(self.camera_id)
-        reconnect_delay = config.server.stream_reconnect_delay
+        reconnect_delay = config.stream_reconnect_delay
 
         while not self._stop_event.is_set():
             cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
@@ -231,7 +231,7 @@ class StreamConsumer:
         self._consecutive_pull_failures += 1
         if not self.auto_restream or self._recovering:
             return
-        threshold = config.server.stream_restream_fail_threshold
+        threshold = config.stream_restream_fail_threshold
         if self._consecutive_pull_failures < threshold:
             return
         loop = self._loop
@@ -297,7 +297,7 @@ class StreamConsumer:
         last_done = time.perf_counter()
 
         while not self._stop_event.is_set():
-            cfg = config.server
+            cfg = config
             min_interval = 1.0 / max(cfg.stream_max_fps, 1.0)
 
             with self._frame_lock:

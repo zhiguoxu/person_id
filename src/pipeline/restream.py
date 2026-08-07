@@ -4,7 +4,7 @@
 背景: ISS 设备推流偶发损坏后, 服务端拉流(StreamConsumer)会一直重连失败,
 无法自愈, 只能人工"重新推流 + 重新拉流"。本模块把该过程自动化:
 
-1. StreamConsumer 连续拉流失败达到阈值 (server.stream_restream_fail_threshold,
+1. StreamConsumer 连续拉流失败达到阈值 (stream_restream_fail_threshold,
    web 控制台可调) 时调用 run_restream_recovery()
 2. 先查设备是否在线 (设备关机后无法推流, 不在线则跳过重推): 直读
    voice_server 写入 Redis 的 ws:online 在线标记
@@ -32,7 +32,7 @@ RESTREAM_LOG_DIR = DATA_DIR / "restream_log"
 # 在线标记专用连接: 标记在 voice_server 的主库, db 与 stream_state 的
 # (config.redis.db) 不同, 不能共用其连接池
 _online_redis = LazyRedis(
-    db_of=lambda cfg: cfg.server.voice_online_redis_db,
+    db_of=lambda cfg: cfg.voice_online_redis_db,
     unconfigured_hint="Redis 未配置(redis.host 为空), 重推流前无法确认设备在线状态, "
                       "将始终按'无法确认'降级(继续尝试重推)")
 
@@ -57,12 +57,12 @@ async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
     if r is None:
         return None, "Redis 未配置, 无法确认设备在线状态"
     cfg = config
-    key = f"ws:online:{cfg.server.voice_live_namespace}:{device_sn}"
+    key = f"ws:online:{cfg.voice_live_namespace}:{device_sn}"
     # 标记所在位置写进日志: 误判"不在线"几乎都是 person_id 连的 Redis 与
     # voice_server 写标记的不是同一个(host/db/namespace 错位), 光说"无标记"
     # 排查不动, 必须能从重推日志直接看出实际查的是哪里的哪个 key
     where = (f"{cfg.redis.host}:{cfg.redis.port}"
-             f"/db{cfg.server.voice_online_redis_db} key={key}")
+             f"/db{cfg.voice_online_redis_db} key={key}")
     try:
         value = await r.get(key)
     except Exception as e:
@@ -71,7 +71,7 @@ async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
         return True, f"设备在线 (标记值: {value})"
     return False, (f"设备不在线 (在线标记不存在: {where}; 设备可能已关机/断网, "
                    f"若设备实际在线, 请核对 person_id yaml 的 redis.host/"
-                   f"server.voice_online_redis_db/server.voice_live_namespace "
+                   f"voice_online_redis_db/voice_live_namespace "
                    f"是否与 voice_server 的 redis.db/live_namespace 一致)")
 
 

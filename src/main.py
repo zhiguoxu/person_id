@@ -16,8 +16,8 @@ from src import deps
 # 文件日志用本服务独享目录（与同机其他服务隔离，避免多进程 rotation 互删，见 logger.py）。
 # 打补丁 logger 给每条日志注入 {extra[device_sn]}(= camera_id)/{extra[trace_id]} 列，
 # 由 WS/REST/拉流入口写入 ContextVar（websocket.py / routes.py / stream_consumer.py）。
-logger = LogManager.setup(log_dir="logs/person", level=config.server.log_level)
-intercept_standard_loggers(config.server.log_level)
+logger = LogManager.setup(log_dir="logs/person", level=config.log_level)
+intercept_standard_loggers(config.log_level)
 
 # 在导入期就标记日志来源，使 bind_loop 之前（启动早期）的日志也带上正确 source。
 from voice_agent_common.utils.log_stream import log_broadcaster, make_stream_forwarder
@@ -41,7 +41,7 @@ async def lifespan(application: FastAPI):
     logger.info(
         "👁️ person_id 启动，版本 v{}（common v{}，session_store v{}），监听 {}:{}",
         config.version, _common.__version__, _session_store.__version__,
-        config.server.host, config.server.port,
+        config.host, config.port,
     )
 
     # 本进程日志 XADD 到 Redis Stream, 由 console_server 统一消费入库/推前端。
@@ -64,7 +64,7 @@ async def lifespan(application: FastAPI):
 
     from src.gallery.persistence import get_gallery_persistence
     persistence = get_gallery_persistence()
-    await persistence.initialize(config.server.gallery_db_path)
+    await persistence.initialize(config.gallery_db_path)
 
     # enroll 质量评估模型(默认 large)只有注册路径用到, 懒加载会让进程启动后的
     # 首次注册当场付 ONNX + CUDA EP 初始化(实测 ~1.2s), 几乎顶到对话端 1.5s
@@ -162,12 +162,12 @@ if __name__ == "__main__":
     # 手动构建 Server，避免 uvicorn.run() 内部的 asyncio_run 与 PyCharm 调试器冲突
     uvi_config = uvicorn.Config(
         app,
-        host=config.server.host,
-        port=config.server.port,
+        host=config.host,
+        port=config.port,
         log_config=None,
         loop="asyncio",
         # 浏览器抓帧上传的单条 WS 消息可达数 MB, 默认 1MB 上限会掐断连接
-        ws_max_size=config.server.ws_max_frame_size,
+        ws_max_size=config.ws_max_frame_size,
         # current_identity 在对话首字延迟的关键路径上, 闲置连接保得久一点,
         # 配合 agent_server 侧 60s 保活 ping, 避免每轮对话重付 TCP 握手。
         # (uvicorn 默认 5s, 而对话轮距几乎总超 5s。)

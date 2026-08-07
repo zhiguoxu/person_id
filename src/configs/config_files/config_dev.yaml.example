@@ -1,0 +1,35 @@
+# ==============================================================================
+# 环境 yaml 模板 (复制为 config_<APP_ENV>.yaml, 如 config_dev.yaml)。
+# 分工约定见 config.yaml 头部: 本文件只放 监听 host·port / 数据库 url·路径 /
+# redis 连接与环境耦合项 / 密钥 / 环境专属资源, 其余配置一律写在 config.yaml
+# (deep_merge, 只写差异字段)。
+# ==============================================================================
+
+# 配置在线编辑(DB 覆盖层)的存储。
+# SQLite: sqlite+aiosqlite:///./data/person_id_store.db
+# MySQL:  mysql+aiomysql://user:pass@host:3306/dbname
+db_url: "sqlite+aiosqlite:///./data/person_id_store.db"
+
+# 计算设备, 随部署机器 GPU 编号约定走
+hardware:
+  device: cuda:0
+
+# VLM 仲裁的密钥 (endpoint 等其余配置在 config.yaml); 不启用 VLM 可留空串
+vlm:
+  api_key: "YOUR_VLM_API_KEY"
+
+redis:
+  host: YOUR_REDIS_HOST
+  password: YOUR_REDIS_PASSWORD
+  db: 1
+
+# ── 服务自身 (原 server.* 已扁平到顶层, 与 voice/agent server 结构一致) ──
+# 本实例监听地址与端口 (随部署实例变化)
+host: 0.0.0.0
+port: 10003
+# voice_server 在线标记所在 db 与命名空间, 须与本环境 voice_server 的
+# redis.db / live_namespace 一致
+voice_online_redis_db: 2
+voice_live_namespace: default
+# 特征底库 sqlite; 相对路径 = 相对服务启动目录(项目根)
+gallery_db_path: data/gallery.db

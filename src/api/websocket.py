@@ -193,7 +193,7 @@ async def _handle_binary(
         )
         return
 
-    max_size = config.server.ws_max_frame_size
+    max_size = config.ws_max_frame_size
     if len(data) > max_size:
         await _send_error(
             websocket,
@@ -203,7 +203,7 @@ async def _handle_binary(
         return
 
     # 镜头畸变矫正 (可通过前端开关控制)
-    if config.server.image_correction_enabled:
+    if config.image_correction_enabled:
         try:
             from src.utils.image_correction import correct_image_bytes
             data = correct_image_bytes(data)

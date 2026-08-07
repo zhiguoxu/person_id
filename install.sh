@@ -38,7 +38,16 @@ if [ -z "$CUDA_DRIVER" ]; then
     echo -e "  ${RED}No NVIDIA GPU detected, installing CPU version${NC}"
     TORCH_INDEX=""
     TORCH_SUFFIX="cpu"
-elif echo "$CUDA_DRIVER" | grep -qE "^13\.|^12\.[4-9]"; then
+elif echo "$CUDA_DRIVER" | grep -qE "^13\."; then
+    # 驱动 CUDA 13 (如 123.206.174.158 的 Blackwell RTX PRO 5000, sm_120):
+    # 旧卡的 cu124 wheel 没编 sm_120 kernel, 会 "no kernel image" 跑不起来
+    TORCH_INDEX="--index-url https://download.pytorch.org/whl/cu130"
+    TORCH_SUFFIX="cu130"
+elif echo "$CUDA_DRIVER" | grep -qE "^12\.[89]"; then
+    # 驱动 CUDA 12.8/12.9: Blackwell 最低要求 cu128
+    TORCH_INDEX="--index-url https://download.pytorch.org/whl/cu128"
+    TORCH_SUFFIX="cu128"
+elif echo "$CUDA_DRIVER" | grep -qE "^12\.[4-7]"; then
     TORCH_INDEX="--index-url https://download.pytorch.org/whl/cu124"
     TORCH_SUFFIX="cu124"
 elif echo "$CUDA_DRIVER" | grep -qE "^12\.[1-3]"; then

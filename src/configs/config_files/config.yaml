@@ -1,8 +1,20 @@
 # ==============================================================================
-# 基底配置 (所有环境共享), 会被 config_{APP_ENV}.yaml 深合并覆盖
+# 基底配置 (所有环境共享, 进 git), 会被 config_{APP_ENV}.yaml 深合并覆盖
 # (APP_ENV 默认 dev; APP_ 前缀环境变量可再覆盖顶层字段)。
-# 各字段的默认值与说明见 src/configs/config.py, 这里只放需要区别于
-# 代码默认值、且各环境一致的项。
+#
+# 配置分工约定 (与 voice_server 一致):
+#   所有配置都写在本文件 (与代码默认值一致的项可不写, 默认值见
+#   src/configs/config.py)。环境 yaml (config_{APP_ENV}.yaml, 已 gitignore)
+#   只放四类字段, 经 deep_merge 覆盖基底:
+#     1. 数据库 url / 路径 (db_url, gallery_db_path)
+#     2. redis 连接 (host / password / db), 以及与本环境 voice_server 实例
+#        耦合的 voice_online_redis_db / voice_live_namespace
+#     3. 各类密钥 (vlm.api_key)
+#     4. 环境专属地址与资源 (hardware.device 这类随部署机器变化的项——
+#        写进基底会被其他环境静默继承, 漏覆盖就串环境, 所以按环境隔离)
+#     5. 本实例监听的 host / port (随部署实例变化)
+#   注: 服务自身参数原收在 server.* 子块, 已扁平到顶层(与 voice/agent 一致)
+#   密钥字段在本文件留空串占位, 真值一律在环境 yaml 覆盖。
 # ==============================================================================
 
 # 匹配与融合 (MatchingConfig): 调参最频繁的一组, 集中放 yaml 便于管理。
@@ -29,11 +41,19 @@ matching:
   body_gate_q0: 0.5          # 人体质量翻转点
   body_gate_k: 10.0          # 人体质量门控斜率
 
-# ── 必填块 (不在本基底文件): vlm / redis ──
-# 密钥与连接地址只放各环境的 config_{APP_ENV}.yaml, 代码亦无默认值,
-# 环境 yaml 缺这两块服务直接起不来 (fail-fast, 与 voice_server 口径一致)。
-#   vlm:   api_key 必填; 不启用 VLM 的环境显式写 api_key: ""
-#   redis: host 必填; 不启用的环境显式写 host: "" (拉流状态持久化降级为空操作)
+# VLM 仲裁 (Tier3)。enabled 默认 false (见 config.py), 启用的环境自行覆盖
+vlm:
+  api_key: ""  # 密钥, 在环境 yaml 覆盖; 不启用 VLM 的环境保持空串即可
+  # 国际站 endpoint, 与 api_key 的开通账号匹配 (代码默认值是国内站)
+  base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+
+# Redis 连接参数 (RedisConfig 全字段必填、无代码默认)。
+# host(环境地址)/password(密钥)/db(环境隔离)在环境 yaml 覆盖, 缺失起不来 (fail-fast)
+redis:
+  port: 6379
+  socket_connect_timeout: 5
+  socket_timeout: 5
+  max_connections: 20
 
 log_stream:
   stream_key: "voice_agent:logs:stream"

@@ -5,3 +5,6 @@ __pycache__/
 models
 data
 .cache/
+src/configs/config_files/config_dev.yaml
+src/configs/config_files/config_test.yaml
+src/configs/config_files/config_prod.yaml

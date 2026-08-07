@@ -3,7 +3,7 @@
 # Vision ID — CUDA 服务器部署启动脚本
 #
 # 架构: 前端(本地浏览器) ←WebSocket→ 后端(此服务器 CUDA 推理)
-# 服务器: 1.15.11.133:10003 (GPU 服务机, 与 embedding 同机; 内网 172.17.0.11)
+# 服务器: 123.206.174.158:10003 (GPU 服务机, 内网 172.17.48.17; 2026-08 迁自 1.15.11.133)
 #
 # 用法:  bash deploy.sh  (自动激活 conda 环境)
 # ==============================================================================
@@ -95,7 +95,7 @@ printf "${GREEN}[3/3]${NC} Starting backend server...\n"
 echo ""
 printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
 printf "  ${CYAN}  Backend API: http://0.0.0.0:10003${NC}\n"
-printf "  ${CYAN}  WebSocket:   ws://1.15.11.133:10003/ws/vision${NC}\n"
+printf "  ${CYAN}  WebSocket:   ws://123.206.174.158:10003/ws/vision${NC}\n"
 printf "  ${CYAN}${NC}\n"
 printf "  ${CYAN}  Frontend: web 控制台「视觉识别」页 (web/src/vision, 经 /vision 代理访问)${NC}\n"
 printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
@@ -106,6 +106,12 @@ echo ""
 # 确保使用 conda 环境的 libstdc++ (解决 GLIBCXX 版本问题)
 CONDA_LIB="${CONDA_PREFIX:-$CONDA_BASE/envs/$CONDA_ENV}/lib"
 export LD_LIBRARY_PATH="$CONDA_LIB:${LD_LIBRARY_PATH:-}"
+
+# onnxruntime-gpu 独立 dlopen CUDA 库 (libcublasLt 等): torch 先导入时会把
+# pip 装的 nvidia 库预加载进进程, 但为不依赖导入顺序, 显式挂上这些目录
+# (缺失时 ORT 会静默回退 CPU, Tier2 推理慢一个数量级)
+NV_LIBS="$(ls -d "$CONDA_LIB"/python3*/site-packages/nvidia/*/lib 2>/dev/null | tr '\n' ':')"
+[ -n "$NV_LIBS" ] && export LD_LIBRARY_PATH="${NV_LIBS}${LD_LIBRARY_PATH}"
 
 # voice_agent_common + session_store 以 PYTHONPATH 源码副本方式引入
 # (配置在线编辑等共享逻辑及其 DB 存储): 远端部署时 deploy_mac.sh 把

@@ -37,11 +37,11 @@ from voice_agent_common.config_override import EditableField
 LOCKED_PATHS: frozenset[str] = frozenset({
     "version",                  # 服务版本号是代码/发布的事实描述, 在线改了只会骗人
     "db_url",                   # init_db 在覆盖套用之前执行(覆盖本身存在这个库里), 改了永远不生效
-    "server.host",              # uvicorn 绑定发生在 main(), 早于覆盖套用, 改了永远不生效
-    "server.port",              # 同上
-    "server.log_level",         # 同上 (import 期 LogManager.setup/intercept 消费)
-    "server.ws_max_frame_size",  # 同上 (uvicorn.Config 的 ws_max_size 参数)
-    "server.gallery_db_path",   # 换路径 = 整库人物凭空消失, 不上网页
+    "host",                     # uvicorn 绑定发生在 main(), 早于覆盖套用, 改了永远不生效
+    "port",                     # 同上
+    "log_level",                # 同上 (import 期 LogManager.setup/intercept 消费)
+    "ws_max_frame_size",        # 同上 (uvicorn.Config 的 ws_max_size 参数)
+    "gallery_db_path",          # 换路径 = 整库人物凭空消失, 不上网页
 })
 
 FIELD_ANNOTATIONS: dict[str, EditableField] = {
@@ -151,32 +151,32 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
         "hot": False,
     },
 
-    # ── 服务端拉流（StreamConsumer 逐帧/逐次重连现读） ──
-    "server.stream_max_fps": {
+    # ── 服务端拉流（StreamConsumer 逐帧/逐次重连现读; 原 server.* 已扁平到顶层） ──
+    "stream_max_fps": {
         "description": "拉流处理帧率上限（拉到的多余帧直接丢弃）",
         "hot": True,
     },
-    "server.stream_proc_max_width": {
+    "stream_proc_max_width": {
         "description": "识别路径分辨率上限：0 = 按视频流原生分辨率处理（无损），算力不足时才设正数换速度",
         "hot": True,
     },
-    "server.stream_preview_max_width": {
+    "stream_preview_max_width": {
         "description": "前端预览帧最大宽度（只影响网页观看带宽/清晰度，不影响识别）",
         "hot": True,
     },
-    "server.stream_preview_jpeg_quality": {
+    "stream_preview_jpeg_quality": {
         "description": "前端预览帧 JPEG 质量（1-100，只影响网页观看）",
         "hot": True,
     },
-    "server.stream_reconnect_delay": {
+    "stream_reconnect_delay": {
         "description": "拉流断开后的重连间隔（秒）",
         "hot": True,
     },
-    "server.stream_restream_fail_threshold": {
+    "stream_restream_fail_threshold": {
         "description": "连续拉流失败达到该次数后自动重新开启设备推流并切换新地址",
         "hot": True,
     },
-    "server.image_correction_enabled": {
+    "image_correction_enabled": {
         "description": "是否启用镜头畸变矫正（逐帧现读）",
         "hot": True,
     },
