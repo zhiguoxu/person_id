@@ -5,7 +5,11 @@
 # 架构: 前端(本地浏览器) ←WebSocket→ 后端(此服务器 CUDA 推理)
 # 服务器: 123.206.174.158:10003 (GPU 服务机, 内网 172.17.48.17; 2026-08 迁自 1.15.11.133)
 #
-# 用法:  bash deploy.sh  (自动激活 conda 环境)
+# 用法:  bash deploy.sh [env]   (自动激活 conda 环境)
+#   env: 部署环境, 决定加载哪份 src/configs/config_files/config_<env>.yaml
+#        缺省 dev; test / prod 须显式指定, 如: bash deploy.sh test
+#   注意: test 实例与 dev 同机不同目录部署 (db_url/gallery_db_path 是相对
+#        路径, 同目录跑会共用 sqlite 底库), 端口/GPU 由各自 yaml 决定。
 # ==============================================================================
 set -e
 
@@ -19,7 +23,27 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # --------------------------------------------------------------------------
-# 0. 自动激活 conda 环境
+# 0. 部署环境 (位置参数 > 已有 APP_ENV 环境变量 > 缺省 dev)
+# --------------------------------------------------------------------------
+APP_ENV="${1:-${APP_ENV:-dev}}"
+case "$APP_ENV" in
+    dev|test|prod) ;;
+    *)
+        printf "${RED}ERROR: 未知环境 '%s' (可选: dev / test / prod)${NC}\n" "$APP_ENV"
+        echo "  用法: bash deploy.sh [dev|test|prod]"
+        exit 1
+        ;;
+esac
+ENV_YAML="src/configs/config_files/config_${APP_ENV}.yaml"
+if [ ! -f "$ENV_YAML" ]; then
+    printf "${RED}ERROR: 缺少环境配置 %s${NC}\n" "$ENV_YAML"
+    echo "  参照 src/configs/config_files/config_dev.yaml.example 创建"
+    exit 1
+fi
+export APP_ENV
+
+# --------------------------------------------------------------------------
+# 1. 自动激活 conda 环境
 # --------------------------------------------------------------------------
 CONDA_ENV="person_id"
 # conda 安装位置因机器而异: 优先用户目录, 回退系统目录 (GPU 服务机为 /opt/miniconda3)
@@ -49,7 +73,7 @@ printf "${CYAN}╚════════════════════�
 echo ""
 
 # --------------------------------------------------------------------------
-# 1. 查找 Python
+# 2. 查找 Python
 # --------------------------------------------------------------------------
 PYTHON="python3"
 if ! command -v python3 &> /dev/null; then
@@ -58,9 +82,10 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # --------------------------------------------------------------------------
-# 2. 环境检查
+# 3. 环境检查
 # --------------------------------------------------------------------------
 printf "${GREEN}[1/3]${NC} Checking environment...\n"
+echo "  Env:    ${APP_ENV} (${ENV_YAML})"
 echo "  Python: $($PYTHON --version 2>&1) ($PYTHON)"
 
 $PYTHON -c "
@@ -72,7 +97,7 @@ else:
 " 2>/dev/null || printf "  ${YELLOW}CUDA:   PyTorch not installed yet${NC}\n"
 
 # --------------------------------------------------------------------------
-# 3. 依赖安装
+# 4. 依赖安装
 # --------------------------------------------------------------------------
 echo ""
 printf "${GREEN}[2/3]${NC} Checking dependencies...\n"
@@ -88,20 +113,10 @@ fi
 mkdir -p data models
 
 # --------------------------------------------------------------------------
-# 4. 启动
+# 5. 启动
 # --------------------------------------------------------------------------
 echo ""
 printf "${GREEN}[3/3]${NC} Starting backend server...\n"
-echo ""
-printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
-printf "  ${CYAN}  Backend API: http://0.0.0.0:10003${NC}\n"
-printf "  ${CYAN}  WebSocket:   ws://123.206.174.158:10003/ws/vision${NC}\n"
-printf "  ${CYAN}${NC}\n"
-printf "  ${CYAN}  Frontend: web 控制台「视觉识别」页 (web/src/vision, 经 /vision 代理访问)${NC}\n"
-printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
-echo ""
-echo "  Press Ctrl+C to stop"
-echo ""
 
 # 确保使用 conda 环境的 libstdc++ (解决 GLIBCXX 版本问题)
 CONDA_LIB="${CONDA_PREFIX:-$CONDA_BASE/envs/$CONDA_ENV}/lib"
@@ -118,4 +133,21 @@ NV_LIBS="$(ls -d "$CONDA_LIB"/python3*/site-packages/nvidia/*/lib 2>/dev/null | 
 # packages/{common,session_store} 同步进本目录; 从工程仓库直跑时它们在
 # 上级 packages/ 下, 两组路径都挂上, 不存在的目录 Python 会自动忽略。
 export PYTHONPATH="$SCRIPT_DIR/packages/common:$SCRIPT_DIR/packages/session_store:$SCRIPT_DIR/../packages/common:$SCRIPT_DIR/../packages/session_store:$SCRIPT_DIR:$PYTHONPATH"
+
+# 端口由所选环境 yaml 决定 (test 10013 / dev 10003), 从合并后配置现读用于展示;
+# 读不出来不拦启动 (真正的配置错误由 src.main 启动时报)
+PORT="$($PYTHON -c 'from src.configs.config import config; print(config.port)' 2>/dev/null || echo '?')"
+
+echo ""
+printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
+printf "  ${CYAN}  Env:         %s${NC}\n" "$APP_ENV"
+printf "  ${CYAN}  Backend API: http://0.0.0.0:%s${NC}\n" "$PORT"
+printf "  ${CYAN}  WebSocket:   ws://123.206.174.158:%s/ws/vision${NC}\n" "$PORT"
+printf "  ${CYAN}${NC}\n"
+printf "  ${CYAN}  Frontend: web 控制台「视觉识别」页 (web/src/vision, 经 /vision 代理访问)${NC}\n"
+printf "  ${CYAN}════════════════════════════════════════════════════════${NC}\n"
+echo ""
+echo "  Press Ctrl+C to stop"
+echo ""
+
 exec $PYTHON -m src.main
