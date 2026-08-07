@@ -112,4 +112,4 @@ export LD_LIBRARY_PATH="$CONDA_LIB:${LD_LIBRARY_PATH:-}"
 # packages/{common,session_store} 同步进本目录; 从工程仓库直跑时它们在
 # 上级 packages/ 下, 两组路径都挂上, 不存在的目录 Python 会自动忽略。
 export PYTHONPATH="$SCRIPT_DIR/packages/common:$SCRIPT_DIR/packages/session_store:$SCRIPT_DIR/../packages/common:$SCRIPT_DIR/../packages/session_store:$SCRIPT_DIR:$PYTHONPATH"
-exec $PYTHON -m src.api.server
+exec $PYTHON -m src.main

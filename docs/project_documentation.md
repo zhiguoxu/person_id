@@ -726,8 +726,8 @@ person_id/
 │   │   ├── matcher.py         # 三路匹配器
 │   │   ├── persistence.py     # SQLite 持久化
 │   │   └── converters.py      # DB ↔ 模型转换
+│   ├── main.py            # FastAPI 应用入口 (与 voice/agent 的 main.py 同构)
 │   ├── api/
-│   │   ├── server.py          # FastAPI 服务器
 │   │   ├── websocket.py       # WebSocket 处理
 │   │   ├── routes.py          # HTTP 路由
 │   │   └── schemas.py         # API 数据模型

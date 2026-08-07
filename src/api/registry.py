@@ -1,7 +1,7 @@
 """
 全局摄像头注册表
 
-独立模块，避免 __main__ vs src.api.server 双实例问题。
+独立模块，避免 __main__ vs src.main 双实例问题。
 所有模块统一从此处导入 camera_registry。
 
 除 orchestrator 外还维护三类状态:

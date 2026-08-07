@@ -1,4 +1,4 @@
-"""Module-level dependency container, initialized in src/api/server.py lifespan."""
+"""Module-level dependency container, initialized in src/main.py lifespan."""
 from __future__ import annotations
 
 from datetime import datetime

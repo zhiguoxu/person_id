@@ -19,6 +19,6 @@ from src.configs.editable_fields import FIELD_ANNOTATIONS, LOCKED_PATHS
 from session_store import ConfigOverrideStore
 from voice_agent_common.config_override import ConfigOverrideManager
 
-# 实例化很轻, 真正读库套值在 src/api/server.py 的 lifespan 里(load_and_apply)
+# 实例化很轻, 真正读库套值在 src/main.py 的 lifespan 里(load_and_apply)
 config_override_manager = ConfigOverrideManager(
     config, "person_id", FIELD_ANNOTATIONS, ConfigOverrideStore(), LOCKED_PATHS)

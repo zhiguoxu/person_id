@@ -39,7 +39,7 @@ LOCKED_PATHS: frozenset[str] = frozenset({
     "db_url",                   # init_db 在覆盖套用之前执行(覆盖本身存在这个库里), 改了永远不生效
     "server.host",              # uvicorn 绑定发生在 main(), 早于覆盖套用, 改了永远不生效
     "server.port",              # 同上
-    "server.log_level",         # 同上 (uvicorn.Config 的 log_level 参数)
+    "server.log_level",         # 同上 (import 期 LogManager.setup/intercept 消费)
     "server.ws_max_frame_size",  # 同上 (uvicorn.Config 的 ws_max_size 参数)
     "server.gallery_db_path",   # 换路径 = 整库人物凭空消失, 不上网页
 })

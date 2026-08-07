@@ -20,7 +20,7 @@ from typing import AsyncIterator
 
 import cv2
 import numpy as np
-from fastapi import WebSocket
+from fastapi import APIRouter, Query, WebSocket
 from voice_agent_common.utils.logger import logger
 
 from src.api import registry
@@ -33,6 +33,21 @@ from src.api.schemas import (
 )
 from src.configs.config import Config, config
 from src.pipeline.orchestrator import VisionOrchestrator
+
+# 与 voice_server 的 ws_router 同款挂载方式: 路由定义在本模块, main.py 只 include
+ws_router = APIRouter()
+
+
+@ws_router.websocket("/ws/vision")
+async def ws_vision(
+    websocket: WebSocket,
+    camera_id: str = Query(),
+) -> None:
+    """WebSocket 端点: 每个连接绑定一个摄像头。
+
+    连接方式: ws://host:port/ws/vision?camera_id=cam_01
+    """
+    await handle_ws_connection(websocket, camera_id)
 
 
 async def handle_ws_connection(
