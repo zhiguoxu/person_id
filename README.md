@@ -35,7 +35,7 @@ bash deploy.sh
 
 ### 2. 打开前端
 
-前端统一在 web 控制台的「视觉识别」页（`web/src/vision`，React 版），经 `/vision` 前缀代理访问本服务
+前端统一在 web 控制台的「视觉识别」页（`web/src/person_id`，React 版），经 `/person_id` 前缀代理访问本服务
 （代理规则见 `web/vite.config.ts` 与 `web_dist/nginx.conf`）。摄像头可在浏览器本地采集经 WebSocket
 上传，也可走服务端拉流（推荐，见下）。
 
@@ -93,7 +93,7 @@ person_id/
 │   ├── perception/         # 主动感知建议
 │   ├── pipeline/           # Tier 1/2 流水线
 │   └── api/                # FastAPI + WebSocket
-├── frontend_backup_20260806.tar.gz  # 旧静态前端备份 (已下线, 现用 web/src/vision)
+├── frontend_backup_20260806.tar.gz  # 旧静态前端备份 (已下线, 现用 web/src/person_id)
 ├── deploy.sh               # 运行启动脚本
 ├── install.sh              # 依赖安装脚本
 └── tests/                  # 测试

@@ -2,7 +2,7 @@
 运行配置查询 API。
 
   GET /api/config   返回 person_id 当前生效的完整配置(已脱敏)
-                    供 web 控制台「系统配置」页展示(前端经代理以 /vision/api/config 访问)
+                    供 web 控制台「系统配置」页展示(前端经代理以 /person_id/api/config 访问)
 """
 import os
 

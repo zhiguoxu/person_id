@@ -153,7 +153,7 @@ from src.api.config_api import config_router
 app.include_router(voice_router)
 app.include_router(config_router)
 # 配置在线编辑端点: GET/PUT/DELETE /api/config/editable[/{key_path}]
-# (web 控制台经 /vision 代理以 /vision/api/config/editable 访问, 编辑需口令;
+# (web 控制台经 /person_id 代理以 /person_id/api/config/editable 访问, 编辑需口令;
 # person_id 无设备级覆盖, 不传 device_name_resolver)
 app.include_router(build_config_override_router(
     config_override_manager, prefix="/api/config"))
