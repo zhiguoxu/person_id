@@ -47,6 +47,19 @@ vlm:
   # 国际站 endpoint, 与 api_key 的开通账号匹配 (代码默认值是国内站)
   base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 
+# 声音 embedding 提取 (VoiceEmbedExtractorConfig): voice_server 每轮对话经
+# /api/voice/embed 调用。值与 config.py 默认一致; 配方参数依据
+# test/speaker_id/ 评测锁定 (recipe_findings.md), 一般无需改动。
+# model_path 不在此配置: 默认取代码内 MODELS_DIR 下的 ONNX, 缺失自动下载;
+# 需要指定时在环境 yaml 覆盖 (随部署机器变化)
+voice_embed:
+  enabled: true
+  provider: cuda        # cuda / cpu (H20 实测 6.8ms vs CPU 37ms)
+  num_threads: 4        # 仅 provider=cpu 时生效
+  # 子段平均配方参数
+  seg_window_sec: 3.0
+  seg_hop_sec: 1.5
+
 # Redis 连接参数 (RedisConfig 全字段必填、无代码默认)。
 # host(环境地址)/password(密钥)/db(环境隔离)在环境 yaml 覆盖, 缺失起不来 (fail-fast)
 redis:

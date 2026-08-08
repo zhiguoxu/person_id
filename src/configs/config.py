@@ -201,7 +201,7 @@ class VoiceEmbedExtractorConfig(BaseModel):
     比对阈值/注册门控等决策参数在 agent_server 侧(声纹库与花名册同生命周期)。
     配方依据 voice_agent/test/speaker_id/ 真实数据评测(recipe_findings.md)。
     """
-    enabled: bool = True
+    enabled: bool = False
     # 说话人 embedding 模型(ONNX), 缺失时启动自动下载
     model_path: str = str(
         MODELS_DIR / "3dspeaker_speech_eres2net_base_200k_sv_zh-cn_16k-common.onnx")
