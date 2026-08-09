@@ -9,6 +9,7 @@ REST API 路由 — 配置管理、底库查询、身份确认
 from __future__ import annotations
 
 import base64
+import time
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
 from voice_agent_common.utils.context import set_device_sn
@@ -30,6 +31,8 @@ from src.api.schemas import (
     FaceSimilarityFaceInfo,
     FaceSimilarityTestResponse,
     FeatureEntryInfo,
+    LeaseRenewRequest,
+    LeaseRenewResponse,
     OutfitInfo,
     PersonDetailResponse,
     PersonListResponse,
@@ -135,16 +138,28 @@ async def start_consume(
         consumer_registry,
         get_or_create_orchestrator,
     )
+    from src.pipeline import stream_state
     from src.pipeline.stream_consumer import StreamConsumer
 
     url = request.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
 
+    # 租约到期时刻: 带租约与不带租约互相覆盖, 最后一次 start 的意图生效
+    # (voice_server 唤醒联动带租约, 控制台手动开流不带 = 永久)
+    lease_deadline = (
+        time.time() + request.lease_seconds if request.lease_seconds else None)
+
     existing = consumer_registry.get(camera_id)
     if existing is not None:
         if existing.running and existing.url == url:
-            # 幂等: 同 URL 重复 start 直接返回现状
+            # 幂等: 同 URL 重复 start 返回现状。但期望状态要重写——重复
+            # start 就是续租(env/auto_restream 取正在运行的消费器的值,
+            # 与实际行为一致; 租约取本次请求的意图)
+            await stream_state.record_desired(
+                camera_id, url, existing.env, existing.auto_restream,
+                lease_deadline,
+            )
             return existing.status()
         # URL 变更或已停止 → 先停旧的再起新的
         await existing.stop()
@@ -160,10 +175,10 @@ async def start_consume(
     )
     consumer.start()
     consumer_registry[camera_id] = consumer
-    # 期望状态写入 Redis: 服务重启后按它自动恢复拉流 (见 pipeline/stream_state.py)
-    from src.pipeline import stream_state
+    # 期望状态写入 Redis: 服务重启后按它自动恢复拉流, 租约到期由看门狗
+    # 自动关流 (均见 pipeline/stream_state.py)
     await stream_state.record_desired(
-        camera_id, url, request.env, request.auto_restream,
+        camera_id, url, request.env, request.auto_restream, lease_deadline,
     )
     return consumer.status()
 
@@ -171,22 +186,38 @@ async def start_consume(
 @router.post("/{camera_id}/consume/stop", response_model=StreamStatusResponse)
 async def stop_consume(camera_id: str) -> StreamStatusResponse:
     """停止服务端拉流消费。无活跃 WebSocket 时顺带回收 orchestrator。"""
-    from src.api.registry import consumer_registry, maybe_release_orchestrator
     from src.pipeline import stream_state
 
-    # 显式停止 = 不再期望拉流, 移除 Redis 中的期望状态(重启后不复活)。
-    # 无论 consumer 是否存在都移除: 崩溃后条目可能残留而消费器已不在。
-    await stream_state.remove_desired(camera_id)
-
-    consumer = consumer_registry.pop(camera_id, None)
+    # 显式停止 = 不再期望拉流(重启后不复活)。删状态→停消费器→回收
+    # orchestrator 的公共步骤与租约到期清理共用, 见 stop_consumption
+    consumer = await stream_state.stop_consumption(camera_id)
     if consumer is None:
         return StreamStatusResponse(camera_id=camera_id, running=False)
-
-    await consumer.stop()
-    await maybe_release_orchestrator(camera_id)
     status = consumer.status()
     status.running = False
     return status
+
+
+@router.post("/{camera_id}/consume/renew_lease", response_model=LeaseRenewResponse)
+async def renew_consume_lease(
+    camera_id: str, request: LeaseRenewRequest,
+) -> LeaseRenewResponse:
+    """拉流租约续期(轻量): 只刷新租约到期时刻, 不碰 ISS 推流和消费器。
+
+    voice_server 唤醒态联动的续租心跳走这里, 而不是重复完整开流——
+    ISS start 可能换 FLV 地址, 会触发消费器"URL 变更先停旧再起新",
+    造成视频中断。renewed=False(消费器不在跑/期望状态缺失)时调用方
+    退回完整开流补齐。
+    """
+    from src.api.registry import consumer_registry
+    from src.pipeline import stream_state
+
+    consumer = consumer_registry.get(camera_id)
+    if consumer is None or not consumer.running:
+        return LeaseRenewResponse(renewed=False, reason="not_consuming")
+    if not await stream_state.renew_lease(camera_id, request.lease_seconds):
+        return LeaseRenewResponse(renewed=False, reason="no_desired_state")
+    return LeaseRenewResponse(renewed=True)
 
 
 @router.get("/{camera_id}/consume/status", response_model=StreamStatusResponse)

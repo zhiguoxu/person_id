@@ -62,6 +62,17 @@ async def lifespan(application: FastAPI):
     # 配置转储放在覆盖套用之后, 日志里看到的才是真正生效的值
     logger.info("person_id 配置:\n{}", format_config_for_log(config))
 
+    # 业务 Redis 连接(统一走 common RedisClient, 与日志连接同款; redis 是
+    # 必配块, 无降级路径):
+    #   - 拉流期望状态/租约在主库(config.redis.db);
+    #   - voice_server 在线标记在 voice_online_redis_db(重推流前的在线检查)。
+    # 放在覆盖套用之后建连, 在线改过的 redis 配置才生效
+    deps.stream_state_redis_client = RedisClient(config.redis)
+    await deps.stream_state_redis_client.connect()
+    deps.voice_online_redis_client = RedisClient(
+        config.redis.model_copy(update={"db": config.voice_online_redis_db}))
+    await deps.voice_online_redis_client.connect()
+
     from src.gallery.persistence import get_gallery_persistence
     persistence = get_gallery_persistence()
     await persistence.initialize(config.gallery_db_path)
@@ -85,8 +96,12 @@ async def lifespan(application: FastAPI):
     # 恢复重启前的拉流: 期望状态(哪些摄像头该在拉流)在 consume/start|stop 时
     # 写入 Redis, 这里按它重建消费器——部署/崩溃重启后拉流自动续上, 不用手工
     # 再开。存的地址若已失效, 拉流失败会走 auto_restream 自愈换新地址。
-    from src.pipeline.stream_state import restore_streams
+    from src.pipeline.stream_state import restore_streams, start_lease_watchdog
     await restore_streams()
+
+    # 租约看门狗: 带租约开启的拉流(voice_server 唤醒态联动)到期未续租时
+    # 自动停消费并停设备推流——续租方崩溃后摄像头不会失控常开
+    start_lease_watchdog()
 
     logger.info("应用已就绪 (摄像头将在首次连接时初始化)")
 
@@ -94,11 +109,14 @@ async def lifespan(application: FastAPI):
 
     # Shutdown
     from src.api.registry import camera_registry, consumer_registry
+    from src.pipeline import stream_state
 
     logger.info(
         "应用正在关闭 ({} 个摄像头, {} 个拉流消费器) ...",
         len(camera_registry), len(consumer_registry),
     )
+    # 看门狗先停: 避免它在下面停消费器/清注册表的过程中并发执行到期清理
+    await stream_state.stop_lease_watchdog()
     for cam_id, consumer in list(consumer_registry.items()):
         logger.info("正在停止拉流消费器: {}", cam_id)
         await consumer.stop()
@@ -110,10 +128,10 @@ async def lifespan(application: FastAPI):
     camera_registry.clear()
 
     # 注意: 不删 Redis 里的拉流期望状态——关停≠用户想停止拉流,
-    # 正是下次启动 restore_streams 恢复的依据
-    from src.pipeline import restream, stream_state
-    await stream_state.close()
-    await restream.close()
+    # 正是下次启动 restore_streams 恢复的依据(带租约的条目由重启后的
+    # restore_streams/看门狗按到期时刻裁决)
+    await deps.stream_state_redis_client.disconnect()
+    await deps.voice_online_redis_client.disconnect()
 
     await get_gallery_persistence().close()
     await close_db()

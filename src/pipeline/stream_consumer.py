@@ -184,7 +184,7 @@ class StreamConsumer:
                     "拉流打开失败: camera={}, url={}, {}s 后重试",
                     self.camera_id, self.url, reconnect_delay,
                 )
-                self._note_pull_failure()
+                self._on_pull_failure()
                 self._stop_event.wait(reconnect_delay)
                 continue
 
@@ -223,11 +223,11 @@ class StreamConsumer:
                     "拉流中断: camera={}, 本次连接读到 {} 帧, {}s 后重连",
                     self.camera_id, session_frames, reconnect_delay,
                 )
-                self._note_pull_failure()
+                self._on_pull_failure()
                 self._stop_event.wait(reconnect_delay)
 
-    def _note_pull_failure(self) -> None:
-        """(读流线程) 记一次拉流失败; 连续失败达到阈值时调度自动重推流。"""
+    def _on_pull_failure(self) -> None:
+        """(读流线程) 拉流失败的处理: 累计连续失败计数, 达到阈值时调度自动重推流。"""
         self._consecutive_pull_failures += 1
         if not self.auto_restream or self._recovering:
             return

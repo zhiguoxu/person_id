@@ -291,6 +291,28 @@ class StreamStartRequest(BaseModel):
         True,
         description="拉流连续失败达到阈值后是否自动重新开启设备推流",
     )
+    lease_seconds: int | None = Field(
+        None, gt=0,
+        description="租约时长(秒): 到期未续租则自动停消费并停设备推流; "
+                    "None=永久(web 控制台手动启停)。续租走轻量的 "
+                    "consume/renew_lease(重复 start 也会续租, 但会多打一轮 "
+                    "ISS)。供 voice_server 唤醒态联动使用, 是调用方崩溃后"
+                    "摄像头不失控常开的安全网(见 pipeline/stream_state.py)",
+    )
+
+
+class LeaseRenewRequest(BaseModel):
+    """拉流租约续期请求(consume/renew_lease)。"""
+    lease_seconds: int = Field(
+        gt=0, description="新租约时长(秒), 从当前时刻起算")
+
+
+class LeaseRenewResponse(BaseModel):
+    """拉流租约续期结果。renewed=False 时调用方应退回完整开流。"""
+    renewed: bool
+    reason: str | None = Field(
+        None, description="未续成的原因: not_consuming=消费器不在跑; "
+                          "no_desired_state=期望状态缺失(已显式停止/损坏)")
 
 
 class StreamStatusResponse(BaseModel):

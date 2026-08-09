@@ -22,24 +22,12 @@ import time
 from voice_agent_common.utils.logger import logger
 from pydantic import ValidationError
 
+from src import deps
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream
 from src.configs.config import DATA_DIR, config
 from src.pipeline.restream_models import RestreamAttempt, RestreamLogLine
-from src.utils.redis_conn import LazyRedis
 
 RESTREAM_LOG_DIR = DATA_DIR / "restream_log"
-
-# 在线标记专用连接: 标记在 voice_server 的主库, db 与 stream_state 的
-# (config.redis.db) 不同, 不能共用其连接池
-_online_redis = LazyRedis(
-    db_of=lambda cfg: cfg.voice_online_redis_db,
-    unconfigured_hint="Redis 未配置(redis.host 为空), 重推流前无法确认设备在线状态, "
-                      "将始终按'无法确认'降级(继续尝试重推)")
-
-
-async def close() -> None:
-    """关闭在线标记连接池(lifespan shutdown 调用)。"""
-    await _online_redis.close()
 
 
 async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
@@ -51,11 +39,13 @@ async def check_device_online(device_sn: str) -> tuple[bool | None, str]:
 
     这是 TTL 级近似值: voice 实例崩溃后的残留窗口内会误判在线, 代价只是
     多一次注定失败的 ISS 重推, 符合"宁可多试也不卡死恢复"的既有取舍。
-    返回 (在线状态, 描述); Redis 未配置/不可达时状态为 None, 由调用方降级。
+    返回 (在线状态, 描述); Redis 不可达时状态为 None, 由调用方降级。
+
+    连接是 common 统一的 RedisClient(deps.voice_online_redis_client,
+    main.py lifespan 建连, redis 必配): 标记在 voice_server 的主库,
+    db 与 stream_state 的(config.redis.db)不同, 所以是独立实例。
     """
-    r = _online_redis.get()
-    if r is None:
-        return None, "Redis 未配置, 无法确认设备在线状态"
+    r = deps.voice_online_redis_client.rds
     cfg = config
     key = f"ws:online:{cfg.voice_live_namespace}:{device_sn}"
     # 标记所在位置写进日志: 误判"不在线"几乎都是 person_id 连的 Redis 与
