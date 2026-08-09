@@ -13,6 +13,7 @@ from fastapi import APIRouter
 from src import deps
 from src.configs.config import config
 from voice_agent_common.utils.config_dump import sanitize_config_for_api
+from voice_agent_common.utils.net import display_listen_addr
 from voice_agent_common.utils.pkg_versions import package_versions
 
 config_router = APIRouter(prefix="/api/config", tags=["config"])
@@ -21,6 +22,10 @@ config_router = APIRouter(prefix="/api/config", tags=["config"])
 @config_router.get("")
 async def get_config():
     """脱敏规则见 voice_agent_common.utils.config_dump, 密钥/密码/token 一律替换为 ***。"""
+    host, port = display_listen_addr(
+        config.host, config.port,
+        probe_host=config.redis.host, probe_port=config.redis.port,
+    )
     return {
         "service": "person_id",
         "version": config.version,
@@ -30,6 +35,8 @@ async def get_config():
             deps.started_at.isoformat(sep=" ", timespec="seconds")
             if deps.started_at else None
         ),
+        "host": host,
+        "port": port,
         "packages": package_versions(
             common=voice_agent_common,
             session_store=session_store,

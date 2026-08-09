@@ -1,7 +1,7 @@
 # H20 GPU 算力预估：person_id 与两个 embedding 服务（1 万台设备）
 
 > 2026-08-05。为上线后半年 1 万台设备的规模，预估 person_id（声纹 + 视觉）、
-> embedding-service（10005）、key-extractor（10006）所需 GPU 算力，以 H20 卡为单位。
+> embedding-service（10001）、key-extractor（10002）所需 GPU 算力，以 H20 卡为单位。
 > 单位开销全部取自仓库内实测数据（见文末「数据来源」），不含拍脑袋的模型参数。
 >
 > **结论先行：嵌入类三服务合计约 1.7 卡、建议 2 张 H20（含冗余）；真正的成本
@@ -35,8 +35,8 @@
 | 服务 | 模型（显存） | 实测单位开销 | 峰值负载 | 折算 H20 |
 |---|---|---|---|---|
 | 声纹向量 person_id:10003 | ERes2Net-Base 200k（~38MB ONNX） | 6.8 ms/次 | 33 次/秒 | **0.38 卡** |
-| 文本嵌入 embedding-service:10005 | Qwen3-Embedding-4B（~19GB） | 查询 15 ms（bs=1）；写入批量 ~3.1 ms/条（batch8 25ms） | 33 查询/秒 + 写入 ×1.5 摊薄 | **1.11 卡** |
-| key 抽取 key-extractor:10006 | Qwen3-Emb-0.6B 微调（~2.4GB） | 5 ms/次（cudagraph） | 20 次/秒（60% 触发） | **0.17 卡** |
+| 文本嵌入 embedding-service:10001 | Qwen3-Embedding-4B（~19GB） | 查询 15 ms（bs=1）；写入批量 ~3.1 ms/条（batch8 25ms） | 33 查询/秒 + 写入 ×1.5 摊薄 | **1.11 卡** |
+| key 抽取 key-extractor:10002 | Qwen3-Emb-0.6B 微调（~2.4GB） | 5 ms/次（cudagraph） | 20 次/秒（60% 触发） | **0.17 卡** |
 | **合计** | 同卡可混部（显存 <25GB） | | | **≈1.7 卡 → 建议 2 卡** |
 
 三点说明：
@@ -108,4 +108,4 @@ Tier1 过滤的优化后数字）。按当前设备规模与 10% 峰值并发对
 | key 抽取 5ms/次、显存 ~2.4GB、字典命中不调模型 | `packages/memory/key-extractor/README.md` |
 | 视觉 Tier1 3ms/帧、Tier2 全链路 18~45ms/次 | `person_id/README.md`、`person_id/docs/tier2_batch_performance.md` |
 | 一万台设备负载模型、记忆抽取 t≈6.3s/批 | `packages/memory/docs/ingest-capacity-budget.md` |
-| 现有部署：GPU 机 1.15.11.133（2×H20），10005+10006 同卡 GPU1，person_id 在 cuda:2 | `packages/memory/embedding-service/README.md`、`person_id/src/configs/config_files/config.yaml` |
+| 现有部署：GPU 机 123.206.174.158（2×H20），10001+10002 同卡 GPU1，person_id 在 cuda:2 | `packages/memory/embedding-service/README.md`、`person_id/src/configs/config_files/config.yaml` |
