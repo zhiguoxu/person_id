@@ -8,21 +8,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.configs.config import config
 from src.configs.override import config_override_manager
 from voice_agent_common.config_override_api import build_config_override_router
-from voice_agent_common.utils.logger import LogManager, intercept_standard_loggers
+from voice_agent_common.utils.logger import setup_service_logging
+from voice_agent_common.utils.log_stream import log_broadcaster, make_stream_forwarder
 from voice_agent_common.infra.redis_client import RedisClient
 from session_store.database import init_db, close_db
 from src import deps
 
-# 文件日志用本服务独享目录（与同机其他服务隔离，避免多进程 rotation 互删，见 logger.py）。
-# 打补丁 logger 给每条日志注入 {extra[device_sn]}(= camera_id)/{extra[trace_id]} 列，
+# logger patch 会给每条日志注入 {extra[device_sn]}(= camera_id)/{extra[trace_id]}，
 # 由 WS/REST/拉流入口写入 ContextVar（websocket.py / routes.py / stream_consumer.py）。
-logger = LogManager.setup(log_dir="logs/person", level=config.log_level)
-intercept_standard_loggers(config.log_level)
-
-# 在导入期就标记日志来源，使 bind_loop 之前（启动早期）的日志也带上正确 source。
-from voice_agent_common.utils.log_stream import log_broadcaster, make_stream_forwarder
-
-log_broadcaster.set_source("person")
+logger = setup_service_logging(
+    log_dir="logs/person",
+    level=config.log_level,
+    source="person",
+    service="person_id",
+    port=config.port,
+)
 
 
 @asynccontextmanager
