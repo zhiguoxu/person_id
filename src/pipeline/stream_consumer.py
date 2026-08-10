@@ -343,6 +343,8 @@ class StreamConsumer:
             frame_result = build_frame_result(result)
             # 检测坐标的基准尺寸: 预览图可能缩小过, 前端须按此映射框位置
             frame_result.frame_h, frame_result.frame_w = frame.shape[:2]
+            # 角标与状态接口同口径, 避免前端按绘制间隔估算虚高
+            frame_result.process_fps = round(self.process_fps, 1)
 
             publish_to_viewers(self.camera_id, {
                 "jpeg": jpeg,

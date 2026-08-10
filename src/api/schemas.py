@@ -239,6 +239,9 @@ class WSFrameResult(BaseModel):
     # 预览 JPEG 可能为省带宽而缩小, 前端必须以此字段而非预览图尺寸做坐标映射。
     frame_w: int | None = None
     frame_h: int | None = None
+    # 服务端拉流处理帧率 EMA (与 /consume/status.process_fps 同口径)。
+    # 有值时前端角标直接用它, 避免按收包/绘制间隔估算虚高。
+    process_fps: float | None = None
 
 
 class WSIdentityConfirm(BaseModel):
