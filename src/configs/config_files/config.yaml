@@ -66,7 +66,7 @@ redis:
   port: 6379
   socket_connect_timeout: 5
   socket_timeout: 5
-  max_connections: 20
+  max_connections: 1000
 
 log_stream:
   stream_key: "voice_agent:logs:stream"
