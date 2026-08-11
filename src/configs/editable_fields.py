@@ -176,6 +176,23 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
         "description": "连续拉流失败达到该次数后自动重新开启设备推流并切换新地址",
         "hot": True,
     },
+    # ── 拉流录像（消费点逐帧现读 config.video_record，全部热生效） ──
+    "video_record.enabled": {
+        "description": "是否在拉流消费期间自动录像并上传 COS",
+        "hot": True,
+    },
+    "video_record.max_seconds": {
+        "description": "单段录像最长秒数（超时自动切新段，默认 1800=30 分钟）",
+        "hot": True,
+    },
+    "video_record.fps": {
+        "description": "录像写入帧率（读流线程节流）",
+        "hot": True,
+    },
+    "video_record.max_width": {
+        "description": "录像限宽（像素，0=原分辨率）；缩小可显著减小文件体积",
+        "hot": True,
+    },
     "image_correction_enabled": {
         "description": "是否启用镜头畸变矫正（逐帧现读）",
         "hot": True,

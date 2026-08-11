@@ -12,6 +12,7 @@ from voice_agent_common.utils.logger import setup_service_logging
 from voice_agent_common.utils.log_stream import log_broadcaster, make_stream_forwarder
 from voice_agent_common.infra.redis_client import RedisClient
 from session_store.database import init_db, close_db
+from session_store import VideoStore
 from src import deps
 
 # logger patch 会给每条日志注入 {extra[device_sn]}(= camera_id)/{extra[trace_id]}，
@@ -55,6 +56,15 @@ async def lifespan(application: FastAPI):
 
     # 配置覆盖层的 DB 引擎 (与 voice/agent 同款 session_store, 连接由 db_url 决定)
     await init_db(config.db_url)
+
+    # 进程崩溃/重启后残留的 recording 行本地文件已丢, 标 failed 避免永久挂起
+    orphaned = await VideoStore.mark_orphaned_recordings_failed()
+    if orphaned:
+        logger.info("启动清理: {} 条未完成录像标为 failed", orphaned)
+
+    # 拉流录像上传 COS (密钥在环境 yaml; 与 voice_server 同桶)
+    from voice_agent_common.infra.oss.cos import CosClient
+    deps.cos_client = CosClient(config.cos)
 
     # 把 web 控制台在线改过的配置(DB 覆盖层)套到内存配置单例上。
     # 需在底库初始化/模型预热/拉流恢复等后续组件消费 config 之前执行。
@@ -159,9 +169,11 @@ app.add_middleware(
 # 挂载路由
 from src.api.routes import router as api_router
 from src.api.websocket import ws_router
+from src.api.video_api import router as video_router
 
 app.include_router(api_router)
 app.include_router(ws_router)
+app.include_router(video_router)
 
 # 声纹 API (第五识别模态, voice_server 每轮调用)
 from src.api.voice import router as voice_router

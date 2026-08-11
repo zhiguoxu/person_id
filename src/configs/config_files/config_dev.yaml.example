@@ -33,3 +33,9 @@ voice_online_redis_db: 2
 voice_live_namespace: default
 # 特征底库 sqlite; 相对路径 = 相对服务启动目录(项目根)
 gallery_db_path: data/gallery.db
+
+# 拉流录像上传 COS (与 voice_server 同桶); 密钥与 bucket 按环境覆盖
+cos:
+  secret_id: "YOUR_COS_SECRET_ID"
+  secret_key: "YOUR_COS_SECRET_KEY"
+  device_upload_bucket: "YOUR_COS_BUCKET"

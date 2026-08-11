@@ -90,6 +90,9 @@ class StreamConsumer:
         self.last_restream_at: float | None = None
         self.last_restream_outcome: str | None = None
 
+        # 拉流录像(consume 生命周期内不断线切会话; stop 时收尾上传)
+        self._recorder = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -101,6 +104,12 @@ class StreamConsumer:
         self.running = True
         self._loop = asyncio.get_running_loop()
         self._stop_event.clear()
+        # 拉流即开录: 断线重连/重推流不换 recorder, 显式 stop 才收尾
+        if config.video_record.enabled:
+            from src.pipeline.video_recorder import VideoRecorder
+            self._recorder = VideoRecorder(self.camera_id, self._loop)
+        else:
+            self._recorder = None
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
             name=f"stream-reader-{self.camera_id}",
@@ -131,6 +140,15 @@ class StreamConsumer:
             # 读流线程是 daemon, join 超时不阻塞关闭流程
             await asyncio.to_thread(self._reader_thread.join, 5.0)
             self._reader_thread = None
+
+        # 读流线程停稳后再收录像, 避免与 maybe_write 竞态
+        recorder = self._recorder
+        self._recorder = None
+        if recorder is not None:
+            try:
+                await recorder.stop()
+            except Exception:
+                logger.exception("拉流录像收尾失败: camera={}", self.camera_id)
 
         self.connected = False
         # 清空运行时轨迹与注意力目标: 停止后 orchestrator 可能因为还有观看端
@@ -214,6 +232,14 @@ class StreamConsumer:
                         "流分辨率: camera={}, {}x{}",
                         self.camera_id, self.stream_width, self.stream_height,
                     )
+                recorder = self._recorder
+                if recorder is not None:
+                    try:
+                        recorder.maybe_write(frame)
+                    except Exception:
+                        logger.exception(
+                            "拉流录像写帧失败: camera={}", self.camera_id,
+                        )
 
             cap.release()
             self.connected = False

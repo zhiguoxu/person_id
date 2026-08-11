@@ -70,6 +70,12 @@ POST /api/{camera_id}/device_stream/stop    # 停止设备推流
 POST /api/{camera_id}/consume/start         # 开启消费, body: {"url": "..."}
 POST /api/{camera_id}/consume/stop          # 停止消费
 GET  /api/{camera_id}/consume/status        # 消费状态 (running/connected/分辨率/fps/viewers)
+
+# 拉流录像 (consume 期间自动录制上传 COS; 按开始时间范围查询)
+GET  /api/videos                            # ?start_from=&start_to=&device_sn=&status=ready
+GET  /api/videos/{id}                       # 单条元数据
+GET  /api/videos/{id}/media                 # 307 → COS 临时链 (?download=true 附件下载)
+DELETE /api/videos/{id}                     # 删元数据 + COS 对象
 ```
 
 ## 项目结构

@@ -9,9 +9,10 @@
 #     1. 数据库 url / 路径 (db_url, gallery_db_path)
 #     2. redis 连接 (host / password / db), 以及与本环境 voice_server 实例
 #        耦合的 voice_online_redis_db / voice_live_namespace
-#     3. 各类密钥 (vlm.api_key)
-#     4. 环境专属地址与资源 (hardware.device 这类随部署机器变化的项——
-#        写进基底会被其他环境静默继承, 漏覆盖就串环境, 所以按环境隔离)
+#     3. 各类密钥 (vlm.api_key, cos.secret_id/secret_key)
+#     4. 环境专属地址与资源 (hardware.device、cos.device_upload_bucket 这类
+#        随部署机器/环境变化的项——写进基底会被其他环境静默继承, 漏覆盖就
+#        串环境, 所以按环境隔离)
 #     5. 本实例监听的 host / port (随部署实例变化)
 #   注: 服务自身参数原收在 server.* 子块, 已扁平到顶层(与 voice/agent 一致)
 #   密钥字段在本文件留空串占位, 真值一律在环境 yaml 覆盖。
@@ -67,6 +68,13 @@ redis:
   socket_connect_timeout: 5
   socket_timeout: 5
   max_connections: 1000
+
+video_record:
+  enabled: true
+
+# secret_id/secret_key(密钥)与 device_upload_bucket(环境资源名)在环境 yaml 覆盖
+cos:
+  region: ap-shanghai
 
 log_stream:
   stream_key: "voice_agent:logs:stream"

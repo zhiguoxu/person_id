@@ -23,6 +23,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from voice_agent_common.config_models.cos_config import COSConfig
 from voice_agent_common.config_models.log_stream_config import LogStreamConfig
 from voice_agent_common.config_models.redis_config import RedisConfig
 
@@ -32,6 +33,19 @@ from voice_agent_common.config_models.redis_config import RedisConfig
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
 DATA_DIR = PROJECT_ROOT / "data"
+
+
+class VideoRecordConfig(BaseModel):
+    """拉流录像配置(pipeline/video_recorder.py)。
+
+    consume/start→stop 期间自动落盘并上传 COS; 断线重连仍属同一拉流会话。
+    单段上限避免超大文件; 超长自动切新段(新 DB 行 + 新 COS 对象)。
+    消费点逐帧现读 config.video_record, 全部字段热生效。
+    """
+    enabled: bool = False
+    max_seconds: float = 1800.0  # 单段最长 30 分钟
+    fps: float = 10.0            # 录制帧率(读流线程节流)
+    max_width: int = 1280        # 录制限宽(像素), 0=原分辨率
 
 
 class HardwareConfig(BaseModel):
@@ -265,12 +279,17 @@ class Config(BaseSettings):
     voice_online_redis_db: int = 2
     voice_live_namespace: str = "default"
 
+    # 拉流录像(consume 期间自动录制上传 COS)。默认值即生产值, yaml 只写偏离项
+    video_record: VideoRecordConfig = VideoRecordConfig()
+
     # WebSocket
     ws_max_frame_size: int = 1024 * 1024  # 1MB 最大帧大小
     # 配置在线编辑(DB 覆盖层)的存储, 与 voice/agent 同款 session_store 表结构。
     # 必填、无代码默认 (与 voice_server 口径一致), 只放环境 yaml: dev 先落本地
     # SQLite, 切共享 MySQL 时改成 mysql+aiomysql://... 即可, 代码零改动
     db_url: str
+    # 录像上传 COS (与 voice_server 同桶同密钥约定); 密钥/bucket 只放环境 yaml
+    cos: COSConfig
     hardware: HardwareConfig = HardwareConfig()
     detection: DetectionConfig = DetectionConfig()
     face: FaceConfig = FaceConfig()
