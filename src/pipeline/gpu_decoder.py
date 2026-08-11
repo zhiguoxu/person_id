@@ -1,0 +1,153 @@
+"""NVDEC GPU 拉流解码 — ffmpeg 子进程, 接口对齐 cv2.VideoCapture
+
+背景: cv2.VideoCapture(CAP_FFMPEG) 是纯 CPU 软解, 720p H.264 单路约占
+10-20% 核, 几百路规模下解码就吃光整机 CPU。NVDEC 是显卡上独立的解码
+ASIC(与 NVENC 同理, 不占 CUDA 核心), 把解码搬上去后 CPU 只剩下
+NV12→BGR 像素格式转换(swscale, 单路 720p@15fps 约 2-3% 核)。
+
+实现: ffmpeg -hwaccel cuda 拉流解码, rawvideo BGR 经 stdout 管道逐帧读回。
+接口对齐 cv2.VideoCapture(isOpened/read/release/set), StreamConsumer 的
+读流循环两种解码器无差别使用; 打开失败由调用方按次退回 CPU 解码。
+
+分辨率处理: rawvideo 管道无帧头, 必须先 ffprobe 探测分辨率并用 scale
+滤镜锁死输出尺寸——流中途变分辨率时输出仍按锁定尺寸缩放, 不会错位解析
+(重连后重新探测即跟上新分辨率)。
+"""
+from __future__ import annotations
+
+import subprocess
+
+import numpy as np
+from voice_agent_common.utils.logger import logger
+
+# 本机 ffmpeg 是否支持 cuda hwaccel(进程级缓存, 一次探测)
+_nvdec_supported: bool | None = None
+
+
+def nvdec_supported() -> bool:
+    """本机 ffmpeg 是否带 cuda hwaccel。不支持的机器缓存 False,
+    之后每次开流直接走 CPU, 不重复付探测/失败开销。"""
+    global _nvdec_supported
+    if _nvdec_supported is None:
+        try:
+            out = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-hwaccels"],
+                capture_output=True, timeout=10,
+            )
+            _nvdec_supported = out.returncode == 0 and b"cuda" in out.stdout
+        except Exception:
+            _nvdec_supported = False
+        logger.info("NVDEC 解码探测: {}",
+                    "可用" if _nvdec_supported else "不可用(拉流走 CPU 解码)")
+    return _nvdec_supported
+
+
+def _gpu_index(device: str) -> int:
+    """config.hardware.device('cuda:1'/'cpu') → hwaccel_device 序号。"""
+    if device.startswith("cuda") and ":" in device:
+        try:
+            return int(device.split(":")[-1])
+        except ValueError:
+            pass
+    return 0
+
+
+def _probe_resolution(url: str, timeout: float) -> tuple[int, int]:
+    out = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height", "-of", "csv=p=0",
+            url,
+        ],
+        capture_output=True, timeout=timeout,
+    )
+    w, h = out.stdout.decode().strip().split("\n")[0].split(",")
+    return int(w), int(h)
+
+
+class NvdecCapture:
+    """GPU 解码拉流读取器(与 cv2.VideoCapture 同接口)。"""
+
+    def __init__(self, url: str, device: str = "cuda:0",
+                 probe_timeout: float = 10.0) -> None:
+        self._proc: subprocess.Popen | None = None
+        self._width = 0
+        self._height = 0
+        self._frame_bytes = 0
+        # True = 流本身不可达(未推流/超时), 与 NVDEC 无关——CPU 解码同样
+        # 打不开, 调用方不必做无谓的 CPU 退回, 交给外层重连即可
+        self.stream_unreachable = False
+
+        try:
+            self._width, self._height = _probe_resolution(url, probe_timeout)
+        except OSError as e:
+            # ffprobe 不存在等本机环境问题 → 值得退回 CPU 解码
+            logger.warning("NVDEC 探测环境异常: {} ({})", url, e)
+            return
+        except Exception as e:
+            self.stream_unreachable = True
+            logger.warning("拉流探测失败(流不可达, 可能设备未推流): {} ({})",
+                           url, e)
+            return
+        if self._width <= 0 or self._height <= 0:
+            return
+        self._frame_bytes = self._width * self._height * 3
+
+        try:
+            self._proc = subprocess.Popen(
+                [
+                    "ffmpeg", "-loglevel", "error",
+                    "-hwaccel", "cuda", "-hwaccel_device", str(_gpu_index(device)),
+                    "-fflags", "nobuffer", "-flags", "low_delay",
+                    "-i", url,
+                    "-an",
+                    # 锁死输出尺寸: 流中途变分辨率也不会错位解析
+                    "-vf", f"scale={self._width}:{self._height}",
+                    "-f", "rawvideo", "-pix_fmt", "bgr24",
+                    "pipe:1",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as e:
+            logger.warning("NVDEC ffmpeg 启动失败: {}", e)
+            self._proc = None
+
+    # ── cv2.VideoCapture 接口 ──
+
+    def isOpened(self) -> bool:
+        return self._proc is not None
+
+    def set(self, *_args) -> bool:
+        """兼容 cv2 的属性设置调用(如 CAP_PROP_BUFFERSIZE), 无操作。"""
+        return False
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        if self._proc is None:
+            return False, None
+        # BufferedReader.read(n) 阻塞至读满 n 字节, 只有 EOF(流断/进程退出)
+        # 才会短读
+        data = self._proc.stdout.read(self._frame_bytes)
+        if data is None or len(data) < self._frame_bytes:
+            return False, None
+        frame = (
+            np.frombuffer(data, dtype=np.uint8)
+            .reshape(self._height, self._width, 3)
+            .copy()  # frombuffer 是只读视图, 下游(畸变矫正等)需要可写数组
+        )
+        return True, frame
+
+    def release(self) -> None:
+        proc = self._proc
+        self._proc = None
+        if proc is None:
+            return
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass

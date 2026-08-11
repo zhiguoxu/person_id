@@ -8,6 +8,9 @@
 
 实现要点:
 - 在读流线程按 video_record.fps 节流写帧(与识别处理解耦)
+- 编码走 ffmpeg 子进程出 H.264: 网页 <video> 只认 H.264/VP9/AV1,
+  cv2 内置的 mp4v(MPEG-4 Part 2) 浏览器放不了, 只作 ffmpeg 缺失时的
+  兜底(仍可下载后本地播放)
 - 本地临时 mp4 → COS videos/{device_sn}/{started_at}.mp4 → session_store 元数据
 - 元数据在上传成功后落库(失败则写 status=failed); 不阻断拉流/识别
 
@@ -19,6 +22,8 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -37,10 +42,95 @@ VIDEO_COS_PREFIX = "videos"
 _TEMP_DIR = PROJECT_ROOT / "data" / "video_record"
 
 
+# 编码器参数集。两套都出 H.264 + yuv420p + faststart(moov 在文件头,
+# 网页拿到临时链即可边下边播):
+# - nvenc: 显卡独立编码 ASIC, 不占 CUDA 核心也基本不占 CPU, 大规模路数必选
+# - x264: 纯 CPU 兜底; -threads 2 限住单实例线程数, 避免几十路同录时
+#   每个 ffmpeg 默认起满核数线程互相踩踏
+_CODEC_ARGS: dict[str, list[str]] = {
+    "nvenc": ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "30"],
+    "x264": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+             "-threads", "2"],
+}
+
+# NVENC 一次性运行时探测结果(进程级缓存)
+_nvenc_available: bool | None = None
+
+
+def _probe_nvenc() -> bool:
+    """真编一帧黑帧探测 NVENC: ffmpeg 构建缺 nvenc / 驱动不匹配都能暴露。
+
+    只在首段开录时跑一次(~百 ms), 结果进程级缓存。
+    """
+    global _nvenc_available
+    if _nvenc_available is None:
+        try:
+            proc = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-f", "lavfi", "-i", "color=black:size=64x64:rate=1:duration=1",
+                    "-c:v", "h264_nvenc", "-f", "null", "-",
+                ],
+                capture_output=True, timeout=15,
+            )
+            _nvenc_available = proc.returncode == 0
+        except Exception:
+            _nvenc_available = False
+        logger.info("NVENC 编码探测: {}",
+                    "可用" if _nvenc_available else "不可用(将用 libx264)")
+    return _nvenc_available
+
+
+def _select_codec(encoder: str) -> str:
+    """按配置选编码器: auto 优先 NVENC; 强制 nvenc 但探测失败时退 x264。"""
+    if encoder == "x264":
+        return "x264"
+    if _probe_nvenc():
+        return "nvenc"
+    if encoder == "nvenc":
+        logger.warning("配置强制 nvenc 但探测不可用, 退回 libx264")
+    return "x264"
+
+
+class _FfmpegWriter:
+    """H.264 mp4 编码器(ffmpeg 子进程, 与 cv2.VideoWriter 同接口)。"""
+
+    def __init__(self, path: Path, width: int, height: int, fps: float,
+                 codec: str) -> None:
+        self._proc = subprocess.Popen(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-f", "rawvideo", "-pix_fmt", "bgr24",
+                "-s", f"{width}x{height}", "-r", f"{fps:g}",
+                "-i", "pipe:0",
+                *_CODEC_ARGS[codec],
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                str(path),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def write(self, frame: np.ndarray) -> None:
+        self._proc.stdin.write(frame.tobytes())
+
+    def release(self) -> None:
+        try:
+            self._proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self._proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+            self._proc.wait()
+
+
 @dataclass
 class _Segment:
     """一个正在写入的录制段(writer + 本地文件 + 统计)。"""
-    writer: cv2.VideoWriter
+    writer: _FfmpegWriter | cv2.VideoWriter
     path: Path
     started_at: datetime
     width: int
@@ -107,7 +197,15 @@ class VideoRecorder:
             if self._segment is None:
                 self._segment = self._open_segment(frame, cfg)
             if self._segment is not None:
-                self._segment.write(self._prepare_frame(frame, cfg.max_width))
+                try:
+                    self._segment.write(self._prepare_frame(frame, cfg.max_width))
+                except Exception as e:
+                    # 编码器挂了(如 ffmpeg 进程异常退出): 丢弃当前段,
+                    # 下一帧自动开新段, 不逐帧刷报错
+                    broken = self._detach_segment()
+                    logger.warning("录像写帧失败, 丢弃当前段: device={} ({})",
+                                   self._device_sn, e)
+                    self._discard(broken)
 
         if finished is not None:
             logger.info(
@@ -130,7 +228,7 @@ class VideoRecorder:
     # ------------------------------------------------------------------
 
     def _open_segment(self, frame: np.ndarray, cfg) -> _Segment | None:
-        """(持锁) 按当前帧尺寸开新段; VideoWriter 打开失败返回 None。"""
+        """(持锁) 按当前帧尺寸开新段; 编码器打开失败返回 None。"""
         h, w = frame.shape[:2]
         width, height = self._target_size(w, h, cfg.max_width)
         fps = max(float(cfg.fps), 0.1)
@@ -138,16 +236,8 @@ class VideoRecorder:
         _TEMP_DIR.mkdir(parents=True, exist_ok=True)
         path = _TEMP_DIR / f"{self._device_sn}_{started_at:%Y%m%d_%H%M%S_%f}.mp4"
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(path), fourcc, fps, (width, height))
-        if not writer.isOpened():
-            writer.release()
-            logger.warning("录像 VideoWriter 打开失败: device={} path={}",
-                           self._device_sn, path)
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        writer = self._open_writer(path, width, height, fps)
+        if writer is None:
             return None
 
         logger.info(
@@ -159,11 +249,50 @@ class VideoRecorder:
             width=width, height=height, fps=fps,
         )
 
+    def _open_writer(
+        self, path: Path, width: int, height: int, fps: float,
+    ) -> _FfmpegWriter | cv2.VideoWriter | None:
+        """优先 ffmpeg 出 H.264(网页可播); 缺 ffmpeg 时退回 cv2 mp4v。"""
+        if shutil.which("ffmpeg"):
+            codec = _select_codec(config.video_record.encoder)
+            try:
+                return _FfmpegWriter(path, width, height, fps, codec)
+            except OSError as e:
+                logger.warning("ffmpeg 启动失败, 退回 cv2 编码(网页不可播): {}", e)
+
+        writer = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if not writer.isOpened():
+            writer.release()
+            logger.warning("录像 VideoWriter 打开失败: device={} path={}",
+                           self._device_sn, path)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+        logger.warning("录像使用 mp4v 兜底编码(浏览器无法预览, 仅可下载): device={}",
+                       self._device_sn)
+        return writer
+
     def _detach_segment(self) -> _Segment | None:
         """(持锁) 把当前段整体摘下来交给收尾协程, recorder 回到无段状态。"""
         seg = self._segment
         self._segment = None
         return seg
+
+    def _discard(self, seg: _Segment | None) -> None:
+        """废弃一个段: 关编码器、删本地文件, 不上传不落库。"""
+        if seg is None:
+            return
+        try:
+            seg.writer.release()
+        except Exception:
+            pass
+        try:
+            seg.path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------
     # 收尾: 关 writer → 上传 COS → 落库 (事件循环, 独占持有 segment)
@@ -201,7 +330,7 @@ class VideoRecorder:
             if deps.cos_client is None:
                 raise RuntimeError("CosClient 未初始化")
             data = await asyncio.to_thread(seg.path.read_bytes)
-            await deps.cos_client.upload_file(data, cos_key)
+            await deps.cos_client.upload_file(data, cos_key, content_type="video/mp4")
             await VideoStore.mark_ready(
                 video_id,
                 ended_at=ended_at,

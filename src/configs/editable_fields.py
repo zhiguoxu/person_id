@@ -172,6 +172,10 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
         "description": "拉流断开后的重连间隔（秒）",
         "hot": True,
     },
+    "stream_gpu_decode": {
+        "description": "GPU 解码（NVDEC）：解码走显卡独立编解码单元不占 CPU；本机不支持或打开失败自动退回 CPU 软解。改后下次重连生效",
+        "hot": True,
+    },
     "stream_restream_fail_threshold": {
         "description": "连续拉流失败达到该次数后自动重新开启设备推流并切换新地址",
         "hot": True,
@@ -191,6 +195,10 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
     },
     "video_record.max_width": {
         "description": "录像限宽（像素，0=原分辨率）；缩小可显著减小文件体积",
+        "hot": True,
+    },
+    "video_record.encoder": {
+        "description": "编码器：auto=NVENC 可用则用（GPU 编码单元，大规模路数必选）否则 x264；可强制 nvenc / x264。改后下个录制段生效",
         "hot": True,
     },
     "image_correction_enabled": {

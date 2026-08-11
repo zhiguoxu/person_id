@@ -40,12 +40,17 @@ class VideoRecordConfig(BaseModel):
 
     consume/start→stop 期间自动落盘并上传 COS; 断线重连仍属同一拉流会话。
     单段上限避免超大文件; 超长自动切新段(新 DB 行 + 新 COS 对象)。
-    消费点逐帧现读 config.video_record, 全部字段热生效。
+    消费点逐帧现读 config.video_record, 全部字段热生效(encoder 对已在写的
+    段不生效, 下个段起效)。
     """
     enabled: bool = False
     max_seconds: float = 1800.0  # 单段最长 30 分钟
     fps: float = 10.0            # 录制帧率(读流线程节流)
     max_width: int = 1280        # 录制限宽(像素), 0=原分辨率
+    # 编码器选择: auto = NVENC 可用则用(GPU 独立编码单元, 不占 CUDA 核心,
+    # 大规模路数必选), 否则退 libx264(CPU)。nvenc/x264 强制指定。
+    # 均出 H.264 mp4(网页可播); ffmpeg 缺失时最终兜底 cv2 mp4v(仅可下载)
+    encoder: str = "auto"  # auto | nvenc | x264
 
 
 class HardwareConfig(BaseModel):
@@ -266,6 +271,10 @@ class Config(BaseSettings):
     stream_preview_max_width: int = 1280  # 预览帧最大宽度, 0 = 原生分辨率
     stream_preview_jpeg_quality: int = 80  # 预览帧 JPEG 质量 (1-100)
     stream_reconnect_delay: float = 2.0  # 拉流断开后的重连间隔 (秒)
+    # GPU 解码(NVDEC, pipeline/gpu_decoder.py): ffmpeg -hwaccel cuda 拉流,
+    # 解码走显卡独立 ASIC 不占 CPU(大规模路数必选)。本机 ffmpeg 不支持
+    # cuda hwaccel 时自动退回 cv2 CPU 软解; 单次打开失败也按次退回
+    stream_gpu_decode: bool = True
 
     # ---- 拉流自动恢复 (pipeline/restream.py) ----
     # 连续拉流失败 (打开失败/连上但读不到几帧就断) 达到该次数后, 自动重新

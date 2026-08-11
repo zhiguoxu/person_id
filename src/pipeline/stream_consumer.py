@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -38,6 +39,9 @@ from src.api.schemas import (
 )
 from src.configs.config import config
 from src.pipeline.orchestrator import VisionOrchestrator
+
+if TYPE_CHECKING:
+    from src.pipeline.gpu_decoder import NvdecCapture
 
 
 class StreamConsumer:
@@ -193,7 +197,7 @@ class StreamConsumer:
         reconnect_delay = config.stream_reconnect_delay
 
         while not self._stop_event.is_set():
-            cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+            cap = self._open_capture()
             if not cap.isOpened():
                 cap.release()
                 self.connected = False
@@ -251,6 +255,25 @@ class StreamConsumer:
                 )
                 self._on_pull_failure()
                 self._stop_event.wait(reconnect_delay)
+
+    def _open_capture(self) -> NvdecCapture | cv2.VideoCapture:
+        """打开拉流解码器: 配置开启且本机支持时走 NVDEC(GPU 解码 ASIC,
+        不占 CPU/CUDA 核心), NVDEC 环境异常时按次退回 cv2 CPU 软解
+        (下次重连仍先试 GPU)。流本身不可达(设备未推流/超时)时不退回——
+        CPU 解码同样打不开, 直接交给外层重连逻辑, 省一次连接超时。"""
+        if config.stream_gpu_decode:
+            from src.pipeline.gpu_decoder import NvdecCapture, nvdec_supported
+
+            if nvdec_supported():
+                cap = NvdecCapture(self.url, device=config.hardware.device)
+                if cap.isOpened() or cap.stream_unreachable:
+                    return cap
+                cap.release()
+                logger.warning(
+                    "NVDEC 拉流打开失败, 本次退回 CPU 解码: camera={}",
+                    self.camera_id,
+                )
+        return cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
 
     def _on_pull_failure(self) -> None:
         """(读流线程) 拉流失败的处理: 累计连续失败计数, 达到阈值时调度自动重推流。"""
@@ -315,7 +338,7 @@ class StreamConsumer:
     # ------------------------------------------------------------------
 
     async def _process_loop(self) -> None:
-        from src.api.registry import publish_to_viewers
+        from src.api.registry import publish_to_viewers, viewer_count
 
         # 后台常驻任务: 显式绑定 device_sn, 不依赖创建方(REST 请求/启动恢复)的 context
         set_device_sn(self.camera_id)
@@ -342,13 +365,16 @@ class StreamConsumer:
             last_seq = seq
 
             t0 = time.perf_counter()
+            has_viewers = viewer_count(self.camera_id) > 0
             try:
                 # 识别路径: 默认原生分辨率 + 无 JPEG 重压缩, 不引入任何画质损失
                 frame = self._prepare_frame(frame, cfg)
                 result = await self.orchestrator.process_frame(frame)
                 events = self.orchestrator.drain_new_events()
-                # 预览路径: 仅供网页观看, 可独立缩放省带宽 (不影响识别)
-                jpeg = self._encode_preview(frame, cfg)
+                # 预览路径: 仅供网页观看, 可独立缩放省带宽 (不影响识别)。
+                # 无观看端时跳过 JPEG 编码——它是识别推理之外最大的单路 CPU
+                # 项(720p 每帧数 ms), 大规模路数下绝大多数摄像头无人在看
+                jpeg = self._encode_preview(frame, cfg) if has_viewers else None
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -372,13 +398,17 @@ class StreamConsumer:
             # 角标与状态接口同口径, 避免前端按绘制间隔估算虚高
             frame_result.process_fps = round(self.process_fps, 1)
 
-            publish_to_viewers(self.camera_id, {
-                "jpeg": jpeg,
-                "result": frame_result.model_dump(mode="json"),
-                "events": [
-                    build_ws_event(ev).model_dump(mode="json") for ev in events
-                ],
-            })
+            # jpeg=None 表示本帧没编预览(无观看端); 不广播——viewer_sender
+            # 直接 send_bytes(jpeg), None 会炸。check 与 publish 之间新连上的
+            # 观看端最多等一帧(下一轮 has_viewers 即为真), 无感
+            if jpeg is not None:
+                publish_to_viewers(self.camera_id, {
+                    "jpeg": jpeg,
+                    "result": frame_result.model_dump(mode="json"),
+                    "events": [
+                        build_ws_event(ev).model_dump(mode="json") for ev in events
+                    ],
+                })
 
             # 帧率上限节流 + 强制让出事件循环。
             # process_frame 是 async 但内部全是同步 GPU 推理 (Tier1 ~60-80ms,
