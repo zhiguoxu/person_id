@@ -201,6 +201,18 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
         "description": "编码器：auto=NVENC 可用则用（GPU 编码单元，大规模路数必选）否则 x264；可强制 nvenc / x264。改后下个录制段生效",
         "hot": True,
     },
+    "video_record.require_person": {
+        "description": "仅在看到人时录制：识别到人才开始录；连续无人超时后停止并上传，下次看到人另起新视频",
+        "hot": True,
+    },
+    "video_record.no_person_seconds": {
+        "description": "require_person 模式下连续无人多少秒停止录制（默认 10）",
+        "hot": True,
+    },
+    "video_record.person_fresh_seconds": {
+        "description": "require_person 模式开段门控：最近这么多秒内看到过人才允许开始录制（默认 3，不宜小于识别帧间隔）",
+        "hot": True,
+    },
     "image_correction_enabled": {
         "description": "是否启用镜头畸变矫正（逐帧现读）",
         "hot": True,

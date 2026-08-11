@@ -5,6 +5,9 @@
 - 断线重连、自动重推流换址: 同一 StreamConsumer 内继续写, 算同一拉流会话
   (共享 stream_session_id); 分辨率变化时被迫切新段(VideoWriter 尺寸不可变)
 - 单段超过 video_record.max_seconds 自动切段, 避免单个文件过大
+- require_person 模式: 只有识别结果里有人时才开段; 连续 no_person_seconds
+  秒无人自动收段上传, 下次看到人另起新段(处理协程经 notify_person 喂
+  可见性信号, 见 StreamConsumer._process_loop)
 
 实现要点:
 - 在读流线程按 video_record.fps 节流写帧(与识别处理解耦)
@@ -157,10 +160,22 @@ class VideoRecorder:
         self._lock = threading.Lock()
         # 当前段; None = 没有在写的段
         self._segment: _Segment | None = None
+        # 人物可见性(require_person 门控): 处理协程按每帧识别结果调
+        # notify_person 更新。单个 float/bool 赋值受 GIL 保护, 读流线程
+        # 直接读即可, 不需要进 self._lock(notify 在事件循环线程跑,
+        # 拿锁会被 _open_segment 里的 ffmpeg 启动等慢操作卡住)
+        self._person_visible = False
+        self._last_person_mono = 0.0
 
     @property
     def stream_session_id(self) -> str:
         return self._stream_session_id
+
+    def notify_person(self, seen: bool) -> None:
+        """事件循环: 每处理帧回报识别结果里是否有人(require_person 门控)。"""
+        self._person_visible = seen
+        if seen:
+            self._last_person_mono = time.monotonic()
 
     # ------------------------------------------------------------------
     # 读流线程入口
@@ -187,7 +202,13 @@ class VideoRecorder:
             if seg is not None and seg.last_write_mono:
                 if now - seg.last_write_mono < min_interval:
                     return
-                if now - seg.mono_start >= max_seconds:
+                if (cfg.require_person
+                        and now - self._last_person_mono
+                        >= max(float(cfg.no_person_seconds), 1.0)):
+                    # 连续无人超时: 收段上传(段尾自然带上这段无人画面),
+                    # 且下面不开新段(可见性门控挡住), 等再看到人另起新视频
+                    finished, reason = self._detach_segment(), "no_person"
+                elif now - seg.mono_start >= max_seconds:
                     finished, reason = self._detach_segment(), "max_duration"
                 else:
                     h, w = frame.shape[:2]
@@ -195,7 +216,15 @@ class VideoRecorder:
                         finished, reason = self._detach_segment(), "resolution_change"
 
             if self._segment is None:
-                self._segment = self._open_segment(frame, cfg)
+                if cfg.require_person and not (
+                    self._person_visible
+                    and now - self._last_person_mono
+                    < max(float(cfg.person_fresh_seconds), 0.1)
+                ):
+                    if finished is None:
+                        return
+                else:
+                    self._segment = self._open_segment(frame, cfg)
             if self._segment is not None:
                 try:
                     self._segment.write(self._prepare_frame(frame, cfg.max_width))

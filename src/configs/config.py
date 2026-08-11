@@ -51,6 +51,14 @@ class VideoRecordConfig(BaseModel):
     # 大规模路数必选), 否则退 libx264(CPU)。nvenc/x264 强制指定。
     # 均出 H.264 mp4(网页可播); ffmpeg 缺失时最终兜底 cv2 mp4v(仅可下载)
     encoder: str = "auto"  # auto | nvenc | x264
+    # 仅在看到人时录制: 开段要求识别结果里当前有人; 连续 no_person_seconds
+    # 秒无人则收段上传(段尾会带上这段无人画面), 下次看到人另起新段(新视频)
+    require_person: bool = True
+    no_person_seconds: float = 10.0
+    # 开段的可见性新鲜度窗口(秒): 最近这么多秒内看到过人才允许开段。
+    # 识别结果按处理帧率(stream_max_fps)更新, 比读流帧率慢; 断流重连后
+    # 旧的"有人"标志可能过期, 该窗口兜住这两种滞后。不宜小于识别帧间隔
+    person_fresh_seconds: float = 3.0
 
 
 class HardwareConfig(BaseModel):

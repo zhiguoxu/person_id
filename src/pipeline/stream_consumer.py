@@ -371,6 +371,11 @@ class StreamConsumer:
                 frame = self._prepare_frame(frame, cfg)
                 result = await self.orchestrator.process_frame(frame)
                 events = self.orchestrator.drain_new_events()
+                # 录像的"看到人"信号: require_person 模式据此开段/收段
+                # (写帧在读流线程, 识别在这里, 经 recorder 内部状态桥接)
+                recorder = self._recorder
+                if recorder is not None:
+                    recorder.notify_person(bool(result.get("tracked_persons")))
                 # 预览路径: 仅供网页观看, 可独立缩放省带宽 (不影响识别)。
                 # 无观看端时跳过 JPEG 编码——它是识别推理之外最大的单路 CPU
                 # 项(720p 每帧数 ms), 大规模路数下绝大多数摄像头无人在看
