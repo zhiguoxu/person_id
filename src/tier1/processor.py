@@ -72,7 +72,7 @@ class Tier1Processor:
         self._extract_face_info(frame, persons)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        logger.trace(
+        logger.debug(
             "Tier1: {} detections, {} tracked, {:.1f}ms",
             len(detections),
             len(persons),
