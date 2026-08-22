@@ -11,10 +11,10 @@ load_and_apply 套过一次覆盖后冻结），模型加载/建连等启动期�
 正确的。与 voice/agent 的唯一差异：没有设备级覆盖（editable_fields 里
 全部字段 device_editable=False），current_config() 恒返回全局快照。
 
-config_sync 是多实例同步通道（必选）：写覆盖后经 Redis Pub/Sub 广播，
-其他实例订阅到即 reload 重读 DB（自己发的通知按实例标识跳过）。频道命名空间复用
-voice_live_namespace（本服务所属环境套的命名空间，与 voice/agent 的
-live_namespace 同源）。
+config_sync 是多实例同步通道（必选）：写覆盖后向 Redis Stream 追加通知，
+其他实例读到即 reload 重读 DB（自己发的通知按实例标识跳过）。流 key 的
+命名空间复用 voice_live_namespace（本服务所属环境套的命名空间，与
+voice/agent 的 live_namespace 同源）。
 """
 
 from typing import cast
