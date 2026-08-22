@@ -13,7 +13,7 @@ from collections import defaultdict
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
-from src.configs.config import config
+from src.configs.override import current_config
 from src.gallery.data_models import BodyProportions, PoseBucket
 from src.pipeline.frame_buffer import CachedFrame, QualityCache
 
@@ -38,7 +38,7 @@ class MultiFrameAggregator:
     @staticmethod
     def aggregate_from_cache(cache: QualityCache) -> AggregatedFeatures:
         """从 QualityCache 聚合特征 — 直接消费 CachedFrame"""
-        cfg = config.multiframe
+        cfg = current_config().multiframe
         return AggregatedFeatures(
             face_per_pose=MultiFrameAggregator._aggregate_pool(
                 cache.face_pool, cfg.agg_min_face_quality, fallback=False,

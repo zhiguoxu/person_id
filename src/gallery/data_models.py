@@ -24,6 +24,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 from src.configs.config import config
+from src.configs.override import current_config
 
 
 # ==============================================================================
@@ -319,7 +320,8 @@ class PersonProfile(BaseModel):
             return self._face_centroids
 
         now = time.time()
-        half_life = config.gallery.face_match_half_life_days
+        # 半衰期是热字段, 每次重算质心现读 (缓存命中时不读, 由 enroll 失效驱动重算)
+        half_life = current_config().gallery.face_match_half_life_days
 
         centroids: dict[PoseBucket, np.ndarray] = {}
         for bucket, entries in self.face_features.items():
@@ -381,11 +383,13 @@ class PersonProfile(BaseModel):
         """入库人脸特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
         if entry.pose_bucket == PoseBucket.UNKNOWN:
             return None
+        # 入库质量门槛是热字段现读; 桶容量/入库半衰期非热, 直读启动期单例
+        threshold = current_config().gallery.face_quality_enroll_threshold
         gallery_cfg = config.gallery
-        if entry.quality_score < gallery_cfg.face_quality_enroll_threshold:
+        if entry.quality_score < threshold:
             logger.debug(
                 "face quality {:.3f} 低于 threshold {:.3f} ({})",
-                entry.quality_score, gallery_cfg.face_quality_enroll_threshold, self.person_id,
+                entry.quality_score, threshold, self.person_id,
             )
             return None
         success, evicted = self._enroll_feature(
@@ -406,11 +410,13 @@ class PersonProfile(BaseModel):
         """入库人体特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
         if entry.pose_bucket == PoseBucket.UNKNOWN:
             return None
+        # 入库质量门槛是热字段现读; 桶容量/入库半衰期非热, 直读启动期单例
+        threshold = current_config().gallery.body_quality_enroll_threshold
         gallery_cfg = config.gallery
-        if entry.quality_score < gallery_cfg.body_quality_enroll_threshold:
+        if entry.quality_score < threshold:
             logger.debug(
                 "body feature quality {:.3f} 低于 threshold {:.3f} ({})",
-                entry.quality_score, gallery_cfg.body_quality_enroll_threshold, self.person_id,
+                entry.quality_score, threshold, self.person_id,
             )
             return None
         success, evicted = self._enroll_feature(
@@ -428,11 +434,13 @@ class PersonProfile(BaseModel):
 
     def enroll_outfit(self, body_embedding: np.ndarray, quality: float) -> OutfitEnrollResult | None:
         """入库/更新衣橱记录 — 质量门槛 + EMA 更新。失败返回 None。"""
+        # 入库门槛/衣橱匹配阈值是热字段现读; 衣橱容量非热, 直读启动期单例
+        hot_cfg = current_config().gallery
         gallery_cfg = config.gallery
-        if quality < gallery_cfg.body_quality_enroll_threshold:
+        if quality < hot_cfg.body_quality_enroll_threshold:
             logger.debug(
                 "outfit body quality {:.3f} 低于 threshold {:.3f} ({})",
-                quality, gallery_cfg.body_quality_enroll_threshold, self.person_id,
+                quality, hot_cfg.body_quality_enroll_threshold, self.person_id,
             )
             return None
 
@@ -441,7 +449,7 @@ class PersonProfile(BaseModel):
         # 检查是否与现有衣橱匹配
         for outfit in self.wardrobe:
             sim = float(np.dot(body_embedding, outfit.body_embedding))
-            if sim > gallery_cfg.outfit_match_threshold:
+            if sim > hot_cfg.outfit_match_threshold:
                 # 记住更新前的快照 (用于 DB 定位)
                 old_snapshot = outfit.model_copy(deep=True)
                 # EMA 更新特征

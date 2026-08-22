@@ -11,12 +11,14 @@ from __future__ import annotations
 import base64
 import time
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Request, UploadFile, File
 from voice_agent_common.utils.context import set_device_sn
 from voice_agent_common.utils.logger import logger
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream
 from src.api.registry import get_camera_orchestrator, get_stream_consumer
 from src.configs.config import config
+from src.configs.override import config_override_manager, current_config
+from voice_agent_common.config_override_api import require_edit_password
 
 from src.api.schemas import (
     BodyQualityTestResponse,
@@ -248,30 +250,69 @@ def require_camera_orchestrator(camera_id: str):
 
 # ==============================================================================
 # 滑块可调参数 (全局, 不分摄像头)。原路径 /config, 2026-08 改名 /params:
-# 把 /api/config 让给全量脱敏配置 dump (config_api.py), 与 voice/agent 路径统一
+# 把 /api/config 让给全量脱敏配置 dump (config_api.py), 与 voice/agent 路径统一。
+# 读写都走配置覆盖层: 值 = 生效快照, 改动 = DB 覆盖项(持久化 + 多实例同步),
+# 「系统配置」页会显示「已修改」徽标, 恢复默认 = 删除该覆盖
 # ==============================================================================
 
 @router.get("/params", response_model=ConfigResponse)
 async def get_config_endpoint() -> ConfigResponse:
     """获取所有可调参数及其当前值、范围。"""
-    tunable = config.get_tunable_params()
+    cfg = current_config()
+    tunable = cfg.get_tunable_params()
     params = {
         key: TunableParam(**info) for key, info in tunable.items()
     }
     # AGG_MIN_FACE/BODY_QUALITY 已升级为可调滑块 (见 _TUNABLE_DEFS), 不再放在只读 flags 里
     flags = {
-        "IMAGE_CORRECTION_ENABLED": config.image_correction_enabled,
+        "IMAGE_CORRECTION_ENABLED": cfg.image_correction_enabled,
     }
     return ConfigResponse(params=params, flags=flags)
 
 
 @router.put("/params", response_model=ConfigUpdateResponse)
-async def update_config_endpoint(request: ConfigUpdateRequest) -> ConfigUpdateResponse:
-    """更新可调参数。"""
-    updated = config.update_from_dict(request.updates)
+async def update_config_endpoint(
+        request: ConfigUpdateRequest,
+        password: str | None = Header(None, alias="X-Config-Edit-Password"),
+) -> ConfigUpdateResponse:
+    """更新可调参数(逐项转写成 DB 覆盖项)。
+
+    写入落的是持久化配置覆盖, 与「系统配置」页的 PUT/DELETE 同一道编辑
+    口令门(X-Config-Edit-Password), 口令错误回 401。
+    """
+    require_edit_password(password)
+    cfg = current_config()
+    key_paths = cfg.tunable_key_paths()
+    updated: list[str] = []
+    for key, value in request.updates.items():
+        key_upper = key.upper()
+        key_path = key_paths.get(key_upper)
+        if key_path is None:
+            continue
+        # 滑块统一传 float: bool/int 字段(开关/像素类)按目标类型先转,
+        # 免得 58.999999 这类浮点毛刺被整模型校验拒掉
+        coerced: float | bool | int = value
+        target = _resolve_leaf(cfg, key_path)
+        if isinstance(target, bool):
+            coerced = bool(value)
+        elif isinstance(target, int):
+            coerced = int(round(float(value)))
+        result = await config_override_manager.set_override(key_path, coerced)
+        if result.ok:
+            updated.append(key_upper)
+        else:
+            logger.warning("滑块调参被拒 {} ({}): {}", key_upper, key_path, result.error)
     if updated:
-        logger.info("通过 REST 更新 config: {}", updated)
+        logger.info("通过 REST 更新配置覆盖: {}", updated)
     return ConfigUpdateResponse(updated_keys=updated)
+
+
+def _resolve_leaf(cfg: object, key_path: str) -> object:
+    """按点路径取配置叶子的当前值(供滑块入参的类型转换)。"""
+    node = cfg
+    for part in key_path.split("."):
+        node = getattr(node, part)
+    return node
 
 
 # ==============================================================================

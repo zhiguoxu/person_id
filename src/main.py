@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.configs.config import config
-from src.configs.override import config_override_manager
+from src.configs.override import config_override_manager, config_sync
 from voice_agent_common.config_override_api import build_config_override_router
 from voice_agent_common.utils.logger import setup_service_logging
 from voice_agent_common.utils.log_stream import log_broadcaster, make_stream_forwarder
@@ -66,9 +66,14 @@ async def lifespan(application: FastAPI):
     from voice_agent_common.infra.oss.cos import CosClient
     deps.cos_client = CosClient(config.cos)
 
-    # 把 web 控制台在线改过的配置(DB 覆盖层)套到内存配置单例上。
-    # 需在底库初始化/模型预热/拉流恢复等后续组件消费 config 之前执行。
+    # 配置覆盖层: 先把 DB 覆盖套到配置单例上(需在底库初始化/模型预热/拉流
+    # 恢复等后续组件消费 config 之前执行), 再建同步通道并起订阅任务——其他
+    # 实例改配置时本实例 reload 跟进。通道建连放在覆盖套用之后, 在线改过的
+    # redis 配置才生效(与下方业务 Redis 同一约定); HTTP 在 lifespan 跑完后
+    # 才开始服务, 编辑请求不会早于通道就绪。
     await config_override_manager.load_and_apply()
+    await config_sync.start()
+    config_sync.start_subscriber(config_override_manager.reload)
     # 配置转储放在覆盖套用之后, 日志里看到的才是真正生效的值
     logger.info("person_id 配置:\n{}", format_config_for_log(config))
 
@@ -144,6 +149,7 @@ async def lifespan(application: FastAPI):
     await deps.voice_online_redis_client.disconnect()
 
     await get_gallery_persistence().close()
+    await config_sync.aclose()
     await close_db()
     logger.info("Person ID server 已停止")
     # 日志连接最后关: 之前的关闭日志还要经它转发到聚合 Stream

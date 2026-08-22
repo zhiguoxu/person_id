@@ -7,13 +7,14 @@ voice_agent_common.config_override_api），本文件只做两件事：
 1. FIELD_ANNOTATIONS 标注表：为常用字段提供中文说明和 hot（热生效）标记。
    未标注的字段一样可编辑，只是没有说明、且按 hot=False 保守提示「重启生效」。
    hot 语义（诚实原则，不做假热更新，与 voice/agent server 同一口径）：
-     True  = 消费点调用时现读 config 单例（如 `cfg = config.matching` 每次
-             匹配现取），改完立即生效
+     True  = 消费点调用时经 configs/override.py 的 current_config() 现读
+             （如 `cfg = current_config().matching` 每次匹配现取），改完
+             立即生效。config 单例是启动期状态，直读单例的字段不算 hot
      False = 启动/首次使用时消费掉（模型加载、客户端构造），写库成功但需
              重启本服务才生效
-   person_id 没有设备级配置解析链路（不存在 current_config(device_sn) 消费点），
-   所有字段一律 device_editable=False（文件末尾统一补齐），设备级覆盖端点
-   实际不开放任何字段——放出来也不生效，就是骗人。
+   person_id 没有按设备解析配置的消费链路，所有字段一律
+   device_editable=False（文件末尾统一补齐），设备级覆盖端点实际不开放
+   任何字段——放出来也不生效，就是骗人。
 
 2. LOCKED_PATHS 锁定表：彻底禁止在线编辑的字段，分两类：
    - 结构性死旋钮：在 DB 覆盖套用之前就被消费掉的（uvicorn 绑定参数在
@@ -23,10 +24,9 @@ voice_agent_common.config_override_api），本文件只做两件事：
    敏感字段（vlm.api_key / redis.password）不在锁定之列——可编辑（重启后
    生效），展示和响应里一律脱敏为 ***，由 config_dump 的字段名规则自动识别。
 
-注意：本服务另有一套滑块实时调参（config.update_from_dict，web 控制台
-vision 页 Controls 面板经 REST /api/params 调用），它直接改内存不落库、重启
-即失。两套机制作用于同一个 config 单例：滑块改过的值会在本页显示为
-"当前值 ≠ yaml 原值"但没有「已修改」徽标（徽标只跟踪 DB 覆盖）。
+web 控制台 vision 页 Controls 面板的滑块调参（REST /api/params）也走本机制：
+PUT 落到 ConfigOverrideManager.set_override（持久化 + 多实例同步），滑块改过
+的值在「系统配置」页同样显示「已修改」徽标，恢复默认 = 删除该覆盖。
 
 启动时 ConfigOverrideManager 会校验两张表的路径真实存在（写错直接启动失败）。
 """
@@ -45,7 +45,7 @@ LOCKED_PATHS: frozenset[str] = frozenset({
 })
 
 FIELD_ANNOTATIONS: dict[str, EditableField] = {
-    # ── 匹配与融合（消费点全部 `cfg = config.matching` 调用时现读, 改完下一次匹配即生效） ──
+    # ── 匹配与融合（消费点全部 `cfg = current_config().matching` 调用时现读, 改完下一次匹配即生效） ──
     "matching.A_threshold": {
         "description": "笃定判定阈值（唯一终态 A 级）。相似度超过它且 margin 达标即锁定身份",
         "hot": True,
@@ -180,7 +180,7 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
         "description": "连续拉流失败达到该次数后自动重新开启设备推流并切换新地址",
         "hot": True,
     },
-    # ── 拉流录像（消费点逐帧现读 config.video_record，全部热生效） ──
+    # ── 拉流录像（消费点逐帧现读 current_config().video_record，全部热生效） ──
     "video_record.enabled": {
         "description": "是否在拉流消费期间自动录像并上传 COS",
         "hot": True,

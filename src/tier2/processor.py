@@ -24,7 +24,7 @@ from src.tier2.multi_frame_aggregator import MultiFrameAggregator
 from src.gallery import matcher as gallery_matcher
 from src.tier2 import resolver
 from src.tier2 import multi_modal_fusion as fusion
-from src.configs.config import config
+from src.configs.override import current_config
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ class Tier2Processor:
         elapsed = (_time.perf_counter() - t0) * 1000
 
         # --- Diagnostic logging ---
-        cfg = config.matching
+        cfg = current_config().matching
         top3 = candidates[:3]
         top3_info = " | ".join(
             f"{c.display_name}(fused={c.fused_score:.3f}, "

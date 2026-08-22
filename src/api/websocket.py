@@ -32,6 +32,7 @@ from src.api.schemas import (
     build_ws_event,
 )
 from src.configs.config import Config, config
+from src.configs.override import current_config
 from src.pipeline.orchestrator import VisionOrchestrator
 
 # 与 voice_server 的 ws_router 同款挂载方式: 路由定义在本模块, main.py 只 include
@@ -202,8 +203,8 @@ async def _handle_binary(
         )
         return
 
-    # 镜头畸变矫正 (可通过前端开关控制)
-    if config.image_correction_enabled:
+    # 镜头畸变矫正 (热字段, 逐帧现读生效快照)
+    if current_config().image_correction_enabled:
         try:
             from src.utils.image_correction import correct_image_bytes
             data = correct_image_bytes(data)

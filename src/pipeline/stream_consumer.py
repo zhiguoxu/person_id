@@ -38,6 +38,7 @@ from src.api.schemas import (
     build_ws_event,
 )
 from src.configs.config import config
+from src.configs.override import current_config
 from src.pipeline.orchestrator import VisionOrchestrator
 
 if TYPE_CHECKING:
@@ -108,12 +109,11 @@ class StreamConsumer:
         self.running = True
         self._loop = asyncio.get_running_loop()
         self._stop_event.clear()
-        # 拉流即开录: 断线重连/重推流不换 recorder, 显式 stop 才收尾
-        if config.video_record.enabled:
-            from src.pipeline.video_recorder import VideoRecorder
-            self._recorder = VideoRecorder(self.camera_id, self._loop)
-        else:
-            self._recorder = None
+        # 拉流即挂 recorder: 断线重连/重推流不换, 显式 stop 才收尾。
+        # video_record.enabled 是热字段, 由 maybe_write 逐帧现读门控——
+        # recorder 无条件创建(纯状态对象, 不开编码器), 中途打开录像开关才能生效
+        from src.pipeline.video_recorder import VideoRecorder
+        self._recorder = VideoRecorder(self.camera_id, self._loop)
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
             name=f"stream-reader-{self.camera_id}",
@@ -194,9 +194,10 @@ class StreamConsumer:
     def _reader_loop(self) -> None:
         # 独立线程有自己的 context: 补写 device_sn(= camera_id), 日志才带该列
         set_device_sn(self.camera_id)
-        reconnect_delay = config.stream_reconnect_delay
 
         while not self._stop_event.is_set():
+            # 热字段, 每次连接尝试现读
+            reconnect_delay = current_config().stream_reconnect_delay
             cap = self._open_capture()
             if not cap.isOpened():
                 cap.release()
@@ -261,7 +262,7 @@ class StreamConsumer:
         不占 CPU/CUDA 核心), NVDEC 环境异常时按次退回 cv2 CPU 软解
         (下次重连仍先试 GPU)。流本身不可达(设备未推流/超时)时不退回——
         CPU 解码同样打不开, 直接交给外层重连逻辑, 省一次连接超时。"""
-        if config.stream_gpu_decode:
+        if current_config().stream_gpu_decode:
             from src.pipeline.gpu_decoder import NvdecCapture, nvdec_supported
 
             if nvdec_supported():
@@ -280,7 +281,7 @@ class StreamConsumer:
         self._consecutive_pull_failures += 1
         if not self.auto_restream or self._recovering:
             return
-        threshold = config.stream_restream_fail_threshold
+        threshold = current_config().stream_restream_fail_threshold
         if self._consecutive_pull_failures < threshold:
             return
         loop = self._loop
@@ -346,7 +347,8 @@ class StreamConsumer:
         last_done = time.perf_counter()
 
         while not self._stop_event.is_set():
-            cfg = config
+            # 逐帧现读生效快照: 帧率/畸变矫正/限宽/预览编码参数都是热字段
+            cfg = current_config()
             min_interval = 1.0 / max(cfg.stream_max_fps, 1.0)
 
             with self._frame_lock:

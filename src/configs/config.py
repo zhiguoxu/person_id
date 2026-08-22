@@ -5,9 +5,12 @@
 - 基底 config_files/config.yaml + 环境覆盖 config_files/config_{APP_ENV}.yaml
   (APP_ENV 默认 dev, 两层 yaml 深合并)
 - APP_ 前缀环境变量可覆盖顶层字段, 优先级高于 yaml
-- 模块级单例 ``config``, 使用方直接 ``from src.configs.config import config``
+- 模块级单例 ``config``: 启动期状态(lifespan 里套过一次 DB 覆盖后冻结),
+  启动期消费(模型加载/建连)读它; 运行期 hot 字段一律经
+  ``src.configs.override.current_config()`` 读生效快照
 
-所有可调参数集中管理。阈值参数支持通过 WebSocket 实时更新。
+所有可调参数集中管理。阈值参数经 web 控制台在线编辑(含 Controls 滑块,
+统一落 DB 覆盖层, 多实例同步), 改完下一次读取生效。
 """
 from __future__ import annotations
 
@@ -40,8 +43,8 @@ class VideoRecordConfig(BaseModel):
 
     consume/start→stop 期间自动落盘并上传 COS; 断线重连仍属同一拉流会话。
     单段上限避免超大文件; 超长自动切新段(新 DB 行 + 新 COS 对象)。
-    消费点逐帧现读 config.video_record, 全部字段热生效(encoder 对已在写的
-    段不生效, 下个段起效)。
+    消费点逐帧现读 current_config().video_record, 全部字段热生效(encoder
+    对已在写的段不生效, 下个段起效)。
     """
     enabled: bool = False
     max_seconds: float = 1800.0  # 单段最长 30 分钟
@@ -246,7 +249,7 @@ class Config(BaseSettings):
 
     所有模块的配置参数集中管理, 加载机制与 voice_server 一致:
     yaml(基底 + 环境覆盖) + APP_ 前缀环境变量。
-    阈值参数支持通过 WebSocket 实时更新。
+    阈值参数经在线编辑/Controls 滑块调整(落 DB 覆盖层, 见 configs/override.py)。
     服务自身参数 (host/port/拉流等, 原 ServerConfig) 扁平在顶层,
     与 voice/agent server 的配置结构保持一致。
     """
@@ -360,33 +363,6 @@ class Config(BaseSettings):
         """序列化为字典 (用于 API 返回)"""
         return self.model_dump()
 
-    def update_from_dict(self, updates: dict[str, float | bool]) -> list[str]:
-        """
-        从扁平化的 key-value 字典更新配置。
-
-        支持格式: {"REID_CONFIDENT_THRESHOLD": 0.72, "YOLO_CONFIDENCE": 0.5}
-        返回成功更新的 key 列表。
-        """
-        updated_keys: list[str] = []
-        # 映射: 扁平化 KEY → (子配置对象, 属性名)
-        flat_map = self._build_flat_map()
-
-        for key, value in updates.items():
-            key_upper = key.upper()
-            if key_upper in flat_map:
-                sub_config, attr_name = flat_map[key_upper]
-                # 自动类型转换: 如果目标字段是 bool 类型, 确保设置为 bool
-                current = getattr(sub_config, attr_name, None)
-                if isinstance(current, bool):
-                    value = bool(value)
-                elif isinstance(current, int):
-                    # 像素类整型字段 (min_face_size 等): 滑块会传 float, 落库前取整
-                    value = int(round(float(value)))
-                setattr(sub_config, attr_name, value)
-                updated_keys.append(key_upper)
-
-        return updated_keys
-
     def iss_api_url(self, env: str) -> str:
         """按环境名取 ISS 服务地址 (env: "test" | "prod")。"""
         if env == "prod":
@@ -425,13 +401,14 @@ class Config(BaseSettings):
             }
         return result
 
-    def _build_flat_map(self) -> dict[str, tuple[BaseModel, str]]:
-        """构建扁平化键名 → (子配置, 属性名) 映射 (供 update_from_dict 写入)。"""
-        mapping: dict[str, tuple[BaseModel, str]] = {}
-        for key, (section, attr, *_) in self._TUNABLE_DEFS.items():
-            mapping[key] = (getattr(self, section) if section else self, attr)
+    def tunable_key_paths(self) -> dict[str, str]:
+        """滑块键名 → 配置点路径 (供 /api/params 的 PUT 转写成 DB 覆盖项)。"""
+        mapping = {
+            key: f"{section}.{attr}" if section else attr
+            for key, (section, attr, *_) in self._TUNABLE_DEFS.items()
+        }
         # 仅通过顶部按钮控制, 不在 Controls 面板显示
-        mapping["IMAGE_CORRECTION_ENABLED"] = (self, "image_correction_enabled")
+        mapping["IMAGE_CORRECTION_ENABLED"] = "image_correction_enabled"
         return mapping
 
 

@@ -16,6 +16,7 @@ from voice_agent_common.utils.logger import logger
 from src.pipeline.data_models import Detection
 from src.tier1.detection.pose_classifier import classify_pose, has_visible_face
 from src.configs.config import config
+from src.configs.override import current_config
 
 
 class YoloPoseDetector:
@@ -119,6 +120,8 @@ class YoloPoseDetector:
         keypoints_data = result.keypoints
 
         n_detections = len(boxes)
+        # 热字段, 每帧解析时现读 (本方法每帧调用一次)
+        min_person_height_px = current_config().detection.min_person_height_px
 
         for i in range(n_detections):
             try:
@@ -127,7 +130,7 @@ class YoloPoseDetector:
 
                 # Filter by minimum person height
                 person_height = bbox[3] - bbox[1]
-                if person_height < config.detection.min_person_height_px:
+                if person_height < min_person_height_px:
                     continue
 
                 # Detection confidence

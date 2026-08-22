@@ -17,7 +17,7 @@ import cv2
 from voice_agent_common.utils.logger import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.configs.config import config
+from src.configs.override import current_config
 from src.gallery.data_models import (
     FeatureEntry,
     GalleryUpdateResult,
@@ -421,8 +421,10 @@ class VisionOrchestrator(BaseModel):
             return changes
 
         cache = state.quality_cache
-        gallery_cfg = config.gallery
-        min_face_size = config.face.min_face_size
+        # 入库门槛是热字段, 每次更新底库时现读
+        cfg = current_config()
+        gallery_cfg = cfg.gallery
+        min_face_size = cfg.face.min_face_size
 
         # --- 人脸 / 人体特征入库 ---
         body_best: dict[PoseBucket, tuple[CachedFrame, float]] = {}

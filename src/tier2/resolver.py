@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from voice_agent_common.utils.logger import logger
 
-from src.configs.config import config
+from src.configs.override import current_config
 from src.pipeline.data_models import IdentityStatus, MatchResult
 
 
@@ -25,7 +25,7 @@ def resolve_reid(match_result: MatchResult) -> MatchResult:
 
     top = match_result.top_score
     margin = match_result.margin
-    cfg = config.matching
+    cfg = current_config().matching
 
     # A 级: 笃定 — 唯一终态
     if top >= cfg.A_threshold and margin >= cfg.A_margin:

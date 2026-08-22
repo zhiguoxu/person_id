@@ -14,6 +14,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from src.configs.config import config
+from src.configs.override import current_config
 from src.pipeline.data_models import IdentityStatus
 
 if TYPE_CHECKING:
@@ -75,7 +76,7 @@ def should_trigger_vlm(state: TrackState) -> bool:
     2. 当前状态为 SUSPECTED 或 CONFLICT
     3. VLM 冷却期已过
     """
-    if not config.vlm.enabled:
+    if not current_config().vlm.enabled:
         return False
 
     if state.identity_result.status not in (IdentityStatus.SUSPECTED, IdentityStatus.CONFLICT):

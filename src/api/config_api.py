@@ -12,6 +12,7 @@ from fastapi import APIRouter
 
 from src import deps
 from src.configs.config import config
+from src.configs.override import current_config
 from voice_agent_common.utils.config_dump import sanitize_config_for_api
 from voice_agent_common.utils.net import display_listen_addr
 from voice_agent_common.utils.pkg_versions import package_versions
@@ -41,5 +42,7 @@ async def get_config():
             common=voice_agent_common,
             session_store=session_store,
         ),
-        "config": sanitize_config_for_api(config),
+        # 展示运行期生效配置(含在线覆盖的快照); host/port 等结构字段被锁定,
+        # 快照里与单例恒一致
+        "config": sanitize_config_for_api(current_config()),
     }

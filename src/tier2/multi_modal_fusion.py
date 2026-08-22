@@ -13,6 +13,7 @@ import math
 from voice_agent_common.utils.logger import logger
 
 from src.configs.config import config
+from src.configs.override import current_config
 from src.pipeline.data_models import MatchCandidate
 
 
@@ -43,7 +44,9 @@ def fuse(
     if not face_candidates and not body_candidates and not proportion_candidates:
         return []
 
+    # 门控参数 (gate_k/gate_q0) 非热, 直读启动期单例; 基础权重是热字段, 每次融合现读
     cfg = config.matching
+    hot_cfg = current_config().matching
 
     # 合并所有候选人
     candidate_map: dict[str, MatchCandidate] = {}
@@ -73,13 +76,13 @@ def fuse(
         face_gate = _sigmoid(f_quality, cfg.face_gate_k, cfg.face_gate_q0)
         body_gate = _sigmoid(b_quality, cfg.body_gate_k, cfg.body_gate_q0)
 
-        w_face_raw = cfg.face_base_weight * face_gate if c.face_score is not None else 0.0
-        w_body_raw = cfg.body_base_weight * body_gate if c.body_score is not None else 0.0
-        w_prop_raw = cfg.proportion_base_weight if c.proportion_score is not None else 0.0
+        w_face_raw = hot_cfg.face_base_weight * face_gate if c.face_score is not None else 0.0
+        w_body_raw = hot_cfg.body_base_weight * body_gate if c.body_score is not None else 0.0
+        w_prop_raw = hot_cfg.proportion_base_weight if c.proportion_score is not None else 0.0
 
         # 暂时不动态计算权重，而是固定 face 的权重，因为 face 非常重要，无论质量如何，face 都应该占主导
-        w_face_raw = cfg.face_base_weight
-        w_body_raw = cfg.body_base_weight
+        w_face_raw = hot_cfg.face_base_weight
+        w_body_raw = hot_cfg.body_base_weight
 
         w_total = w_face_raw + w_body_raw + w_prop_raw
         if w_total < 1e-8:

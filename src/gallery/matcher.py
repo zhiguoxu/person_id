@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from src.configs.config import config
+from src.configs.override import current_config
 from src.gallery.data_models import (
     BodyProportions,
     PersonProfile,
@@ -81,7 +81,7 @@ def match_body(query_bodies: dict[PoseBucket, tuple[np.ndarray, float]],
     if not query_bodies or not gallery:
         return []
 
-    cfg = config.matching
+    cfg = current_config().matching
     blend_alpha = cfg.blend_alpha
     cross_pose = cfg.cross_pose_discount
     gamma = cfg.wardrobe_boost_gamma

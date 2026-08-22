@@ -39,7 +39,8 @@ import numpy as np
 from voice_agent_common.utils.clock import now_cst
 from voice_agent_common.utils.logger import logger
 
-from src.configs.config import PROJECT_ROOT, config
+from src.configs.config import PROJECT_ROOT
+from src.configs.override import current_config
 
 VIDEO_COS_PREFIX = "videos"
 _TEMP_DIR = PROJECT_ROOT / "data" / "video_record"
@@ -185,7 +186,8 @@ class VideoRecorder:
         """读流线程: 有新帧时按配置帧率写入; 超长/分辨率变化时切段。"""
         if self._closed or frame is None or frame.size == 0:
             return
-        cfg = config.video_record
+        # 全部字段热生效, 逐帧现读
+        cfg = current_config().video_record
         if not cfg.enabled:
             return
 
@@ -283,7 +285,7 @@ class VideoRecorder:
     ) -> _FfmpegWriter | cv2.VideoWriter | None:
         """优先 ffmpeg 出 H.264(网页可播); 缺 ffmpeg 时退回 cv2 mp4v。"""
         if shutil.which("ffmpeg"):
-            codec = _select_codec(config.video_record.encoder)
+            codec = _select_codec(current_config().video_record.encoder)
             try:
                 return _FfmpegWriter(path, width, height, fps, codec)
             except OSError as e:
