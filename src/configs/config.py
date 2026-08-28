@@ -48,8 +48,8 @@ class VideoRecordConfig(BaseModel):
     """
     enabled: bool = False
     max_seconds: float = 1800.0  # 单段最长 30 分钟
-    fps: float = 10.0            # 录制帧率(读流线程节流)
-    max_width: int = 1280        # 录制限宽(像素), 0=原分辨率
+    fps: float = 10.0  # 录制帧率(读流线程节流)
+    max_width: int = 1280  # 录制限宽(像素), 0=原分辨率
     # 编码器选择: auto = NVENC 可用则用(GPU 独立编码单元, 不占 CUDA 核心,
     # 大规模路数必选), 否则退 libx264(CPU)。nvenc/x264 强制指定。
     # 均出 H.264 mp4(网页可播); ffmpeg 缺失时最终兜底 cv2 mp4v(仅可下载)
@@ -135,8 +135,8 @@ class GalleryConfig(BaseModel):
     # 入库质量门槛 — 人脸与人体分开管理
     # 注册人脸要求更高质量: 人脸是强标识, 一张糊脸入库会污染质心、引发误识;
     # 人体特征容错更高 (多桶 + 时间衰减), 门槛可略低以保证覆盖率。
-    face_quality_enroll_threshold: float = 0.55   # 人脸入库最低质量分 (eDifFIQA large 评估)
-    body_quality_enroll_threshold: float = 0.40   # 人体/衣橱入库最低质量分 (清晰度+完整度)
+    face_quality_enroll_threshold: float = 0.55  # 人脸入库最低质量分 (eDifFIQA large 评估)
+    body_quality_enroll_threshold: float = 0.40  # 人体/衣橱入库最低质量分 (清晰度+完整度)
     ediffiqa_enroll_variant: str = "large"  # 入库质量评估模型变体 (独立于 Tier1, 默认最大)
 
     # 入库衰减 — 统一量纲: 半衰期 (天)
@@ -235,8 +235,8 @@ class VoiceEmbedExtractorConfig(BaseModel):
     # 说话人 embedding 模型(ONNX), 缺失时启动自动下载
     model_path: str = str(
         MODELS_DIR / "3dspeaker_speech_eres2net_base_200k_sv_zh-cn_16k-common.onnx")
-    provider: str = "cuda"      # 本机 H20 实测 6.8ms/次(CPU 37ms)
-    num_threads: int = 4        # 仅 provider=cpu 时生效
+    provider: str = "cuda"  # 本机 H20 实测 6.8ms/次(CPU 37ms)
+    num_threads: int = 4  # 仅 provider=cpu 时生效
 
     # 子段平均配方参数(评测锁定, 一般无需改动)
     seg_window_sec: float = 3.0
@@ -376,14 +376,17 @@ class Config(BaseSettings):
         "A_THRESHOLD": ("matching", "A_threshold", 0, 1, 0.01, "reid", "A Threshold (笃定)"),
         "B_THRESHOLD": ("matching", "B_threshold", 0, 1, 0.01, "reid", "B Threshold (确定)"),
         "C_THRESHOLD": ("matching", "C_threshold", 0, 1, 0.01, "reid", "C Threshold (怀疑)"),
-        "FACE_QUALITY_ENROLL_THRESHOLD": ("gallery", "face_quality_enroll_threshold", 0, 1, 0.05, "quality", "人脸入库质量门槛"),
-        "BODY_QUALITY_ENROLL_THRESHOLD": ("gallery", "body_quality_enroll_threshold", 0, 1, 0.05, "quality", "人体入库质量门槛"),
+        "FACE_QUALITY_ENROLL_THRESHOLD": ("gallery", "face_quality_enroll_threshold", 0, 1, 0.05, "quality",
+                                          "人脸入库质量门槛"),
+        "BODY_QUALITY_ENROLL_THRESHOLD": ("gallery", "body_quality_enroll_threshold", 0, 1, 0.05, "quality",
+                                          "人体入库质量门槛"),
         "MIN_FACE_SIZE": ("face", "min_face_size", 0, 200, 5, "quality", "入库人脸最小像素"),
         "MIN_PERSON_HEIGHT_PX": ("detection", "min_person_height_px", 0, 400, 10, "quality", "最小人体像素高度"),
         "AGG_MIN_FACE_QUALITY": ("multiframe", "agg_min_face_quality", 0, 1, 0.05, "quality", "人脸聚合最低质量"),
         "AGG_MIN_BODY_QUALITY": ("multiframe", "agg_min_body_quality", 0, 1, 0.05, "quality", "人体聚合最低质量"),
         "OUTFIT_MATCH_THRESHOLD": ("gallery", "outfit_match_threshold", 0, 1, 0.01, "matching", "衣橱匹配阈值"),
-        "STREAM_RESTREAM_FAIL_THRESHOLD": ("", "stream_restream_fail_threshold", 1, 20, 1, "stream", "自动重推流失败次数阈值"),
+        "STREAM_RESTREAM_FAIL_THRESHOLD": ("", "stream_restream_fail_threshold", 1, 20, 1, "stream",
+                                           "自动重推流失败次数阈值"),
         # 预览带宽 (只影响网页观看, 不影响识别): 观看卡顿调小, 网速好调大
         "STREAM_PREVIEW_MAX_WIDTH": ("", "stream_preview_max_width", 320, 1920, 160, "stream", "预览帧最大宽度(px)"),
         "STREAM_PREVIEW_JPEG_QUALITY": ("", "stream_preview_jpeg_quality", 30, 95, 5, "stream", "预览帧 JPEG 质量"),
