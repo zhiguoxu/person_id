@@ -70,15 +70,20 @@ async def handle_ws_connection(
     # 初始化涉及 GPU 模型加载，失败时用 1011 干净关闭，
     # 让前端拿到明确错误码而不是 1006 异常断开
     try:
-        orchestrator = await registry.get_or_create_orchestrator(camera_id)
+        # 把 orchestrator 获取与连接计数放在同一 camera 锁内, 避免 stop
+        # 在连接尚未计数时误回收刚建立的编排器。
+        async with registry.camera_operation(camera_id):
+            orchestrator = await registry.get_or_create_orchestrator_unlocked(
+                camera_id
+            )
+            registry.ws_client_counts[camera_id] = (
+                registry.ws_client_counts.get(camera_id, 0) + 1
+            )
     except Exception:
         logger.exception("VisionOrchestrator 初始化失败: camera={}", camera_id)
         await websocket.close(code=1011, reason="orchestrator init failed")
         return
 
-    registry.ws_client_counts[camera_id] = (
-        registry.ws_client_counts.get(camera_id, 0) + 1
-    )
     logger.info(
         "WebSocket 已连接: camera={} (连接数={}, gallery={} 人)",
         camera_id,
@@ -127,11 +132,14 @@ async def handle_ws_connection(
             pass
         registry.unregister_viewer(camera_id, viewer_queue)
 
-        registry.ws_client_counts[camera_id] = max(
-            0, registry.ws_client_counts.get(camera_id, 1) - 1
-        )
-        # 无连接且无拉流消费器时才回收 orchestrator (后台拉流需继续运行)
-        await registry.maybe_release_orchestrator(camera_id)
+        # 连接计数递减与 orchestrator 回收必须原子化, 否则 consume/stop 可能
+        # 在两步之间观察到错误的引用数。
+        async with registry.camera_operation(camera_id):
+            registry.ws_client_counts[camera_id] = max(
+                0, registry.ws_client_counts.get(camera_id, 1) - 1
+            )
+            # 无连接且无拉流消费器时才回收 orchestrator (后台拉流需继续运行)
+            await registry.maybe_release_orchestrator_unlocked(camera_id)
         logger.info(
             "WebSocket 已清理: camera={}, client={} (剩余连接数={})",
             camera_id, client_id, registry.ws_client_counts.get(camera_id, 0),

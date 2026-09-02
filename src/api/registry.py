@@ -12,7 +12,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, AsyncIterator
 
 from voice_agent_common.utils.logger import logger
 
@@ -27,12 +28,31 @@ camera_registry: dict[str, VisionOrchestrator] = {}
 # 服务端拉流消费器: camera_id → StreamConsumer
 consumer_registry: dict[str, "StreamConsumer"] = {}
 
+# camera 级生命周期锁: 串行化 orchestrator 创建和 consumer 启停。
+# 所有修改 camera_registry / consumer_registry 的调用方都必须持有这把锁,
+# 因而一个 camera 在本进程内最多只有一个 orchestrator 和一个 consumer。
+_camera_locks: dict[str, asyncio.Lock] = {}
+
 # 观看端广播队列: camera_id → set[asyncio.Queue]
 viewer_queues: dict[str, set[asyncio.Queue]] = {}
 
 # 每个摄像头的活跃 WebSocket 连接数
 ws_client_counts: dict[str, int] = {}
 
+
+def camera_lock(camera_id: str) -> asyncio.Lock:
+    """返回 camera 生命周期锁。锁对象按 camera 复用, 不跨进程共享。"""
+    return _camera_locks.setdefault(camera_id, asyncio.Lock())
+
+
+@asynccontextmanager
+async def camera_operation(camera_id: str) -> AsyncIterator[None]:
+    """串行化一个 camera 的生命周期操作。"""
+    async with camera_lock(camera_id):
+        yield
+
+
+# orchestrator
 
 def get_camera_orchestrator(camera_id: str) -> VisionOrchestrator | None:
     """获取指定摄像头的编排器（供 REST routes 使用）。"""
@@ -41,6 +61,12 @@ def get_camera_orchestrator(camera_id: str) -> VisionOrchestrator | None:
 
 async def get_or_create_orchestrator(camera_id: str) -> VisionOrchestrator:
     """获取或创建指定摄像头的编排器并注册。"""
+    async with camera_lock(camera_id):
+        return await get_or_create_orchestrator_unlocked(camera_id)
+
+
+async def get_or_create_orchestrator_unlocked(camera_id: str) -> VisionOrchestrator:
+    """获取或创建编排器。调用方须已持有 camera_lock。"""
     orch = camera_registry.get(camera_id)
     if orch is None:
         orch = await VisionOrchestrator.create(camera_id=camera_id)
@@ -48,13 +74,8 @@ async def get_or_create_orchestrator(camera_id: str) -> VisionOrchestrator:
     return orch
 
 
-def get_stream_consumer(camera_id: str) -> "StreamConsumer | None":
-    """获取指定摄像头的拉流消费器。"""
-    return consumer_registry.get(camera_id)
-
-
-async def maybe_release_orchestrator(camera_id: str) -> None:
-    """无 WebSocket 连接且无拉流消费器时回收 orchestrator。"""
+async def maybe_release_orchestrator_unlocked(camera_id: str) -> None:
+    """无 WebSocket 连接且无拉流消费器时回收 orchestrator。调用方须已持有 camera_lock。"""
     if ws_client_counts.get(camera_id, 0) > 0:
         return
     if camera_id in consumer_registry:
@@ -63,6 +84,30 @@ async def maybe_release_orchestrator(camera_id: str) -> None:
     if orch is not None:
         await orch.shutdown()
         logger.info("orchestrator 已回收: camera={}", camera_id)
+
+
+async def maybe_release_orchestrator(camera_id: str) -> None:
+    """无 WebSocket 连接且无拉流消费器时回收 orchestrator。"""
+    async with camera_lock(camera_id):
+        await maybe_release_orchestrator_unlocked(camera_id)
+
+
+# consumer
+
+def get_stream_consumer(camera_id: str) -> "StreamConsumer | None":
+    """获取指定摄像头的拉流消费器。"""
+    return consumer_registry.get(camera_id)
+
+
+def register_stream_consumer(camera_id: str, consumer: "StreamConsumer") -> None:
+    """登记 consumer; 调用方须已持有 camera_lock。"""
+    consumer_registry[camera_id] = consumer
+
+
+def unregister_stream_consumer(camera_id: str, consumer: "StreamConsumer") -> None:
+    """移除指定 consumer, 不误删同 camera 后续注册的新实例。"""
+    if consumer_registry.get(camera_id) is consumer:
+        consumer_registry.pop(camera_id, None)
 
 
 # ------------------------------------------------------------------

@@ -123,7 +123,11 @@ async def lifespan(application: FastAPI):
     yield
 
     # Shutdown
-    from src.api.registry import camera_registry, consumer_registry
+    from src.api.registry import (
+        camera_operation,
+        camera_registry,
+        consumer_registry,
+    )
     from src.pipeline import stream_state
 
     logger.info(
@@ -132,14 +136,26 @@ async def lifespan(application: FastAPI):
     )
     # 看门狗先停: 避免它在下面停消费器/清注册表的过程中并发执行到期清理
     await stream_state.stop_lease_watchdog()
+    # camera 锁保证每个 camera 最多一个登记 consumer。
     for cam_id, consumer in list(consumer_registry.items()):
-        logger.info("正在停止拉流消费器: {}", cam_id)
-        await consumer.stop()
+        async with camera_operation(cam_id):
+            logger.info("正在停止拉流消费器: {}", cam_id)
+            try:
+                await consumer.stop()
+            except Exception:
+                logger.exception("关闭时停止拉流消费器失败: camera={}", cam_id)
     consumer_registry.clear()
 
-    for cam_id, orch in camera_registry.items():
-        logger.info("正在关闭摄像头: {}", cam_id)
-        await orch.shutdown()
+    # consumer stop 可能触发 registry 注销, 因此使用快照关闭剩余 orchestrator。
+    for cam_id, orch in list(camera_registry.items()):
+        async with camera_operation(cam_id):
+            if camera_registry.get(cam_id) is not orch:
+                continue
+            logger.info("正在关闭摄像头: {}", cam_id)
+            try:
+                await orch.shutdown()
+            except Exception:
+                logger.exception("关闭摄像头失败: camera={}", cam_id)
     camera_registry.clear()
 
     # 注意: 不删 Redis 里的拉流期望状态——关停≠用户想停止拉流,

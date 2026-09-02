@@ -43,6 +43,7 @@ from src.pipeline.orchestrator import VisionOrchestrator
 
 if TYPE_CHECKING:
     from src.pipeline.gpu_decoder import NvdecCapture
+    from src.pipeline.video_recorder import VideoRecorder
 
 
 class StreamConsumer:
@@ -96,7 +97,7 @@ class StreamConsumer:
         self.last_restream_outcome: str | None = None
 
         # 拉流录像(consume 生命周期内不断线切会话; stop 时收尾上传)
-        self._recorder = None
+        self._recorder: VideoRecorder | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -112,7 +113,6 @@ class StreamConsumer:
         # 拉流即挂 recorder: 断线重连/重推流不换, 显式 stop 才收尾。
         # video_record.enabled 是热字段, 由 maybe_write 逐帧现读门控——
         # recorder 无条件创建(纯状态对象, 不开编码器), 中途打开录像开关才能生效
-        from src.pipeline.video_recorder import VideoRecorder
         self._recorder = VideoRecorder(self.camera_id, self._loop)
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
@@ -127,41 +127,46 @@ class StreamConsumer:
 
     async def stop(self) -> None:
         """停止拉流与处理。"""
-        if not self.running:
-            return
-        self.running = False
-        self._stop_event.set()
+        try:
+            if not self.running:
+                return
+            self.running = False
+            self._stop_event.set()
 
-        if self._process_task is not None:
-            self._process_task.cancel()
-            try:
-                await self._process_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._process_task = None
+            if self._process_task is not None:
+                self._process_task.cancel()
+                try:
+                    await self._process_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._process_task = None
 
-        if self._reader_thread is not None:
-            # 读流线程是 daemon, join 超时不阻塞关闭流程
-            await asyncio.to_thread(self._reader_thread.join, 5.0)
-            self._reader_thread = None
+            if self._reader_thread is not None:
+                # 读流线程是 daemon, join 超时不阻塞关闭流程
+                await asyncio.to_thread(self._reader_thread.join, 5.0)
+                self._reader_thread = None
 
-        # 读流线程停稳后再收录像, 避免与 maybe_write 竞态
-        recorder = self._recorder
-        self._recorder = None
-        if recorder is not None:
-            try:
-                await recorder.stop()
-            except Exception:
-                logger.exception("拉流录像收尾失败: camera={}", self.camera_id)
+            # 读流线程停稳后再收录像, 避免与 maybe_write 竞态
+            recorder = self._recorder
+            self._recorder = None
+            if recorder is not None:
+                try:
+                    await recorder.stop()
+                except Exception:
+                    logger.exception("拉流录像收尾失败: camera={}", self.camera_id)
 
-        self.connected = False
-        # 清空运行时轨迹与注意力目标: 停止后 orchestrator 可能因为还有观看端
-        # WebSocket 而不被回收(registry.maybe_release_orchestrator), 轨迹清理
-        # 又只在 process_frame 里帧驱动地发生——不清的话 current_identity 会
-        # 一直返回停流前最后一帧镜头前的人(身份"残影")。断流重连场景已由
-        # _process_loop 的 reset_attention 覆盖, 这里补上显式停止这条路。
-        self.orchestrator.reset_attention()
-        logger.info("StreamConsumer 已停止: camera={}", self.camera_id)
+            self.connected = False
+            # 清空运行时轨迹与注意力目标: 停止后 orchestrator 可能因为还有观看端
+            # WebSocket 而不被回收(registry.maybe_release_orchestrator), 轨迹清理
+            # 又只在 process_frame 里帧驱动地发生——不清的话 current_identity 会
+            # 一直返回停流前最后一帧镜头前的人(身份"残影")。断流重连场景已由
+            # _process_loop 的 reset_attention 覆盖, 这里补上显式停止这条路。
+            self.orchestrator.reset_attention()
+            logger.info("StreamConsumer 已停止: camera={}", self.camera_id)
+        finally:
+            # 无论停止流程中哪个清理步骤失败, 都不能让已结束实例继续占用注册表。
+            from src.api.registry import unregister_stream_consumer
+            unregister_stream_consumer(self.camera_id, self)
 
     def status(self) -> StreamStatusResponse:
         """当前状态快照。"""

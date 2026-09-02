@@ -15,7 +15,14 @@ from fastapi import APIRouter, Depends, Form, Header, HTTPException, Request, Up
 from voice_agent_common.utils.context import set_device_sn
 from voice_agent_common.utils.logger import logger
 from src.api.iss_client import ISSEnv, iss_start_stream, iss_stop_stream
-from src.api.registry import get_camera_orchestrator, get_stream_consumer
+from src.api.registry import (
+    camera_operation,
+    camera_registry,
+    get_camera_orchestrator,
+    get_or_create_orchestrator_unlocked,
+    get_stream_consumer,
+    register_stream_consumer,
+)
 from src.configs.config import config
 from src.configs.override import config_override_manager, current_config
 from voice_agent_common.config_override_api import require_edit_password
@@ -54,6 +61,7 @@ from src.pipeline.data_models import (
     RegisterFailureReason,
 )
 from src.pipeline.frame_buffer import CachedFrame
+from src.pipeline import stream_state
 from src.tier1.attention import select_best_detection
 from src.tier1.detection import get_fast_detector
 from src.tier1.face_detector_light import get_face_detector_light
@@ -136,11 +144,6 @@ async def start_consume(
     camera_id: str, request: StreamStartRequest,
 ) -> StreamStatusResponse:
     """开启服务端拉流消费: 后台拉取视频流 → 识别 → 广播给观看端。"""
-    from src.api.registry import (
-        consumer_registry,
-        get_or_create_orchestrator,
-    )
-    from src.pipeline import stream_state
     from src.pipeline.stream_consumer import StreamConsumer
 
     url = request.url.strip()
@@ -152,44 +155,46 @@ async def start_consume(
     lease_deadline = (
         time.time() + request.lease_seconds if request.lease_seconds else None)
 
-    existing = consumer_registry.get(camera_id)
-    if existing is not None:
-        if existing.running and existing.url == url:
-            # 幂等: 同 URL 重复 start 返回现状。但期望状态要重写——重复
-            # start 就是续租(env/auto_restream 取正在运行的消费器的值,
-            # 与实际行为一致; 租约取本次请求的意图)
-            await stream_state.record_desired(
-                camera_id, url, existing.env, existing.auto_restream,
-                lease_deadline,
-            )
-            return existing.status()
-        # URL 变更或已停止 → 先停旧的再起新的
-        await existing.stop()
-        consumer_registry.pop(camera_id, None)
+    # camera 级串行化完整的 stop/create/register 流程。否则两个并发 start
+    # 都可能通过旧 registry 检查, 各自创建一条独立识别管线。
+    async with camera_operation(camera_id):
+        existing = get_stream_consumer(camera_id)
+        if existing is not None:
+            if existing.running and existing.url == url:
+                # 幂等: 同 URL 重复 start 返回现状。但期望状态要重写——重复
+                # start 就是续租(env/auto_restream 取正在运行的消费器的值,
+                # 与实际行为一致; 租约取本次请求的意图)
+                await stream_state.record_desired(
+                    camera_id, url, existing.env, existing.auto_restream,
+                    lease_deadline,
+                )
+                return existing.status()
 
-    orch = await get_or_create_orchestrator(camera_id)
-    consumer = StreamConsumer(
-        camera_id=camera_id,
-        url=url,
-        orchestrator=orch,
-        env=request.env,
-        auto_restream=request.auto_restream,
-    )
-    consumer.start()
-    consumer_registry[camera_id] = consumer
-    # 期望状态写入 Redis: 服务重启后按它自动恢复拉流, 租约到期由看门狗
-    # 自动关流 (均见 pipeline/stream_state.py)
-    await stream_state.record_desired(
-        camera_id, url, request.env, request.auto_restream, lease_deadline,
-    )
-    return consumer.status()
+            # URL 变更或已停止 → 先停旧的再起新的。stop() 在 finally 中注销
+            # 当前实例, 但这里不依赖它的实现细节, 注册槽位仍由 identity 保护。
+            await existing.stop()
+
+        orch = await get_or_create_orchestrator_unlocked(camera_id)
+        consumer = StreamConsumer(
+            camera_id=camera_id,
+            url=url,
+            orchestrator=orch,
+            env=request.env,
+            auto_restream=request.auto_restream,
+        )
+        consumer.start()
+        register_stream_consumer(camera_id, consumer)
+        # 期望状态写入 Redis: 服务重启后按它自动恢复拉流, 租约到期由看门狗
+        # 自动关流 (均见 pipeline/stream_state.py)
+        await stream_state.record_desired(
+            camera_id, url, request.env, request.auto_restream, lease_deadline,
+        )
+        return consumer.status()
 
 
 @router.post("/{camera_id}/consume/stop", response_model=StreamStatusResponse)
 async def stop_consume(camera_id: str) -> StreamStatusResponse:
     """停止服务端拉流消费。无活跃 WebSocket 时顺带回收 orchestrator。"""
-    from src.pipeline import stream_state
-
     # 显式停止 = 不再期望拉流(重启后不复活)。删状态→停消费器→回收
     # orchestrator 的公共步骤与租约到期清理共用, 见 stop_consumption
     consumer = await stream_state.stop_consumption(camera_id)
@@ -211,23 +216,20 @@ async def renew_consume_lease(
     造成视频中断。renewed=False(消费器不在跑/期望状态缺失)时调用方
     退回完整开流补齐。
     """
-    from src.api.registry import consumer_registry
-    from src.pipeline import stream_state
-
-    consumer = consumer_registry.get(camera_id)
-    if consumer is None or not consumer.running:
-        return LeaseRenewResponse(renewed=False, reason="not_consuming")
-    if not await stream_state.renew_lease(camera_id, request.lease_seconds):
-        return LeaseRenewResponse(renewed=False, reason="no_desired_state")
-    return LeaseRenewResponse(renewed=True)
+    # 与 stop_consumption 串行, 避免 stop 已删状态后 renew 又把期望状态写回来。
+    async with camera_operation(camera_id):
+        consumer = get_stream_consumer(camera_id)
+        if consumer is None or not consumer.running:
+            return LeaseRenewResponse(renewed=False, reason="not_consuming")
+        if not await stream_state.renew_lease(camera_id, request.lease_seconds):
+            return LeaseRenewResponse(renewed=False, reason="no_desired_state")
+        return LeaseRenewResponse(renewed=True)
 
 
 @router.get("/{camera_id}/consume/status", response_model=StreamStatusResponse)
 async def consume_status(camera_id: str) -> StreamStatusResponse:
     """查询服务端拉流消费状态 (前端刷新页面后据此恢复观看模式)。"""
-    from src.api.registry import consumer_registry
-
-    consumer = consumer_registry.get(camera_id)
+    consumer = get_stream_consumer(camera_id)
     if consumer is None:
         return StreamStatusResponse(camera_id=camera_id, running=False)
     return consumer.status()
@@ -322,7 +324,6 @@ def _resolve_leaf(cfg: object, key_path: str) -> object:
 @router.get("/cameras")
 async def list_cameras() -> dict[str, list[str]]:
     """列出当前活跃的摄像头。"""
-    from src.api.registry import camera_registry
     return {"cameras": list(camera_registry.keys())}
 
 
@@ -1074,7 +1075,6 @@ async def delete_person(camera_id: str, person_id: str) -> dict:
     if orch is not None:
         orch.delete_person(person_id)
     else:
-        from src.api.registry import camera_registry
         logger.warning(
             "DELETE person={} camera={}: orch=未找到, registry_keys={}",
             person_id, camera_id, list(camera_registry.keys()),

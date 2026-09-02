@@ -52,6 +52,13 @@ from typing import TYPE_CHECKING
 from voice_agent_common.utils.logger import logger
 
 from src import deps
+from src.api.registry import (
+    camera_operation,
+    get_or_create_orchestrator_unlocked,
+    get_stream_consumer,
+    maybe_release_orchestrator_unlocked,
+    register_stream_consumer,
+)
 
 if TYPE_CHECKING:
     from src.pipeline.stream_consumer import StreamConsumer
@@ -122,21 +129,21 @@ async def stop_consumption(camera_id: str) -> StreamConsumer | None:
 
     consume/stop(显式停止)与租约到期清理(_expire_lease)共用。期望状态
     无论消费器是否存在都先移除: 崩溃后条目可能残留而消费器已不在。
-    返回被停掉的消费器(不存在时 None), 供路由拼状态响应; 消费器停止
-    异常原样上抛, 由各调用方按自己的语义处置(路由报 500, 看门狗记日志继续)。
+    返回被停掉的消费器(不存在时 None), 供路由拼状态响应。
     """
-    from src.api.registry import consumer_registry, maybe_release_orchestrator
+    async with camera_operation(camera_id):
+        try:
+            await _get_client().hdel(STATE_KEY, camera_id)
+        except Exception as e:
+            logger.warning("拉流期望状态删除失败: camera={} ({})", camera_id, e)
 
-    try:
-        await _get_client().hdel(STATE_KEY, camera_id)
-    except Exception as e:
-        logger.warning("拉流期望状态删除失败: camera={} ({})", camera_id, e)
+        consumer = get_stream_consumer(camera_id)
+        if consumer is not None:
+            await consumer.stop()
 
-    consumer = consumer_registry.pop(camera_id, None)
-    if consumer is not None:
-        await consumer.stop()
-        await maybe_release_orchestrator(camera_id)
-    return consumer
+        # 必须在同一锁内调用 unlocked 版本, 否则会自锁死。
+        await maybe_release_orchestrator_unlocked(camera_id)
+        return consumer
 
 
 async def update_url(camera_id: str, url: str) -> None:
@@ -202,7 +209,6 @@ async def restore_streams() -> None:
     单个摄像头恢复失败(如 orchestrator 初始化异常)只记日志不中断;
     脏数据条目报错并从 Redis 删除; Redis 不可达则本次放弃恢复(不影响启动)。
     """
-    from src.api.registry import consumer_registry, get_or_create_orchestrator
     from src.pipeline.stream_consumer import StreamConsumer
 
     r = _get_client()
@@ -232,17 +238,25 @@ async def restore_streams() -> None:
             await _expire_lease(camera_id, env)
             continue
         try:
-            orch = await get_or_create_orchestrator(camera_id)
-            consumer = StreamConsumer(
-                camera_id=camera_id,
-                url=url,
-                orchestrator=orch,
-                env=env,
-                auto_restream=auto_restream,
-            )
-            consumer.start()
-            consumer_registry[camera_id] = consumer
-            logger.info("拉流已恢复: camera={}, env={}, url={}", camera_id, env, url)
+            async with camera_operation(camera_id):
+                existing = get_stream_consumer(camera_id)
+                if existing is not None:
+                    if existing.running and existing.url == url:
+                        logger.info("拉流已存在, 跳过重复恢复: camera={}", camera_id)
+                        continue
+                    await existing.stop()
+
+                orch = await get_or_create_orchestrator_unlocked(camera_id)
+                consumer = StreamConsumer(
+                    camera_id=camera_id,
+                    url=url,
+                    orchestrator=orch,
+                    env=env,
+                    auto_restream=auto_restream,
+                )
+                consumer.start()
+                register_stream_consumer(camera_id, consumer)
+                logger.info("拉流已恢复: camera={}, env={}, url={}", camera_id, env, url)
         except Exception:
             logger.exception("拉流恢复失败(跳过): camera={}", camera_id)
 
