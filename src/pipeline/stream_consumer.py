@@ -40,10 +40,10 @@ from src.api.schemas import (
 from src.configs.config import config
 from src.configs.override import current_config
 from src.pipeline.orchestrator import VisionOrchestrator
+from src.pipeline.video_recorder import VideoRecorder
 
 if TYPE_CHECKING:
     from src.pipeline.gpu_decoder import NvdecCapture
-    from src.pipeline.video_recorder import VideoRecorder
 
 
 class StreamConsumer:
