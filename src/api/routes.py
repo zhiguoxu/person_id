@@ -96,7 +96,23 @@ async def start_device_stream(
     env 选择 ISS 环境 (test/prod, 前端界面切换):
     1. POST {iss_api_url(env)}/iss/start_stream, header device-sn: {camera_id}
     2. 返回 data.Flv
+
+    该摄像头已有同 env 的消费器在跑且处于连接态时, 直接返回它正在拉的地址,
+    不打 ISS。ISS start_stream 不幂等: 每次都签发带新 token 的地址(路径不变),
+    紧随的 consume/start 会把它当"URL 变更"停旧起新, 视频中断数秒到数十秒,
+    设备侧也会被再次下发推流指令(实测两次 start 相隔 4s, 推流乱了 ~50s 才
+    稳定)。消费器不在连接态(重连中/未起)时照常走 ISS——此时正需要新地址重建。
+    一般情况不会出现开启两个摄像头，除非wake_stream_activity 和 web 端手动开启
     """
+    existing = get_stream_consumer(camera_id)
+    if (existing is not None and existing.running and existing.connected
+            and existing.env == env):
+        logger.info(
+            "设备已在推流且消费中, 复用当前直播地址不再打 ISS: env={}, device-sn={}",
+            env, camera_id,
+        )
+        return DeviceStreamStartResponse(flv_url=existing.url)
+
     result = await iss_start_stream(camera_id, env)
     if not result.ok:
         raise HTTPException(status_code=result.http_status, detail=result.error)
