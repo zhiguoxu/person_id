@@ -251,13 +251,16 @@ class StreamConsumer:
                             "拉流录像写帧失败: camera={}", self.camera_id,
                         )
 
+            # release 前取: NvdecCapture 在 read 失败时填好 ffmpeg 退出码 +
+            # stderr 尾部; cv2 后端没有这个接口, 只能报"无详细原因"
+            reason = getattr(cap, "last_error", None) or "cv2 后端无详细原因"
             cap.release()
             self.connected = False
             if not self._stop_event.is_set():
                 self.last_error = "视频流中断, 正在重连"
                 logger.warning(
-                    "拉流中断: camera={}, 本次连接读到 {} 帧, {}s 后重连",
-                    self.camera_id, session_frames, reconnect_delay,
+                    "拉流中断: camera={}, 本次连接读到 {} 帧, {}s 后重连, 原因: {}",
+                    self.camera_id, session_frames, reconnect_delay, reason,
                 )
                 self._on_pull_failure()
                 self._stop_event.wait(reconnect_delay)

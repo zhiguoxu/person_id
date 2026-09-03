@@ -12,16 +12,27 @@ NV12→BGR 像素格式转换(swscale, 单路 720p@15fps 约 2-3% 核)。
 分辨率处理: rawvideo 管道无帧头, 必须先 ffprobe 探测分辨率并用 scale
 滤镜锁死输出尺寸——流中途变分辨率时输出仍按锁定尺寸缩放, 不会错位解析
 (重连后重新探测即跟上新分辨率)。
+
+失败原因: read() 失败只意味着 ffmpeg 子进程退出了, 服务端 EOF(设备没推
+数据)、找不到 codec 参数、NVDEC 不支持该 profile 在管道这头长得一模一样。
+所以 stderr 由后台线程持续读走并保留尾部几行, 退出时连同退出码写进
+last_error, 由 StreamConsumer 打到"拉流中断"日志里。
 """
 from __future__ import annotations
 
+import collections
 import subprocess
+import threading
 
 import numpy as np
 from voice_agent_common.utils.logger import logger
 
 # 本机 ffmpeg 是否支持 cuda hwaccel(进程级缓存, 一次探测)
 _nvdec_supported: bool | None = None
+
+# ffmpeg stderr 只留尾部这么多行: 退出原因("Output file is empty" /
+# "Could not find codec parameters" / hwaccel 报错)都在最后几行
+_STDERR_TAIL_LINES = 8
 
 
 def nvdec_supported() -> bool:
@@ -61,7 +72,14 @@ def _probe_resolution(url: str, timeout: float) -> tuple[int, int]:
         ],
         capture_output=True, timeout=timeout,
     )
-    w, h = out.stdout.decode().strip().split("\n")[0].split(",")
+    text = out.stdout.decode().strip()
+    if out.returncode != 0 or not text:
+        # ffprobe 的报错(404 / 连接超时 / Invalid data)在 stderr 最后一行
+        err_lines = out.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise RuntimeError(
+            f"ffprobe exit={out.returncode}: {err_lines[-1] if err_lines else '无输出'}"
+        )
+    w, h = text.split("\n")[0].split(",")
     return int(w), int(h)
 
 
@@ -77,6 +95,12 @@ class NvdecCapture:
         # True = 流本身不可达(未推流/超时), 与 NVDEC 无关——CPU 解码同样
         # 打不开, 调用方不必做无谓的 CPU 退回, 交给外层重连即可
         self.stream_unreachable = False
+        # read() 失败时填写: ffmpeg 退出码 + stderr 尾部, 供调用方打日志
+        self.last_error: str | None = None
+        self._stderr_tail: collections.deque[str] = collections.deque(
+            maxlen=_STDERR_TAIL_LINES,
+        )
+        self._stderr_thread: threading.Thread | None = None
 
         try:
             self._width, self._height = _probe_resolution(url, probe_timeout)
@@ -96,7 +120,10 @@ class NvdecCapture:
         try:
             self._proc = subprocess.Popen(
                 [
-                    "ffmpeg", "-loglevel", "error",
+                    # warning 级才有 "Output file is empty, nothing was encoded"
+                    # (服务端 EOF、一帧没出) 和 "Could not find codec parameters",
+                    # error 级下这两种最常见的退出都是静默的
+                    "ffmpeg", "-loglevel", "warning",
                     "-hwaccel", "cuda", "-hwaccel_device", str(_gpu_index(device)),
                     "-fflags", "nobuffer", "-flags", "low_delay",
                     "-i", url,
@@ -107,11 +134,45 @@ class NvdecCapture:
                     "pipe:1",
                 ],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
         except OSError as e:
             logger.warning("NVDEC ffmpeg 启动失败: {}", e)
             self._proc = None
+            return
+        # stderr 必须有人持续读: 管道 64KB 写满后 ffmpeg 会卡在日志写入上,
+        # 表现为拉流无故停帧
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr, args=(self._proc.stderr,),
+            name="nvdec-stderr", daemon=True,
+        )
+        self._stderr_thread.start()
+
+    def _drain_stderr(self, pipe) -> None:
+        try:
+            for raw in pipe:
+                line = raw.decode("utf-8", "replace").strip()
+                if line:
+                    self._stderr_tail.append(line)
+        except (OSError, ValueError):
+            pass  # release() 关管道时的收尾异常
+
+    def _describe_exit(self, got: int) -> str:
+        """stdout 短读后汇总退出原因。短读即 ffmpeg 已关 stdout, 进程随即退出,
+        等一小会拿退出码, 再等 stderr 线程把尾部读完。"""
+        rc: int | None = None
+        proc = self._proc
+        if proc is not None:
+            try:
+                rc = proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=1)
+        # 负数退出码 = 被信号杀(-9 多为 OOM killer)
+        rc_text = f"exit={rc}" if rc is not None else "进程未退出"
+        tail = " | ".join(self._stderr_tail) or "(stderr 无输出)"
+        return f"ffmpeg {rc_text}, 短读 {got}/{self._frame_bytes} 字节, stderr: {tail}"
 
     # ── cv2.VideoCapture 接口 ──
 
@@ -129,6 +190,7 @@ class NvdecCapture:
         # 才会短读
         data = self._proc.stdout.read(self._frame_bytes)
         if data is None or len(data) < self._frame_bytes:
+            self.last_error = self._describe_exit(len(data) if data else 0)
             return False, None
         frame = (
             np.frombuffer(data, dtype=np.uint8)
@@ -147,7 +209,9 @@ class NvdecCapture:
             proc.wait(timeout=5)
         except Exception:
             pass
-        try:
-            proc.stdout.close()
-        except OSError:
-            pass
+        for pipe in (proc.stdout, proc.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except OSError:
+                pass
