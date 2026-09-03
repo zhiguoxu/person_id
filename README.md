@@ -70,6 +70,8 @@ POST /api/{camera_id}/device_stream/stop    # 停止设备推流
 POST /api/{camera_id}/consume/start         # 开启消费, body: {"url": "..."}
 POST /api/{camera_id}/consume/stop          # 停止消费
 GET  /api/{camera_id}/consume/status        # 消费状态 (running/connected/分辨率/fps/viewers)
+# 以上四个启停接口请带 X-Request-Source: <service>/<entry>[:detail] (ASCII) 自报发起方,
+# 会拼进 ISS 与 StreamConsumer 的启停日志; 不带记为 unknown
 
 # 拉流录像 (consume 期间自动录制上传 COS; 按开始时间范围查询)
 GET  /api/videos                            # ?start_from=&start_to=&device_sn=&status=ready

@@ -236,7 +236,7 @@ async def restore_streams() -> None:
             # 推流(停机期间没人执行到期关流), 走完整的到期清理把推流也停掉
             logger.info("拉流租约在停机期间已过期, 不恢复并停设备推流: camera={}",
                         camera_id)
-            await _expire_lease(camera_id, env)
+            await _expire_lease(camera_id, env, source="启动恢复(租约在停机期间已过期)")
             continue
         try:
             async with camera_operation(camera_id):
@@ -271,21 +271,22 @@ LEASE_CHECK_INTERVAL = 15.0  # 扫描周期(秒)。租约是安全网, 到期精
 _watchdog_task: "asyncio.Task | None" = None
 
 
-async def _expire_lease(camera_id: str, env: str) -> None:
+async def _expire_lease(camera_id: str, env: str, source: str) -> None:
     """租约到期的完整清理: 停消费(同 consume/stop 的公共步骤) → 停设备推流。
 
     先停消费再停推流, 顺序不能反, 否则消费器对着死流反复重连甚至触发
     自动重推流复活。各步独立容错: 停推流失败只多耗带宽, 消费已停,
     安全网的主目的(识别管线不再消费)已达成。
+    source: 触发清理的入口(看门狗/启动恢复), 透传给停消费与停推流的日志。
     """
     from src.api.iss_client import iss_stop_stream
 
     try:
-        await stop_consumption(camera_id, source="租约到期未续租")
+        await stop_consumption(camera_id, source=source)
     except Exception:
         logger.exception("租约到期停消费失败: camera={}", camera_id)
 
-    result = await iss_stop_stream(camera_id, env)
+    result = await iss_stop_stream(camera_id, env, source=source)
     if not result.ok:
         logger.warning("租约到期停设备推流失败: camera={} ({})", camera_id, result.error)
 
@@ -322,7 +323,7 @@ async def _enforce_leases_once() -> None:
             continue
         logger.info("拉流租约到期未续租, 自动关流: camera={} (deadline 已过 {:.0f}s)",
                     camera_id, now - parsed2[3])
-        await _expire_lease(camera_id, parsed2[1])
+        await _expire_lease(camera_id, parsed2[1], source="租约看门狗(到期未续租)")
 
 
 async def _watchdog_loop() -> None:

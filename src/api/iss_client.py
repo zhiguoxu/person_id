@@ -95,11 +95,12 @@ async def _iss_post(action: str, camera_id: str, env: ISSEnv) -> httpx.Response 
         return ISSCallResult(ok=False, error=f"推流服务 (ISS) 请求异常: {e}")
 
 
-async def iss_start_stream(camera_id: str, env: ISSEnv) -> ISSCallResult:
+async def iss_start_stream(camera_id: str, env: ISSEnv, source: str) -> ISSCallResult:
     """开启设备推流, 成功时返回 FLV 直播地址。
 
     camera_id 即设备 device-sn。ISS 失败时 (含 HTTP 500) body 里通常带有 msg,
     透传给调用方便于定位 (最常见: 设备号不存在 → "无法获取设备 DB ID")。
+    source: 触发本次调用的入口(接口/自动恢复等), 只进日志, 用于追踪谁在开推流。
     """
     resp = await _iss_post("start_stream", camera_id, env)
     if isinstance(resp, ISSCallResult):
@@ -110,8 +111,8 @@ async def iss_start_stream(camera_id: str, env: ISSEnv) -> ISSCallResult:
         data = {}
     if resp.status_code != 200 or data.get("code") != 0:
         logger.warning(
-            "ISS start_stream 失败: env={}, device-sn={}, HTTP {}, body={}",
-            env, camera_id, resp.status_code, resp.text,
+            "ISS start_stream 失败: env={}, device-sn={}, source={}, HTTP {}, body={}",
+            env, camera_id, source, resp.status_code, resp.text,
         )
         return ISSCallResult(
             ok=False,
@@ -130,12 +131,18 @@ async def iss_start_stream(camera_id: str, env: ISSEnv) -> ISSCallResult:
             error=_fail_detail(f"ISS 未返回 FLV 地址 (device-sn={camera_id})", resp),
         )
 
-    logger.info("ISS 设备推流已启动: env={}, device-sn={}, flv={}", env, camera_id, flv_url)
+    logger.info(
+        "ISS 设备推流已启动: env={}, device-sn={}, source={}, flv={}",
+        env, camera_id, source, flv_url,
+    )
     return ISSCallResult(ok=True, flv_url=flv_url)
 
 
-async def iss_stop_stream(camera_id: str, env: ISSEnv) -> ISSCallResult:
-    """停止设备推流。"""
+async def iss_stop_stream(camera_id: str, env: ISSEnv, source: str) -> ISSCallResult:
+    """停止设备推流。
+
+    source: 触发本次调用的入口(接口/租约到期/自动恢复等), 只进日志, 用于追踪谁在停推流。
+    """
     resp = await _iss_post("stop_stream", camera_id, env)
     if isinstance(resp, ISSCallResult):
         return resp
@@ -145,13 +152,15 @@ async def iss_stop_stream(camera_id: str, env: ISSEnv) -> ISSCallResult:
         data = {}
     if resp.status_code != 200 or data.get("code") != 0:
         logger.warning(
-            "ISS stop_stream 失败: env={}, device-sn={}, HTTP {}, body={}",
-            env, camera_id, resp.status_code, resp.text,
+            "ISS stop_stream 失败: env={}, device-sn={}, source={}, HTTP {}, body={}",
+            env, camera_id, source, resp.status_code, resp.text,
         )
         return ISSCallResult(
             ok=False,
             error=_fail_detail(f"停止设备推流失败 (device-sn={camera_id})", resp),
         )
 
-    logger.info("ISS 设备推流已停止: env={}, device-sn={}", env, camera_id)
+    logger.info(
+        "ISS 设备推流已停止: env={}, device-sn={}, source={}", env, camera_id, source,
+    )
     return ISSCallResult(ok=True)

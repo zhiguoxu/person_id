@@ -111,14 +111,18 @@ async def run_restream_recovery(
             add_log("info", online_msg)
 
         # 2. 先停旧推流 (清掉 ISS 侧可能损坏的流会话; 失败不阻断, 只记录)
-        stop_result = await iss_stop_stream(camera_id, env)
+        stop_result = await iss_stop_stream(
+            camera_id, env, source=f"拉流自动恢复(连续失败 {fail_count} 次, 先清旧推流)",
+        )
         if stop_result.ok:
             add_log("info", "ISS stop_stream 成功 (旧推流已清理)")
         else:
             add_log("warning", f"ISS stop_stream 失败 (不阻断重推): {stop_result.error}")
 
         # 3. 重新开启推流
-        start_result = await iss_start_stream(camera_id, env)
+        start_result = await iss_start_stream(
+            camera_id, env, source=f"拉流自动恢复(连续失败 {fail_count} 次, 重推流)",
+        )
         if not start_result.ok:
             add_log("error", f"ISS start_stream 失败: {start_result.error}")
             outcome = "iss_start_failed"

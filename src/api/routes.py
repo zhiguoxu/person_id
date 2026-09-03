@@ -82,6 +82,20 @@ router = APIRouter(prefix="/api", tags=["api"],
                    dependencies=[Depends(_bind_camera_context)])
 
 
+def _request_source(
+    x_request_source: str | None = Header(None, alias="X-Request-Source"),
+) -> str:
+    """上游调用方自报的发起来源, 只进日志。
+
+    推流/拉流启停接口有多个上游(web 视觉页直连、agent_server 代理的控制台
+    操作与人脸注册、voice_server 的唤醒/连接联动), 单看接口名分不出是谁发起
+    的。上游在 X-Request-Source 头里写明自己(格式 <service>/<entry>[:detail],
+    ASCII; 见 voice_agent_common.infra.person_id_client 与 web/src/person_id/
+    api.ts), 这里透传进 ISS 与 StreamConsumer 的启停日志。没带头 = unknown。
+    """
+    return x_request_source or "unknown"
+
+
 # ==============================================================================
 # 设备推流 (ISS start/stop, device-sn = camera_id; 调用逻辑在 iss_client)
 # ==============================================================================
@@ -89,6 +103,7 @@ router = APIRouter(prefix="/api", tags=["api"],
 @router.post("/{camera_id}/device_stream/start", response_model=DeviceStreamStartResponse)
 async def start_device_stream(
     camera_id: str, env: ISSEnv = "test",
+    caller: str = Depends(_request_source),
 ) -> DeviceStreamStartResponse:
     """开启设备推流并返回 FLV 直播地址。
 
@@ -108,12 +123,15 @@ async def start_device_stream(
     if (existing is not None and existing.running and existing.connected
             and existing.env == env):
         logger.info(
-            "设备已在推流且消费中, 复用当前直播地址不再打 ISS: env={}, device-sn={}",
-            env, camera_id,
+            "设备已在推流且消费中, 复用当前直播地址不再打 ISS: env={}, device-sn={}, "
+            "caller={}",
+            env, camera_id, caller,
         )
         return DeviceStreamStartResponse(flv_url=existing.url)
 
-    result = await iss_start_stream(camera_id, env)
+    result = await iss_start_stream(
+        camera_id, env, source=f"device_stream/start 接口 <- {caller}",
+    )
     if not result.ok:
         raise HTTPException(status_code=result.http_status, detail=result.error)
     return DeviceStreamStartResponse(flv_url=result.flv_url)
@@ -122,9 +140,12 @@ async def start_device_stream(
 @router.post("/{camera_id}/device_stream/stop", response_model=DeviceStreamStopResponse)
 async def stop_device_stream(
     camera_id: str, env: ISSEnv = "test",
+    caller: str = Depends(_request_source),
 ) -> DeviceStreamStopResponse:
     """停止设备推流 (ISS stop_stream, device-sn = camera_id, env 选择 ISS 环境)。"""
-    result = await iss_stop_stream(camera_id, env)
+    result = await iss_stop_stream(
+        camera_id, env, source=f"device_stream/stop 接口 <- {caller}",
+    )
     if not result.ok:
         raise HTTPException(status_code=result.http_status, detail=result.error)
     return DeviceStreamStopResponse(stopped=True)
@@ -158,6 +179,7 @@ async def get_restream_log(camera_id: str, limit: int = 50) -> RestreamLogRespon
 @router.post("/{camera_id}/consume/start", response_model=StreamStatusResponse)
 async def start_consume(
     camera_id: str, request: StreamStartRequest,
+    caller: str = Depends(_request_source),
 ) -> StreamStatusResponse:
     """开启服务端拉流消费: 后台拉取视频流 → 识别 → 广播给观看端。"""
     from src.pipeline.stream_consumer import StreamConsumer
@@ -188,7 +210,9 @@ async def start_consume(
 
             # URL 变更或已停止 → 先停旧的再起新的。stop() 在 finally 中注销
             # 当前实例, 但这里不依赖它的实现细节, 注册槽位仍由 identity 保护。
-            await existing.stop(source="consume/start 接口(URL 变更, 停旧起新)")
+            await existing.stop(
+                source=f"consume/start 接口(URL 变更, 停旧起新) <- {caller}",
+            )
 
         orch = await get_or_create_orchestrator_unlocked(camera_id)
         consumer = StreamConsumer(
@@ -198,9 +222,8 @@ async def start_consume(
             env=request.env,
             auto_restream=request.auto_restream,
         )
-        # 带租约 = voice_server 唤醒联动, 不带 = 控制台手动开流
         consumer.start(
-            source=f"consume/start 接口(lease_seconds={request.lease_seconds})",
+            source=f"consume/start 接口(lease_seconds={request.lease_seconds}) <- {caller}",
         )
         register_stream_consumer(camera_id, consumer)
         # 期望状态写入 Redis: 服务重启后按它自动恢复拉流, 租约到期由看门狗
@@ -212,12 +235,14 @@ async def start_consume(
 
 
 @router.post("/{camera_id}/consume/stop", response_model=StreamStatusResponse)
-async def stop_consume(camera_id: str) -> StreamStatusResponse:
+async def stop_consume(
+    camera_id: str, caller: str = Depends(_request_source),
+) -> StreamStatusResponse:
     """停止服务端拉流消费。无活跃 WebSocket 时顺带回收 orchestrator。"""
     # 显式停止 = 不再期望拉流(重启后不复活)。删状态→停消费器→回收
     # orchestrator 的公共步骤与租约到期清理共用, 见 stop_consumption
     consumer = await stream_state.stop_consumption(
-        camera_id, source="consume/stop 接口",
+        camera_id, source=f"consume/stop 接口 <- {caller}",
     )
     if consumer is None:
         return StreamStatusResponse(camera_id=camera_id, running=False)
