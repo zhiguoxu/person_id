@@ -103,8 +103,11 @@ class StreamConsumer:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
-        """启动读流线程与处理协程。"""
+    def start(self, source: str) -> None:
+        """启动读流线程与处理协程。
+
+        source: 触发启动的入口(接口/启动恢复等), 只进日志, 用于追踪谁拉起了这条流。
+        """
         if self.running:
             return
         self.running = True
@@ -122,11 +125,15 @@ class StreamConsumer:
         self._reader_thread.start()
         self._process_task = asyncio.create_task(self._process_loop())
         logger.info(
-            "StreamConsumer 已启动: camera={}, url={}", self.camera_id, self.url,
+            "StreamConsumer 已启动: camera={}, url={}, source={}",
+            self.camera_id, self.url, source,
         )
 
-    async def stop(self) -> None:
-        """停止拉流与处理。"""
+    async def stop(self, source: str) -> None:
+        """停止拉流与处理。
+
+        source: 触发停止的入口(接口/租约到期/应用关闭等), 只进日志, 用于追踪谁停了这条流。
+        """
         try:
             if not self.running:
                 return
@@ -162,7 +169,9 @@ class StreamConsumer:
             # 一直返回停流前最后一帧镜头前的人(身份"残影")。断流重连场景已由
             # _process_loop 的 reset_attention 覆盖, 这里补上显式停止这条路。
             self.orchestrator.reset_attention()
-            logger.info("StreamConsumer 已停止: camera={}", self.camera_id)
+            logger.info(
+                "StreamConsumer 已停止: camera={}, source={}", self.camera_id, source,
+            )
         finally:
             # 无论停止流程中哪个清理步骤失败, 都不能让已结束实例继续占用注册表。
             from src.api.registry import unregister_stream_consumer

@@ -59,7 +59,7 @@ class FakeConsumer:
         self.running = running
         self.stop_calls = 0
 
-    async def stop(self):
+    async def stop(self, source: str):
         self.stop_calls += 1
         self.running = False
         registry.unregister_stream_consumer("camera-1", self)
@@ -120,7 +120,7 @@ async def test_stop_consumption_stops_registered_consumer(monkeypatch):
     async with registry.camera_operation("camera-1"):
         registry.register_stream_consumer("camera-1", consumer)
 
-    returned = await stream_state.stop_consumption("camera-1")
+    returned = await stream_state.stop_consumption("camera-1", source="test")
 
     assert returned is consumer
     assert consumer.stop_calls == 1

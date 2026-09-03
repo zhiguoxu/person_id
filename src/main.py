@@ -141,7 +141,7 @@ async def lifespan(application: FastAPI):
         async with camera_operation(cam_id):
             logger.info("正在停止拉流消费器: {}", cam_id)
             try:
-                await consumer.stop()
+                await consumer.stop(source="应用关闭(lifespan shutdown)")
             except Exception:
                 logger.exception("关闭时停止拉流消费器失败: camera={}", cam_id)
     consumer_registry.clear()

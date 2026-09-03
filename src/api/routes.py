@@ -188,7 +188,7 @@ async def start_consume(
 
             # URL 变更或已停止 → 先停旧的再起新的。stop() 在 finally 中注销
             # 当前实例, 但这里不依赖它的实现细节, 注册槽位仍由 identity 保护。
-            await existing.stop()
+            await existing.stop(source="consume/start 接口(URL 变更, 停旧起新)")
 
         orch = await get_or_create_orchestrator_unlocked(camera_id)
         consumer = StreamConsumer(
@@ -198,7 +198,10 @@ async def start_consume(
             env=request.env,
             auto_restream=request.auto_restream,
         )
-        consumer.start()
+        # 带租约 = voice_server 唤醒联动, 不带 = 控制台手动开流
+        consumer.start(
+            source=f"consume/start 接口(lease_seconds={request.lease_seconds})",
+        )
         register_stream_consumer(camera_id, consumer)
         # 期望状态写入 Redis: 服务重启后按它自动恢复拉流, 租约到期由看门狗
         # 自动关流 (均见 pipeline/stream_state.py)
@@ -213,7 +216,9 @@ async def stop_consume(camera_id: str) -> StreamStatusResponse:
     """停止服务端拉流消费。无活跃 WebSocket 时顺带回收 orchestrator。"""
     # 显式停止 = 不再期望拉流(重启后不复活)。删状态→停消费器→回收
     # orchestrator 的公共步骤与租约到期清理共用, 见 stop_consumption
-    consumer = await stream_state.stop_consumption(camera_id)
+    consumer = await stream_state.stop_consumption(
+        camera_id, source="consume/stop 接口",
+    )
     if consumer is None:
         return StreamStatusResponse(camera_id=camera_id, running=False)
     status = consumer.status()
