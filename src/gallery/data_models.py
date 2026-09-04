@@ -118,10 +118,28 @@ class OutfitEnrollResult(BaseModel):
     evicted: OutfitRecord | None = None  # 被替换淘汰的旧 outfit
 
 
+class FaceGateStats(BaseModel):
+    """人脸入库门槛扫描统计: 一次入库没写进任何人脸特征时, 用它报"差多少"。"""
+    min_face_px: float  # 生效的尺寸门槛 (短边像素)
+    quality_threshold: float  # 生效的质量门槛 (eDifFIQA-large 量纲)
+    frames: int = 0  # 参与扫描的未入库人脸帧数
+    max_face_px: float = 0.0  # 全部帧里最大的人脸短边
+    sized_frames: int = 0  # 过尺寸门槛的帧数
+    max_quality: float | None = None  # 过尺寸门槛的帧里最高的入库质量分
+
+    def summary(self) -> str:
+        q = f"{self.max_quality:.2f}" if self.max_quality is not None else "无"
+        return (
+            f"人脸帧 {self.frames} 张, 最大短边 {self.max_face_px:.0f}px / 门槛 {self.min_face_px:.0f}px; "
+            f"过尺寸 {self.sized_frames} 张, 其中最高质量 {q} / 门槛 {self.quality_threshold:.2f}"
+        )
+
+
 class GalleryUpdateResult(BaseModel):
     """Gallery 的增量更新结果。"""
     feature_ops: list[FeatureOperation] = Field(default_factory=list)
     wardrobe_op: OutfitEnrollResult | None = None
+    face_gate: FaceGateStats | None = None  # 人脸门槛扫描统计 (profile 不存在时为 None)
 
 
 class BodyProportions(BaseModel):

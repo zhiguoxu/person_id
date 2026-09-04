@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.configs.override import current_config
 from src.gallery.data_models import (
+    FaceGateStats,
     FeatureEntry,
     GalleryUpdateResult,
     PersonProfile, PoseBucket,
@@ -313,9 +314,9 @@ class VisionOrchestrator(BaseModel):
         if is_new_person and not enrolled_face:
             self.gallery.pop(person_id, None)
             logger.warning(
-                "已回滚新 profile {}: 没有 face feature 通过 enroll threshold "
-                "(face quality/尺寸不足)",
+                "已回滚新 profile {}: 没有 face feature 通过 enroll threshold ({})",
                 person_id,
+                changes.face_gate.summary() if changes.face_gate else "face_pool 未扫描",
             )
             return ConfirmResult.fail(
                 RegisterFailureReason.LOW_FACE_QUALITY,
@@ -431,7 +432,8 @@ class VisionOrchestrator(BaseModel):
                 生效; 只作用于人脸, 人体门槛不受影响。
 
         Returns:
-            GalleryUpdateResult: 包含了变动的特征和衣橱更新标记。
+            GalleryUpdateResult: 变动的特征、衣橱更新标记, 以及人脸门槛扫描统计
+            (face_gate, 供调用方在没写进人脸时报差距)。
         """
         changes = GalleryUpdateResult()
 
@@ -459,6 +461,9 @@ class VisionOrchestrator(BaseModel):
                 quality_threshold = gallery_cfg.face_quality_enroll_threshold
                 if min_face_quality is not None:
                     quality_threshold = max(quality_threshold, min_face_quality)
+                gate = changes.face_gate = FaceGateStats(
+                    min_face_px=min_face_size, quality_threshold=quality_threshold,
+                )
             else:
                 quality_threshold = gallery_cfg.body_quality_enroll_threshold
             # 每个姿态桶选最高质量的未入库帧
@@ -473,10 +478,15 @@ class VisionOrchestrator(BaseModel):
                     if fb is None:
                         continue
                     face_short_edge = min(float(fb[2] - fb[0]), float(fb[3] - fb[1]))
+                    gate.frames += 1
+                    gate.max_face_px = max(gate.max_face_px, face_short_edge)
                     if face_short_edge < min_face_size:
                         continue  # 脸太小, 分辨率不足, 不入库
                     if cf.entry.aligned_face is not None:
                         quality = enroll_scorer.predict(cf.entry.aligned_face)
+                    gate.sized_frames += 1
+                    if gate.max_quality is None or quality > gate.max_quality:
+                        gate.max_quality = quality
                 if quality >= quality_threshold:
                     pose = cf.entry.detection.pose_bucket
                     if pose not in best_frames or quality > best_frames[pose][1]:
