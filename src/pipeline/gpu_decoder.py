@@ -9,14 +9,15 @@ NV12→BGR 像素格式转换(swscale, 单路 720p@15fps 约 2-3% 核)。
 接口对齐 cv2.VideoCapture(isOpened/read/release/set), StreamConsumer 的
 读流循环两种解码器无差别使用; 打开失败由调用方按次退回 CPU 解码。
 
-分辨率处理: rawvideo 管道无帧头, 必须先 ffprobe 探测分辨率并用 scale
-滤镜锁死输出尺寸——流中途变分辨率时输出仍按锁定尺寸缩放, 不会错位解析
-(重连后重新探测即跟上新分辨率)。
+分辨率处理: rawvideo 管道无帧头, 必须先 ffprobe 探测分辨率(stream_probe)
+并用 scale 滤镜锁死输出尺寸——流中途变分辨率时输出仍按锁定尺寸缩放, 不会
+错位解析(重连后重新探测即跟上新分辨率)。
 
-失败原因: read() 失败只意味着 ffmpeg 子进程退出了, 服务端 EOF(设备没推
-数据)、找不到 codec 参数、NVDEC 不支持该 profile 在管道这头长得一模一样。
-所以 stderr 由后台线程持续读走并保留尾部几行, 退出时连同退出码写进
-last_error, 由 StreamConsumer 打到"拉流中断"日志里。
+失败原因统一放 last_error, 由 StreamConsumer 打进日志/状态接口:
+- 打开失败: 探测阶段的原因(stream_probe 已翻译成可读描述)或 ffmpeg 启动失败
+- read() 失败: 只意味着 ffmpeg 子进程退出了, 服务端 EOF(设备没推数据)、
+  找不到 codec 参数、NVDEC 不支持该 profile 在管道这头长得一模一样。所以
+  stderr 由后台线程持续读走并保留尾部几行, 退出时连同退出码一起写入
 """
 from __future__ import annotations
 
@@ -26,6 +27,12 @@ import threading
 
 import numpy as np
 from voice_agent_common.utils.logger import logger
+
+from src.pipeline.stream_probe import (
+    DEFAULT_PROBE_TIMEOUT,
+    StreamProbeError,
+    probe_resolution,
+)
 
 # 本机 ffmpeg 是否支持 cuda hwaccel(进程级缓存, 一次探测)
 _nvdec_supported: bool | None = None
@@ -63,31 +70,11 @@ def _gpu_index(device: str) -> int:
     return 0
 
 
-def _probe_resolution(url: str, timeout: float) -> tuple[int, int]:
-    out = subprocess.run(
-        [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height", "-of", "csv=p=0",
-            url,
-        ],
-        capture_output=True, timeout=timeout,
-    )
-    text = out.stdout.decode().strip()
-    if out.returncode != 0 or not text:
-        # ffprobe 的报错(404 / 连接超时 / Invalid data)在 stderr 最后一行
-        err_lines = out.stderr.decode("utf-8", "replace").strip().splitlines()
-        raise RuntimeError(
-            f"ffprobe exit={out.returncode}: {err_lines[-1] if err_lines else '无输出'}"
-        )
-    w, h = text.split("\n")[0].split(",")
-    return int(w), int(h)
-
-
 class NvdecCapture:
     """GPU 解码拉流读取器(与 cv2.VideoCapture 同接口)。"""
 
     def __init__(self, url: str, device: str = "cuda:0",
-                 probe_timeout: float = 10.0) -> None:
+                 probe_timeout: float = DEFAULT_PROBE_TIMEOUT) -> None:
         self._proc: subprocess.Popen | None = None
         self._width = 0
         self._height = 0
@@ -95,7 +82,7 @@ class NvdecCapture:
         # True = 流本身不可达(未推流/超时), 与 NVDEC 无关——CPU 解码同样
         # 打不开, 调用方不必做无谓的 CPU 退回, 交给外层重连即可
         self.stream_unreachable = False
-        # read() 失败时填写: ffmpeg 退出码 + stderr 尾部, 供调用方打日志
+        # 打开失败 / read() 失败的原因, 供调用方打日志与状态接口
         self.last_error: str | None = None
         self._stderr_tail: collections.deque[str] = collections.deque(
             maxlen=_STDERR_TAIL_LINES,
@@ -103,17 +90,19 @@ class NvdecCapture:
         self._stderr_thread: threading.Thread | None = None
 
         try:
-            self._width, self._height = _probe_resolution(url, probe_timeout)
+            self._width, self._height = probe_resolution(url, probe_timeout)
         except OSError as e:
             # ffprobe 不存在等本机环境问题 → 值得退回 CPU 解码
+            self.last_error = f"ffprobe 不可用: {e}"
             logger.warning("NVDEC 探测环境异常: {} ({})", url, e)
             return
-        except Exception as e:
+        except StreamProbeError as e:
             self.stream_unreachable = True
-            logger.warning("拉流探测失败(流不可达, 可能设备未推流): {} ({})",
-                           url, e)
+            self.last_error = str(e)
+            logger.warning("拉流探测失败: {}, 原因: {}", url, e)
             return
         if self._width <= 0 or self._height <= 0:
+            self.last_error = f"ffprobe 返回非法分辨率 {self._width}x{self._height}"
             return
         self._frame_bytes = self._width * self._height * 3
 
@@ -137,6 +126,7 @@ class NvdecCapture:
                 stderr=subprocess.PIPE,
             )
         except OSError as e:
+            self.last_error = f"ffmpeg 启动失败: {e}"
             logger.warning("NVDEC ffmpeg 启动失败: {}", e)
             self._proc = None
             return

@@ -40,6 +40,7 @@ from src.api.schemas import (
 from src.configs.config import config
 from src.configs.override import current_config
 from src.pipeline.orchestrator import VisionOrchestrator
+from src.pipeline.stream_probe import diagnose_open_failure
 from src.pipeline.video_recorder import VideoRecorder
 
 if TYPE_CHECKING:
@@ -214,12 +215,15 @@ class StreamConsumer:
             reconnect_delay = current_config().stream_reconnect_delay
             cap = self._open_capture()
             if not cap.isOpened():
+                # NvdecCapture 把探测阶段的原因放在 last_error; cv2 后端不暴露
+                # 原因, 补一次 ffprobe 诊断(只在失败路径付这个代价)
+                reason = getattr(cap, "last_error", None) or diagnose_open_failure(self.url)
                 cap.release()
                 self.connected = False
-                self.last_error = f"无法打开视频流: {self.url}"
+                self.last_error = f"无法打开视频流: {reason}"
                 logger.warning(
-                    "拉流打开失败: camera={}, url={}, {}s 后重试",
-                    self.camera_id, self.url, reconnect_delay,
+                    "拉流打开失败: camera={}, url={}, 原因: {}, {}s 后重试",
+                    self.camera_id, self.url, reason, reconnect_delay,
                 )
                 self._on_pull_failure()
                 self._stop_event.wait(reconnect_delay)
@@ -288,8 +292,8 @@ class StreamConsumer:
                     return cap
                 cap.release()
                 logger.warning(
-                    "NVDEC 拉流打开失败, 本次退回 CPU 解码: camera={}",
-                    self.camera_id,
+                    "NVDEC 拉流打开失败, 本次退回 CPU 解码: camera={}, 原因: {}",
+                    self.camera_id, cap.last_error,
                 )
         return cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
 
