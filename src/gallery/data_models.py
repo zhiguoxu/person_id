@@ -397,21 +397,60 @@ class PersonProfile(BaseModel):
             return True, evicted
         return False, None
 
+    @staticmethod
+    def _nearest_in_bucket(
+            features: list[FeatureEntry], embedding: np.ndarray,
+    ) -> tuple[int, float] | None:
+        """同桶最近邻下标及其 cos_sim (embedding 已 L2 归一化, 点积即余弦)。空桶返回 None。"""
+        if not features:
+            return None
+        best_i = 0
+        best_sim = float(np.dot(embedding, features[0].embedding))
+        for i in range(1, len(features)):
+            sim = float(np.dot(embedding, features[i].embedding))
+            if sim > best_sim:
+                best_i, best_sim = i, sim
+        return best_i, best_sim
+
     def enroll_face(self, entry: FeatureEntry) -> FeatureOperation | None:
-        """入库人脸特征 — 质量门槛 + 时间衰减淘汰。失败返回 None。"""
+        """入库人脸特征。失败返回 None。
+
+        顺序: 姿态合法 → 质量门槛 → 同桶近重复 (达阈值则只比质量) → 容量/衰减淘汰。
+        """
         if entry.pose_bucket == PoseBucket.UNKNOWN:
             return None
-        # 入库质量门槛是热字段现读; 桶容量/入库半衰期非热, 直读启动期单例
-        threshold = current_config().gallery.face_quality_enroll_threshold
+        # 质量门槛 / 近重复阈值是热字段现读; 桶容量/入库半衰期非热, 直读启动期单例
+        hot_cfg = current_config().gallery
         gallery_cfg = config.gallery
-        if entry.quality_score < threshold:
+        if entry.quality_score < hot_cfg.face_quality_enroll_threshold:
             logger.debug(
                 "face quality {:.3f} 低于 threshold {:.3f} ({})",
-                entry.quality_score, threshold, self.person_id,
+                entry.quality_score, hot_cfg.face_quality_enroll_threshold, self.person_id,
             )
             return None
+
+        bucket = self.face_features[entry.pose_bucket]
+        nearest = self._nearest_in_bucket(bucket, entry.embedding)
+        dup_thresh = hot_cfg.face_enroll_near_dup_threshold
+        if nearest is not None and nearest[1] >= dup_thresh:
+            idx, sim = nearest
+            existing = bucket[idx]
+            if entry.quality_score > existing.quality_score:
+                bucket[idx] = entry
+                self._face_centroids = None
+                logger.debug(
+                    "face near-dup 替换 sim={:.3f} q={:.3f}>{:.3f} ({})",
+                    sim, entry.quality_score, existing.quality_score, self.person_id,
+                )
+                return FeatureOperation(entry=entry, evicted=existing, kind="face")
+            logger.debug(
+                "face near-dup 丢弃 sim={:.3f} q={:.3f}<={:.3f} ({})",
+                sim, entry.quality_score, existing.quality_score, self.person_id,
+            )
+            return None
+
         success, evicted = self._enroll_feature(
-            self.face_features[entry.pose_bucket], entry,
+            bucket, entry,
             gallery_cfg.max_faces_per_bucket,
             gallery_cfg.face_enroll_half_life_days,
         )

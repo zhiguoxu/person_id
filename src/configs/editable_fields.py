@@ -104,6 +104,10 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
         "description": "人脸入库最低质量分（eDifFIQA 评估）。人脸是强标识，糊脸入库会污染质心",
         "hot": True,
     },
+    "gallery.face_enroll_near_dup_threshold": {
+        "description": "人脸同桶近重复余弦阈值。达此则只比质量（更高替换那条，否则丢弃），避免连续近帧占满桶位",
+        "hot": True,
+    },
     "gallery.face_min_size_px": {
         "description": "人脸入库最小尺寸（人脸 bbox 短边像素），小于此值不入库",
         "hot": True,

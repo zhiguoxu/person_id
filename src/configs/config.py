@@ -132,6 +132,8 @@ class GalleryConfig(BaseModel):
     # 注册人脸要求更高质量: 人脸是强标识, 一张糊脸入库会污染质心、引发误识;
     # 人体特征容错更高 (多桶 + 时间衰减), 门槛可略低以保证覆盖率。
     face_quality_enroll_threshold: float = 0.55  # 人脸入库最低质量分 (eDifFIQA large 评估)
+    # 同桶近重复: 新帧与已有条目 cos_sim 达此阈值则只比质量 (更高则替换那条, 否则丢弃), 不占新槽
+    face_enroll_near_dup_threshold: float = 0.95
     body_quality_enroll_threshold: float = 0.40  # 人体/衣橱入库最低质量分 (清晰度+完整度)
     ediffiqa_enroll_variant: str = "large"  # 入库质量评估模型变体 (独立于 Tier1, 默认最大)
     # 人脸入库最小尺寸 (人脸 bbox 短边像素) — 小于此值不入库。
