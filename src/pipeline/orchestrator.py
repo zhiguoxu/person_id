@@ -443,9 +443,8 @@ class VisionOrchestrator(BaseModel):
 
         cache = state.quality_cache
         # 入库门槛是热字段, 每次更新底库时现读
-        cfg = current_config()
-        gallery_cfg = cfg.gallery
-        min_face_size = cfg.face.min_face_size
+        gallery_cfg = current_config().gallery
+        min_face_size = gallery_cfg.face_min_size_px
 
         # --- 人脸 / 人体特征入库 ---
         body_best: dict[PoseBucket, tuple[CachedFrame, float]] = {}

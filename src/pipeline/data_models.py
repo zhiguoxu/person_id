@@ -170,7 +170,7 @@ class TrackedPerson(BaseModel):
     aligned_face: np.ndarray | None = Field(default=None, exclude=True)
     face_bbox: np.ndarray | None = Field(default=None, exclude=True)
     face_quality: float = 0.0  # eDifFIQA + blur 综合分
-    # 人脸框短边像素 (crop 坐标系), 与入库的 min_face_size 门槛同口径; 0 = 本帧无脸
+    # 人脸框短边像素 (crop 坐标系), 与入库的 gallery.face_min_size_px 门槛同口径; 0 = 本帧无脸
     face_size_px: float = 0.0
     # 入库门槛用的 eDifFIQA-large 分 (与 face_quality 不是同一量纲, 见 orchestrator
     # _update_gallery_person); 每帧只对注意力目标计算, 其他人为 None

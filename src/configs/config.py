@@ -94,10 +94,6 @@ class FaceConfig(BaseModel):
     insightface_model: str = "buffalo_l"  # InsightFace 模型包 (仅用于 SCRFD 检测)
     det_size: tuple[int, int] = (640, 640)  # 人脸检测输入尺寸
 
-    # 入库人脸最小像素边长 (人脸 bbox 短边) — 小于此值不入库。
-    # eDifFIQA 分数无法完全反映分辨率, 太小的脸即使"清晰"也只是低分辨率特征, 故额外加尺寸门槛。
-    min_face_size: int = 60
-
     # 人脸识别模型 — ArcFace / AdaFace 可切换
     recognition_backend: str = "adaface"  # "arcface" 或 "adaface"
     arcface_model: str = "w600k_r50.onnx"  # ArcFace ONNX 模型文件名 (在 MODELS_DIR 下)
@@ -138,6 +134,9 @@ class GalleryConfig(BaseModel):
     face_quality_enroll_threshold: float = 0.55  # 人脸入库最低质量分 (eDifFIQA large 评估)
     body_quality_enroll_threshold: float = 0.40  # 人体/衣橱入库最低质量分 (清晰度+完整度)
     ediffiqa_enroll_variant: str = "large"  # 入库质量评估模型变体 (独立于 Tier1, 默认最大)
+    # 人脸入库最小尺寸 (人脸 bbox 短边像素) — 小于此值不入库。
+    # eDifFIQA 分数无法完全反映分辨率, 太小的脸即使"清晰"也只是低分辨率特征, 故在质量分之外加尺寸门槛。
+    face_min_size_px: int = 60
 
     # 入库衰减 — 统一量纲: 半衰期 (天)
     face_enroll_half_life_days: float = 100.0  # 人脸入库半衰期 (发型/妆容变化慢)
@@ -380,7 +379,7 @@ class Config(BaseSettings):
                                           "人脸入库质量门槛"),
         "BODY_QUALITY_ENROLL_THRESHOLD": ("gallery", "body_quality_enroll_threshold", 0, 1, 0.05, "quality",
                                           "人体入库质量门槛"),
-        "MIN_FACE_SIZE": ("face", "min_face_size", 0, 200, 5, "quality", "入库人脸最小像素"),
+        "MIN_FACE_SIZE": ("gallery", "face_min_size_px", 0, 200, 5, "quality", "入库人脸最小像素"),
         "MIN_PERSON_HEIGHT_PX": ("detection", "min_person_height_px", 0, 400, 10, "quality", "最小人体像素高度"),
         "AGG_MIN_FACE_QUALITY": ("multiframe", "agg_min_face_quality", 0, 1, 0.05, "quality", "人脸聚合最低质量"),
         "AGG_MIN_BODY_QUALITY": ("multiframe", "agg_min_body_quality", 0, 1, 0.05, "quality", "人体聚合最低质量"),

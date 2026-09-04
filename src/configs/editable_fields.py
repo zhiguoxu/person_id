@@ -100,12 +100,12 @@ FIELD_ANNOTATIONS: dict[str, EditableField] = {
         "description": "YOLO 检测置信度阈值",
         "hot": False,  # 检测器构造时消费(每摄像头初始化), 保守按重启生效提示
     },
-    "face.min_face_size": {
-        "description": "入库人脸最小像素边长（人脸 bbox 短边），小于此值不入库",
-        "hot": True,
-    },
     "gallery.face_quality_enroll_threshold": {
         "description": "人脸入库最低质量分（eDifFIQA 评估）。人脸是强标识，糊脸入库会污染质心",
+        "hot": True,
+    },
+    "gallery.face_min_size_px": {
+        "description": "人脸入库最小尺寸（人脸 bbox 短边像素），小于此值不入库",
         "hot": True,
     },
     "gallery.body_quality_enroll_threshold": {
