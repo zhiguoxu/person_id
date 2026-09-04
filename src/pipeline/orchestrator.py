@@ -154,6 +154,7 @@ class VisionOrchestrator(BaseModel):
 
         # --- Tier 1: 检测 + 追踪 + 注意力 + 人脸 ---
         persons = self.tier1.process(frame)
+        self._assess_enroll_quality(persons)
         tier1_ms = (time.perf_counter() - t0) * 1000
 
         # --- 人脸耗时直接从 persons 汇总 ---
@@ -392,6 +393,24 @@ class VisionOrchestrator(BaseModel):
         for tid in stale:
             self.tracks[tid].cancel_vlm()
             del self.tracks[tid]
+
+    def _assess_enroll_quality(self, persons: list[TrackedPerson]) -> None:
+        """给注意力目标算入库门槛用的人脸质量分 (eDifFIQA-large), 供前端实时展示。
+
+        只算注意力目标: 注册(register_current)只针对它, 且 large 模型每张脸约
+        3ms, 逐人算会随人数线性吃掉 Tier1 预算。目标取上一帧选出的
+        current_target_id (本帧 _select_target 在后面才跑), 带滞后所以基本稳定。
+        耗时计入 face_assess_ms, 让 pipeline_debug 里的 Face Assess 时长如实反映。
+        """
+        if self.current_target_id is None:
+            return
+        for person in persons:
+            if person.track_id != self.current_target_id or person.aligned_face is None:
+                continue
+            t0 = time.perf_counter()
+            person.enroll_face_quality = get_ediffiqa_enroll().predict(person.aligned_face)
+            person.face_assess_ms += (time.perf_counter() - t0) * 1000
+            return
 
     def _on_gallery_updated(self) -> None:
         """Gallery 更新后，所有非 DEFINITE 的 track 标记 force_probe。"""
@@ -641,7 +660,7 @@ class VisionOrchestrator(BaseModel):
         tier1_ms 已包含 face_detect + face_assess, 这里做拆分展示:
         - detection: 纯检测+追踪+注意力 (= tier1_ms - face)
         - face_detect: 人脸检测耗时 (Tier1 子阶段)
-        - face_assess: 质量评估耗时 (Tier1 子阶段)
+        - face_assess: 质量评估耗时 (Tier1 子阶段 + 注意力目标的入库分重评)
         - reid: Tier2 耗时 (= total - tier1)
         """
         active_states = self.tracks.values()
@@ -659,6 +678,20 @@ class VisionOrchestrator(BaseModel):
         )
         face_detect_status = "done" if face_detect_ms > 0 else "skipped"
         face_assess_status = "done" if face_assess_ms > 0 else "skipped"
+        # 每个有脸的 track: 尺寸 + Tier1 综合分 + 入库分(仅注意力目标), 前端面板逐帧展示
+        face_assess_results = [
+            {
+                "track_id": s.person.track_id,
+                "face_size_px": round(s.person.face_size_px, 1),
+                "face_quality": round(s.person.face_quality, 3),
+                "enroll_face_quality": (
+                    round(s.person.enroll_face_quality, 3)
+                    if s.person.enroll_face_quality is not None else None
+                ),
+                "face_match_quality": s.identity_result.face_match_quality,
+            }
+            for s in active_states if s.person.face_size_px > 0
+        ]
 
         if reid_ms > 1.0:  # 有显著 ReID 耗时
             return {
@@ -666,13 +699,7 @@ class VisionOrchestrator(BaseModel):
                 "face_detect": {"status": face_detect_status, "time_ms": round(face_detect_ms, 1),
                                 "details": {"detected": n_face_detected, "total": n_states}},
                 "face_assess": {"status": face_assess_status, "time_ms": round(face_assess_ms, 1),
-                                "details": {
-                                    "results": [
-                                        {"track_id": s.person.track_id,
-                                         "face_match_quality": s.identity_result.face_match_quality,
-                                         "body_match_quality": s.identity_result.body_match_quality}
-                                        for s in active_states],
-                                }},
+                                "details": {"results": face_assess_results}},
                 "reid": {"status": "done", "time_ms": round(max(0, reid_ms), 1),
                          "details": {"multiframe": True}},
             }
@@ -682,7 +709,8 @@ class VisionOrchestrator(BaseModel):
             "detection": {"status": "done", "time_ms": round(detect_ms, 1), "details": {"count": n_states}},
             "face_detect": {"status": face_detect_status, "time_ms": round(face_detect_ms, 1),
                             "details": {"detected": n_face_detected, "total": n_states}},
-            "face_assess": {"status": face_assess_status, "time_ms": round(face_assess_ms, 1), "details": {}},
+            "face_assess": {"status": face_assess_status, "time_ms": round(face_assess_ms, 1),
+                            "details": {"results": face_assess_results}},
             "reid": {"status": pending_status, "time_ms": 0, "details": {}},
         }
 

@@ -126,6 +126,8 @@ class Tier1Processor:
                     aligned_face, face_bbox, face_kps = result
                     person.aligned_face = aligned_face
                     person.face_bbox = face_bbox
+                    person.face_size_px = float(min(face_bbox[2] - face_bbox[0],
+                                                    face_bbox[3] - face_bbox[1]))
                     t_assess = time.perf_counter()
                     ediffiqa_score = get_ediffiqa().predict(aligned_face)
                     blur = compute_blur_score(aligned_face)
