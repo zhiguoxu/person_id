@@ -1,6 +1,6 @@
 # ==============================================================================
 # 环境 yaml 模板 (复制为 config_<APP_ENV>.yaml, 如 config_dev.yaml)。
-# 分工约定见 config.yaml 头部: 本文件只放 监听 host·port / 数据库 url·路径 /
+# 分工约定见 config.yaml 头部: 本文件只放 监听 host·port / 数据库 url /
 # redis 连接与环境耦合项 / 密钥 / 环境专属资源, 其余配置一律写在 config.yaml
 # (deep_merge, 只写差异字段)。
 # ==============================================================================
@@ -31,8 +31,11 @@ port: 10003
 # redis.db / live_namespace 一致
 voice_online_redis_db: 2
 voice_live_namespace: default
-# 特征底库 sqlite; 相对路径 = 相对服务启动目录(项目根)
-gallery_db_path: data/gallery.db
+# 特征底库 (人脸/人体/衣橱特征), 用法同 db_url。
+# SQLite: sqlite+aiosqlite:///./data/gallery.db (相对路径 = 相对服务启动目录)
+# MySQL:  mysql+aiomysql://user:pass@host:3306/dbname
+#   (可与 db_url 同库; 不能与 agent_server 的 memory.db_url 同库, 都有 persons 表)
+gallery_db_url: "sqlite+aiosqlite:///./data/gallery.db"
 
 # 拉流录像上传 COS (与 voice_server 同桶); 密钥与 bucket 按环境覆盖
 cos:

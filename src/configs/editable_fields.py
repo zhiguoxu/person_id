@@ -19,7 +19,7 @@ voice_agent_common.config_override_api），本文件只做两件事：
 2. LOCKED_PATHS 锁定表：彻底禁止在线编辑的字段，分两类：
    - 结构性死旋钮：在 DB 覆盖套用之前就被消费掉的（uvicorn 绑定参数在
      main() 里、早于 lifespan 的 load_and_apply），改了永远不生效；
-   - 危险开关：改错即数据"丢失"或服务假死的项（如底库路径，换路径等于
+   - 危险开关：改错即数据"丢失"或服务假死的项（如底库连接 URL，换库等于
      整库人物凭空消失）。
    敏感字段（vlm.api_key / redis.password）不在锁定之列——可编辑（重启后
    生效），展示和响应里一律脱敏为 ***，由 config_dump 的字段名规则自动识别。
@@ -41,7 +41,7 @@ LOCKED_PATHS: frozenset[str] = frozenset({
     "port",                     # 同上
     "log_level",                # 同上 (import 期 LogManager.setup/intercept 消费)
     "ws_max_frame_size",        # 同上 (uvicorn.Config 的 ws_max_size 参数)
-    "gallery_db_path",          # 换路径 = 整库人物凭空消失, 不上网页
+    "gallery_db_url",           # 换库 = 整库人物凭空消失, 不上网页
 })
 
 FIELD_ANNOTATIONS: dict[str, EditableField] = {

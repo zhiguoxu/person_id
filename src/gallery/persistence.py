@@ -1,7 +1,10 @@
 """
 Gallery Persistence — SQLModel ORM 持久化
 
-使用 SQLModel + SQLAlchemy AsyncSession 异步地将底库 PersonProfile 存储到 SQLite。
+使用 SQLModel + SQLAlchemy AsyncSession 异步地将底库 PersonProfile 存储到
+gallery_db_url 指定的库, 通过 URL 同时支持 SQLite 和 MySQL:
+  - SQLite:  sqlite+aiosqlite:///./data/gallery.db
+  - MySQL:   mysql+aiomysql://user:pass@host:3306/dbname
 特征向量以 numpy 二进制 blob 存储 (tobytes / frombuffer), 保证精度无损。
 
 GalleryPersistence 通过 @cache 实现单例, 引擎在 FastAPI lifespan 中异步初始化。
@@ -9,8 +12,10 @@ GalleryPersistence 通过 @cache 实现单例, 引擎在 FastAPI lifespan 中异
 from __future__ import annotations
 
 from functools import cache
+from pathlib import Path
 
 from voice_agent_common.utils.logger import logger
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
 from sqlmodel import SQLModel, select
 
@@ -47,7 +52,7 @@ class GalleryPersistence:
 
         # lifespan startup
         persistence = get_gallery_persistence()
-        await persistence.initialize(db_path)
+        await persistence.initialize(db_url)
 
         # 业务代码
         persistence = get_gallery_persistence()
@@ -60,15 +65,36 @@ class GalleryPersistence:
     def __init__(self) -> None:
         self._engine: AsyncEngine | None = None
 
-    async def initialize(self, db_path: str) -> None:
-        """创建引擎并初始化表结构。在 FastAPI lifespan startup 中调用。"""
-        self._engine = create_async_engine(
-            f"sqlite+aiosqlite:///{db_path}",
-            echo=False,
-        )
+    async def initialize(self, db_url: str) -> None:
+        """创建引擎并初始化表结构。在 FastAPI lifespan startup 中调用。
+
+        db_url 为 SQLAlchemy 异步 URL (sqlite+aiosqlite:// / mysql+aiomysql://),
+        方言分支与 session_store.database.init_db 同一约定。
+        """
+        # 方言判断走 URL 解析而非文本前缀猜测(全工程统一约定, 同 session_store)
+        url = make_url(db_url)
+        engine_kwargs: dict = {"echo": False}
+
+        if url.get_backend_name() == "sqlite":
+            # SQLite: 自动创建数据库文件所在目录(url.database 是纯路径, 查询参数已剥离)
+            if url.database:
+                Path(url.database).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # MySQL / 其他关系型数据库: 设置连接池参数
+            engine_kwargs.update(
+                pool_size=10,
+                max_overflow=20,
+                pool_recycle=3600,
+                pool_pre_ping=True,
+            )
+
+        self._engine = create_async_engine(url, **engine_kwargs)
         async with self._engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
-        logger.info("GalleryPersistence 已初始化: db={}", db_path)
+        logger.info(
+            "GalleryPersistence 已初始化: db={}",
+            url.render_as_string(hide_password=True),
+        )
 
     async def close(self) -> None:
         """关闭引擎。在 FastAPI lifespan shutdown 中调用。"""
@@ -82,7 +108,7 @@ class GalleryPersistence:
         if self._engine is None:
             raise RuntimeError(
                 "GalleryPersistence not initialized. "
-                "Call await initialize(db_path) first."
+                "Call await initialize(db_url) first."
             )
         return self._engine
 

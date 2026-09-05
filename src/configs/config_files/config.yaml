@@ -6,7 +6,7 @@
 #   所有配置都写在本文件 (与代码默认值一致的项可不写, 默认值见
 #   src/configs/config.py)。环境 yaml (config_{APP_ENV}.yaml, 已 gitignore)
 #   只放四类字段, 经 deep_merge 覆盖基底:
-#     1. 数据库 url / 路径 (db_url, gallery_db_path)
+#     1. 数据库 url (db_url, gallery_db_url)
 #     2. redis 连接 (host / password / db), 以及与本环境 voice_server 实例
 #        耦合的 voice_online_redis_db / voice_live_namespace
 #     3. 各类密钥 (vlm.api_key, cos.secret_id/secret_key)

@@ -261,7 +261,11 @@ class Config(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 10003  # 远程 CUDA 服务器端口
     log_level: str = "INFO"
-    gallery_db_path: str = str(DATA_DIR / "gallery.db")
+    # 特征底库(人脸/人体/衣橱特征)的存储, 用法同 db_url: SQLAlchemy 异步 URL,
+    # sqlite+aiosqlite:///./data/gallery.db 或 mysql+aiomysql://user:pass@host/db。
+    # 必填、无代码默认, 只放环境 yaml。可与 db_url 同库 (表名不冲突), 但不能与
+    # agent_server 的 memory.db_url 同库——两边都有 persons 表
+    gallery_db_url: str
 
     # 图像矫正
     image_correction_enabled: bool = False  # 是否启用镜头畸变矫正

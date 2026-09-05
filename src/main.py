@@ -88,9 +88,10 @@ async def lifespan(application: FastAPI):
         config.redis.model_copy(update={"db": config.voice_online_redis_db}))
     await deps.voice_online_redis_client.connect()
 
+    # 特征底库引擎 (SQLite / MySQL 由 gallery_db_url 决定, 方言分支同 init_db)
     from src.gallery.persistence import get_gallery_persistence
     persistence = get_gallery_persistence()
-    await persistence.initialize(config.gallery_db_path)
+    await persistence.initialize(config.gallery_db_url)
 
     # enroll 质量评估模型(默认 large)只有注册路径用到, 懒加载会让进程启动后的
     # 首次注册当场付 ONNX + CUDA EP 初始化(实测 ~1.2s), 几乎顶到对话端 1.5s

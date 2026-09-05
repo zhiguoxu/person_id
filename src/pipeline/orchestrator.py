@@ -765,7 +765,7 @@ class VisionOrchestrator(BaseModel):
     # ==================================================================
 
     async def _load_gallery_from_db(self) -> None:
-        """从 SQLite 加载当前摄像头的底库。"""
+        """从底库 DB 加载当前摄像头的全部人物档案。"""
         persistence = get_gallery_persistence()
         self.gallery = await persistence.load_all_profiles(self.camera_id)
 

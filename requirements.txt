@@ -75,7 +75,7 @@ loguru>=0.7.0
 # 依赖里, 本清单缺的在此补上 (sqlalchemy 经 sqlmodel 已有, aiosqlite 已有):
 nanoid>=2.0.0
 cos-python-sdk-v5>=1.9.0    # qcloud_cos (session_store.store 顶层 import CosClient)
-aiomysql>=0.2.0             # db_url 切共享 MySQL 时的驱动 (dev 的 sqlite 用 aiosqlite)
+aiomysql>=0.2.0             # db_url / gallery_db_url 切 MySQL 时的驱动 (dev 的 sqlite 用 aiosqlite)
 
 # --- 测试 ---
 pytest>=8.0.0

@@ -8,7 +8,7 @@
 # 用法:  bash deploy.sh [env]   (自动激活 conda 环境)
 #   env: 部署环境, 决定加载哪份 src/configs/config_files/config_<env>.yaml
 #        缺省 dev; test / prod 须显式指定, 如: bash deploy.sh test
-#   注意: test 实例与 dev 同机不同目录部署 (db_url/gallery_db_path 是相对
+#   注意: test 实例与 dev 同机不同目录部署 (db_url/gallery_db_url 是相对
 #        路径, 同目录跑会共用 sqlite 底库), 端口/GPU 由各自 yaml 决定。
 # ==============================================================================
 set -e
