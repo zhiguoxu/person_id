@@ -113,7 +113,7 @@ class NvdecCapture:
                     # (服务端 EOF、一帧没出) 和 "Could not find codec parameters",
                     # error 级下这两种最常见的退出都是静默的
                     "ffmpeg", "-loglevel", "debug",
-                    "-hwaccel", "cuda", "-hwaccel_device", str(_gpu_index(device)),
+                    # "-hwaccel", "cuda", "-hwaccel_device", str(_gpu_index(device)),
                     "-fflags", "nobuffer", "-flags", "low_delay",
                     "-i", url,
                     "-an",
