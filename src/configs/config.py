@@ -121,7 +121,7 @@ class ReIDConfig(BaseModel):
 class GalleryConfig(BaseModel):
     """特征底库配置"""
     # 人脸库
-    max_faces_per_bucket: int = 5  # 每个姿态桶最多特征数
+    max_faces_per_bucket: int = 10  # 每个姿态桶最多特征数
     face_match_half_life_days: float = 365.0  # 匹配端质心权重半衰期
 
     # 衣橱库
